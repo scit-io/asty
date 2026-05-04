@@ -37,10 +37,17 @@ type NodeInfo struct {
 
 // ServiceAllocation represents a service instance placement
 type ServiceAllocation struct {
+	ID          string    `json:"id"`          // Unique allocation ID
 	ServiceName string    `json:"service_name"`
 	NodeID      string    `json:"node_id"`
 	Status      string    `json:"status"` // pending, running, stopped, failed
 	Version     string    `json:"version"`
+	PID         int       `json:"pid"`           // Process ID (if running)
+	StartedAt   time.Time `json:"started_at"`    // When process started
+	HealthStatus string   `json:"health_status"` // healthy, unhealthy, unknown
+	CPUUsage    int       `json:"cpu_usage"`     // Percentage
+	MemoryUsage int       `json:"memory_usage"`  // MB
+	Restarts    int       `json:"restarts"`      // Number of restarts
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -157,6 +164,11 @@ func (cs *ClusterState) RemoveNode(nodeID string) error {
 
 // CreateAllocation creates a service allocation record
 func (cs *ClusterState) CreateAllocation(alloc *ServiceAllocation) error {
+	// Generate ID if not set
+	if alloc.ID == "" {
+		alloc.ID = fmt.Sprintf("%s-%s-%d", alloc.ServiceName, alloc.NodeID, time.Now().UnixNano())
+	}
+
 	alloc.CreatedAt = time.Now()
 	alloc.UpdatedAt = time.Now()
 

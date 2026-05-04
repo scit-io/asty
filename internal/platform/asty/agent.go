@@ -40,14 +40,22 @@ type Agent struct {
 
 // NewAgent creates a new Asty agent
 func NewAgent(cfg *Config) (*Agent, error) {
-	workDir := "/var/lib/asty"
+	workDir := cfg.WorkDir
+	if workDir == "" {
+		workDir = "/var/lib/asty"
+	}
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create work directory: %w", err)
 	}
 
+	nodeID := cfg.NodeID
+	if nodeID == "" {
+		nodeID = generateNodeID()
+	}
+
 	return &Agent{
 		cfg:                cfg,
-		nodeID:             generateNodeID(),
+		nodeID:             nodeID,
 		processes:          make(map[string]*Process),
 		healthChecker:      NewHealthChecker(),
 		metricsCollector:   NewMetricsCollector(cfg.EvalInterval),
@@ -148,6 +156,21 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		Str("service", svc.Name).
 		Int("pid", proc.PID()).
 		Msg("service started")
+
+	// Update allocation in cluster state with PID
+	alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID)
+	if err != nil {
+		log.Error().Err(err).Str("service", svc.Name).Msg("failed to get allocation for PID update")
+	} else {
+		alloc.PID = proc.PID()
+		alloc.Status = "running"
+		alloc.StartedAt = time.Now()
+		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
+			log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation with PID")
+		} else {
+			log.Info().Str("service", svc.Name).Int("pid", proc.PID()).Msg("updated allocation with PID")
+		}
+	}
 
 	return nil
 }

@@ -71,8 +71,21 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	// Prepare command
-	cmdPath := filepath.Join(p.workDir, p.svc.Command)
-	p.cmd = exec.CommandContext(ctx, cmdPath)
+	// Parse command: if it starts with /, it's absolute, otherwise relative to workdir
+	cmdPath := p.svc.Command
+	var args []string
+
+	// Check if command is shell form ("/bin/sh -c '...'") or just binary path
+	if len(cmdPath) > 0 && cmdPath[0] == '/' {
+		// Absolute path - use as-is, might have args
+		// For shell commands like "/bin/sh -c 'script'", use shell to execute
+		p.cmd = exec.CommandContext(ctx, "sh", "-c", p.svc.Command)
+	} else {
+		// Relative path - join with workdir
+		cmdPath = filepath.Join(p.workDir, p.svc.Command)
+		p.cmd = exec.CommandContext(ctx, cmdPath, args...)
+	}
+
 	p.cmd.Dir = p.workDir
 
 	// Set environment variables

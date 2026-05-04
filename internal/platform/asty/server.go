@@ -45,13 +45,21 @@ type Server struct {
 
 	// API server
 	api *API
+
+	// Metrics storage
+	metricsStore *MetricsStore
 }
 
 // NewServer creates a new Asty server
 func NewServer(cfg *Config) (*Server, error) {
+	nodeID := cfg.NodeID
+	if nodeID == "" {
+		nodeID = generateNodeID()
+	}
+
 	return &Server{
 		cfg:    cfg,
-		nodeID: generateNodeID(),
+		nodeID: nodeID,
 	}, nil
 }
 
@@ -103,7 +111,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.deployer = NewDeployer(clusterState, s.nc, s.cfg)
 
 	// Initialize service loader
-	s.serviceLoader = NewServiceLoader("./services")
+	s.serviceLoader = NewServiceLoader("./deployments/infra")
 
 	// Load service definitions
 	services, err := s.serviceLoader.LoadAll()
@@ -111,6 +119,12 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Error().Err(err).Msg("failed to load service definitions")
 	}
 	s.services = services
+
+	// Initialize metrics store (24h retention)
+	s.metricsStore = NewMetricsStore(24 * time.Hour)
+
+	// Start metrics collection (every 10s)
+	s.metricsStore.StartCollection(clusterState, 10*time.Second)
 
 	// Initialize API server
 	s.api = NewAPI(s, s.cfg.UIAddr)
@@ -138,6 +152,28 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Discover cluster nodes
 	go s.watchClusterNodes(ctx)
+
+	// Create mock nodes in dev mode
+	if s.cfg.DevMode && s.cfg.MockNodes > 0 {
+		log.Info().Int("count", s.cfg.MockNodes).Msg("creating mock nodes (dev mode)")
+		for i := 1; i <= s.cfg.MockNodes; i++ {
+			node := &NodeInfo{
+				ID:              fmt.Sprintf("mock-node-%d", i),
+				Datacenter:      s.cfg.Datacenter,
+				IP:              fmt.Sprintf("192.168.1.%d", i),
+				Status:          "ready",
+				LastSeen:        time.Now(),
+				CPUTotal:        4000,  // 4 cores * 1000 MHz
+				CPUAvailable:    3500,
+				MemoryTotal:     8192,  // 8 GB
+				MemoryAvailable: 6144,
+				Processes:       []string{},
+			}
+			if err := s.clusterState.UpdateNode(node); err != nil {
+				log.Error().Err(err).Str("node_id", node.ID).Msg("failed to register mock node")
+			}
+		}
+	}
 
 	// If we're the leader, start scheduling and autoscaling
 	if s.leaderElection.IsLeader() {
@@ -190,19 +226,62 @@ func (s *Server) runScheduler(ctx context.Context) {
 
 // watchAllocations watches for allocation changes and sends commands to agents
 func (s *Server) watchAllocations(ctx context.Context) {
-	// Watch cluster state for allocation changes
-	err := s.clusterState.WatchNodes(ctx, func(node *NodeInfo) {
-		log.Debug().
-			Str("node_id", node.ID).
-			Msg("node updated, checking allocations")
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
 
-		// TODO: implement allocation watching
-		// For now, just log node updates
-	})
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Get all services and their allocations
+			for _, svc := range s.services {
+				allocs, err := s.clusterState.ListAllocations(svc.Name)
+				if err != nil {
+					log.Error().Err(err).Str("service", svc.Name).Msg("failed to list allocations")
+					continue
+				}
 
-	if err != nil {
-		log.Error().Err(err).Msg("failed to watch nodes")
+				// Send start commands for pending allocations
+				for _, alloc := range allocs {
+					if alloc.Status == "pending" {
+						log.Info().
+							Str("service", svc.Name).
+							Str("node_id", alloc.NodeID).
+							Msg("sending start command to agent")
+
+						if err := s.sendStartCommand(alloc.NodeID, svc); err != nil {
+							log.Error().
+								Err(err).
+								Str("service", svc.Name).
+								Str("node_id", alloc.NodeID).
+								Msg("failed to send start command")
+						}
+						// Note: agent will update allocation with PID and status after starting process
+					}
+				}
+			}
+		}
 	}
+}
+
+// sendStartCommand sends a start command to an agent
+func (s *Server) sendStartCommand(nodeID string, svc *ServiceDefinition) error {
+	cmdBytes, err := MarshalStartCommand(svc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal command: %w", err)
+	}
+
+	resp, err := s.SendCommandToAgent(nodeID, cmdBytes, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to send command: %w", err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("agent returned error: %s", resp.Message)
+	}
+
+	return nil
 }
 
 // SendCommandToAgent sends a command to an agent

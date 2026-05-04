@@ -7,8 +7,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. It replaces Nomad with a simpler, integrated solution that combines scheduling, autoscaling, and deployment in a single binary.
 
 The project consists of two main parts:
-1. **Asty orchestrator** (`internal/platform/asty/`) — manages cluster state, schedules services, handles autoscaling
+1. **Asty orchestrator** (`internal/platform/asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API (no built-in UI).
 2. **Platform services** (`internal/services/`, `cmd/`) — microservices that Asty deploys (Gateway, xauth, xhttp, xws)
+
+**Monitoring:** Asty exposes only HTTP JSON API. For Web UI monitoring, use **ui** (separate React application in `ui/` directory).
 
 ## Build Commands
 

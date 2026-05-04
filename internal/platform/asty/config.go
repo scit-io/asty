@@ -9,9 +9,15 @@ import (
 
 // Config holds all configuration for Asty agent and server
 type Config struct {
+	// Development mode
+	DevMode bool `env:"A_DEV_MODE" envDefault:"false"`
+	MockNodes int `env:"A_MOCK_NODES" envDefault:"0"` // Number of mock nodes to create in dev mode
+
+	// Node identity
 	// Cluster
 	Domain     string
 	Datacenter string
+	NodeID     string
 	Token      string
 	LogLevel   string
 
@@ -38,14 +44,22 @@ type Config struct {
 
 	// UI
 	UIAddr string
+
+	// Agent work directory
+	WorkDir string
 }
 
 // LoadConfig loads configuration from environment variables (A_* prefix)
 func LoadConfig() (*Config, error) {
 	cfg := &Config{
+		// Development
+		DevMode:   getEnvBool("A_DEV_MODE", false),
+		MockNodes: getEnvInt("A_MOCK_NODES", 0),
+
 		// Cluster
 		Domain:     getEnv("A_DOMAIN", ""),
 		Datacenter: getEnv("A_DATACENTER", "dc1"),
+		NodeID:     getEnv("A_NODE_ID", ""),
 		Token:      getEnv("A_TOKEN", ""),
 		LogLevel:   getEnv("A_LOG_LEVEL", "info"),
 
@@ -71,15 +85,20 @@ func LoadConfig() (*Config, error) {
 		ReservedMemory: getEnvInt("A_RESERVED_MEMORY", 250),
 
 		// UI
-		UIAddr: getEnv("A_UI_ADDR", "127.0.0.1:4646"),
+		UIAddr: getEnv("A_UI_ADDR", "127.0.0.1:4747"),
+
+		// Agent
+		WorkDir: getEnv("A_WORK_DIR", "/var/lib/asty"),
 	}
 
-	// Validate required fields
-	if cfg.Domain == "" {
-		return nil, fmt.Errorf("A_DOMAIN is required")
-	}
-	if cfg.Token == "" {
-		return nil, fmt.Errorf("A_TOKEN is required")
+	// Validate required fields (unless dev mode)
+	if !cfg.DevMode {
+		if cfg.Domain == "" {
+			return nil, fmt.Errorf("A_DOMAIN is required")
+		}
+		if cfg.Token == "" {
+			return nil, fmt.Errorf("A_TOKEN is required")
+		}
 	}
 
 	return cfg, nil
@@ -109,3 +128,13 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	return defaultValue
 }
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
