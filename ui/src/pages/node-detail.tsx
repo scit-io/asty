@@ -22,7 +22,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings } from 'lucide-react'
+import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings, ArrowLeft } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export default function NodeDetail() {

@@ -10,7 +10,7 @@ import { Server, Cpu, MemoryStick } from 'lucide-react'
 export default function Dashboard() {
   const navigate = useNavigate()
 
-  const { data: statusData, isLoading: statusLoading } = useQuery({
+  const { isLoading: statusLoading } = useQuery({
     queryKey: ['status'],
     queryFn: api.getStatus,
     refetchInterval: 5000,

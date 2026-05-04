@@ -778,69 +778,74 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse query parameters
-	follow := r.URL.Query().Get("follow") == "true"
 	lines := 100 // default
 	if l := r.URL.Query().Get("lines"); l != "" {
-		if n, err := time.ParseDuration(l); err == nil {
-			lines = int(n)
-		}
+		fmt.Sscanf(l, "%d", &lines)
 	}
 
-	// For now, return placeholder since we need agent integration
-	// TODO: implement log streaming from agent via NATS subject
-	// Subject: asty.v1.agent.<node_id>.logs.<service_name>
-
-	if follow {
-		// SSE streaming for live logs
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
-
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-			return
+	// Find allocation to get node_id and service_name
+	var allocation *ServiceAllocation
+	for _, svc := range api.server.services {
+		allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+		if err != nil {
+			continue
 		}
-
-		// Send initial log lines
-		fmt.Fprintf(w, "data: {\"message\": \"[asty] Log streaming not yet implemented for allocation %s\", \"timestamp\": %d}\n\n", allocID, time.Now().Unix())
-		flusher.Flush()
-
-		// Keep connection alive
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-
-		ctx := r.Context()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				fmt.Fprintf(w, "data: {\"message\": \"[asty] Keepalive\", \"timestamp\": %d}\n\n", time.Now().Unix())
-				flusher.Flush()
+		for _, alloc := range allocs {
+			if alloc.ID == allocID {
+				allocation = alloc
+				break
 			}
 		}
-	} else {
-		// Return recent logs
-		api.writeJSON(w, http.StatusOK, map[string]interface{}{
-			"allocation_id": allocID,
-			"lines":         lines,
-			"logs": []map[string]interface{}{
-				{
-					"timestamp": time.Now().Add(-5 * time.Minute).Unix(),
-					"message":   "[asty] Log retrieval not yet implemented",
-				},
-				{
-					"timestamp": time.Now().Unix(),
-					"message":   fmt.Sprintf("[asty] Allocation %s logs will be available once agent log streaming is implemented", allocID),
-				},
-			},
-		})
+		if allocation != nil {
+			break
+		}
 	}
+
+	if allocation == nil {
+		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
+		return
+	}
+
+	// Request logs from agent via NATS
+	cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines)
+	if err != nil {
+		api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
+		return
+	}
+
+	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", allocation.NodeID)
+
+	msg, err := api.server.nc.Request(subject, cmdData, 5*time.Second)
+	if err != nil {
+		log.Error().Err(err).Str("node_id", allocation.NodeID).Msg("failed to request logs from agent")
+		api.writeError(w, http.StatusServiceUnavailable, "failed to retrieve logs from agent", err)
+		return
+	}
+
+	// Parse logs response
+	var logsResp LogsResponse
+	if err := json.Unmarshal(msg.Data, &logsResp); err != nil {
+		api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
+		return
+	}
+
+	if !logsResp.Success {
+		api.writeError(w, http.StatusInternalServerError, "agent failed to retrieve logs", fmt.Errorf("%s", logsResp.Error))
+		return
+	}
+
+	// Return logs in expected format
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"allocation_id": allocID,
+		"service_name":  allocation.ServiceName,
+		"node_id":       allocation.NodeID,
+		"logs":          logsResp.Logs,
+		"line_count":    len(logsResp.Logs),
+	})
 }
 
 
-// handleLogsNode returns logs for a node
+// handleLogsNode returns logs for a node (agent logs)
 func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -867,16 +872,15 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(l, "%d", &lines)
 	}
 
-	// TODO: implement actual log retrieval from agent
-	// For now, return placeholder
+	// Node logs (agent logs) are not implemented yet
+	// Agent writes logs to stdout/stderr which are captured by systemd or container runtime
+	// This would require reading from journalctl or similar system logging
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"node_id": nodeID,
 		"lines":   lines,
 		"logs": []string{
-			fmt.Sprintf("[%s] Node agent started", time.Now().Add(-10*time.Minute).Format(time.RFC3339)),
-			fmt.Sprintf("[%s] Connected to NATS server", time.Now().Add(-9*time.Minute).Format(time.RFC3339)),
-			fmt.Sprintf("[%s] Registered with cluster", time.Now().Add(-8*time.Minute).Format(time.RFC3339)),
-			fmt.Sprintf("[%s] Node logs will be available once log collection is implemented", time.Now().Format(time.RFC3339)),
+			fmt.Sprintf("[%s] Node agent logs available via system logger (journalctl, docker logs, etc.)", time.Now().Format(time.RFC3339)),
+			"[asty] Node-level log aggregation not yet implemented",
 		},
 	})
 }

@@ -21,7 +21,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
+import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle, ArrowLeft } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 
 export default function ServiceDetail() {

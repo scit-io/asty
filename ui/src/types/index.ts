@@ -94,5 +94,9 @@ export interface AllocationsResponse {
 }
 
 export interface LogsResponse {
+  allocation_id?: string
+  service_name?: string
+  node_id?: string
   logs: string[]
+  line_count?: number
 }

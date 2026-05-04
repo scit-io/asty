@@ -279,6 +279,8 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 		a.handleStartCommand(msg, cmd.Data)
 	case "stop":
 		a.handleStopCommand(msg, cmd.Data)
+	case "logs":
+		a.handleLogsCommand(msg, cmd.Data)
 	default:
 		log.Error().Str("type", cmd.Type).Msg("unknown command type")
 		msg.Respond(MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
@@ -327,6 +329,50 @@ func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 	}
 
 	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s stopped", stopCmd.ServiceName), nil))
+}
+
+// handleLogsCommand handles get logs command
+func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
+	logsCmd, err := ParseGetLogsCommand(data)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse logs command")
+		msg.Respond(MarshalLogsResponse(nil, err))
+		return
+	}
+
+	log.Debug().
+		Str("service", logsCmd.ServiceName).
+		Int("lines", logsCmd.Lines).
+		Msg("retrieving logs")
+
+	a.mu.RLock()
+	proc, exists := a.processes[logsCmd.ServiceName]
+	a.mu.RUnlock()
+
+	if !exists {
+		err := fmt.Errorf("service %s not running", logsCmd.ServiceName)
+		log.Warn().Err(err).Str("service", logsCmd.ServiceName).Msg("service not found")
+		msg.Respond(MarshalLogsResponse(nil, err))
+		return
+	}
+
+	// Get logs from process
+	logData, err := proc.GetLogs(logsCmd.Lines)
+	if err != nil {
+		log.Error().Err(err).Str("service", logsCmd.ServiceName).Msg("failed to get logs")
+		msg.Respond(MarshalLogsResponse(nil, err))
+		return
+	}
+
+	// Split into lines
+	logs := splitLines(string(logData), logsCmd.Lines)
+
+	log.Debug().
+		Str("service", logsCmd.ServiceName).
+		Int("line_count", len(logs)).
+		Msg("logs retrieved")
+
+	msg.Respond(MarshalLogsResponse(logs, nil))
 }
 
 // publishHeartbeat publishes periodic heartbeat to cluster state
@@ -420,4 +466,37 @@ func getNodeIP(natsHost string) string {
 
 	log.Warn().Msg("no non-loopback IP address found")
 	return ""
+}
+
+// splitLines splits log data into lines and optionally returns last N lines
+func splitLines(data string, lastN int) []string {
+	if data == "" {
+		return []string{}
+	}
+
+	lines := []string{}
+	current := ""
+
+	for _, ch := range data {
+		if ch == '\n' {
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+		} else {
+			current += string(ch)
+		}
+	}
+
+	// Add last line if not empty
+	if current != "" {
+		lines = append(lines, current)
+	}
+
+	// Return last N lines if requested
+	if lastN > 0 && len(lines) > lastN {
+		return lines[len(lines)-lastN:]
+	}
+
+	return lines
 }
