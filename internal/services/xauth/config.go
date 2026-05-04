@@ -1,0 +1,90 @@
+// internal/services/xauth/config.go
+package xauth
+
+import (
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"asty/internal/platform/nc"
+	"asty/utils"
+
+	"github.com/rs/zerolog"
+)
+
+// Config — конфигурация сервиса xauth.
+//
+// Переменные окружения:
+//
+//	A_NATS_HOST            — хост NATS-сервера                ("127.0.0.1")
+//	A_NATS_PORT            — порт NATS-сервера                 (4222)
+//	A_NATS_USER            — логин авторизации                 ("")
+//	A_NATS_PASSWORD        — пароль авторизации                ("")
+//	X_AUTH_USERNAME        — логин пользователя                (обязательно)
+//	X_AUTH_PASSWORD        — пароль пользователя               (обязательно)
+//	X_AUTH_ACCESS_SECRET   — HMAC-секрет для access-токенов   (обязательно)
+//	X_AUTH_REFRESH_SECRET  — HMAC-секрет для refresh-токенов  (обязательно)
+//	X_AUTH_ACCESS_TTL      — время жизни access-токена         ("15m")
+//	X_AUTH_REFRESH_TTL     — время жизни refresh-токена        ("168h")
+//	X_AUTH_COOKIE_DOMAIN        — домен кук                         ("")
+//	X_AUTH_COOKIE_SECURE        — флаг Secure на куках              ("true")
+//	X_AUTH_COOKIE_SAMESITE      — SameSite-политика кук             ("strict")
+type Config struct {
+	NATS           nc.Config
+	Username       string
+	Password       string
+	AccessSecret   []byte
+	RefreshSecret  []byte
+	AccessTTL      time.Duration
+	RefreshTTL     time.Duration
+	CookieDomain   string
+	CookieSecure   bool
+	CookieSameSite http.SameSite
+}
+
+func parseSameSite(s string) http.SameSite {
+	switch strings.ToLower(s) {
+	case "none":
+		return http.SameSiteNoneMode
+	case "lax":
+		return http.SameSiteLaxMode
+	default:
+		return http.SameSiteStrictMode
+	}
+}
+
+// LoadConfig читает конфигурацию из переменных окружения.
+// Завершает процесс с ошибкой, если обязательные переменные не заданы.
+func LoadConfig(log zerolog.Logger) Config {
+	mustEnv := func(key string) string {
+		v := os.Getenv(key)
+		if v == "" {
+			log.Fatal().Str("key", key).Msg("обязательная переменная окружения не задана")
+		}
+		return v
+	}
+
+	natsCfg := nc.DefaultConfig()
+	natsCfg.Server.Host = utils.GetEnv(log, "A_NATS_HOST", natsCfg.Server.Host)
+	natsCfg.Server.ClientPort = utils.GetEnv(log, "A_NATS_PORT", natsCfg.Server.ClientPort)
+	natsCfg.Auth.User = utils.GetEnv(log, "A_NATS_USER", "")
+	natsCfg.Auth.Password = utils.GetEnv(log, "A_NATS_PASSWORD", "")
+	// KV-бакет для хранения JTI refresh-токенов (для отзыва при logout/ротации).
+	natsCfg.KV.BucketName = "authms_refresh_tokens"
+	// Replicas не задаётся — NewClient определяет число реплик автоматически.
+	natsCfg.KV.History = 1
+
+	return Config{
+		NATS:           natsCfg,
+		Username:       mustEnv("X_AUTH_USERNAME"),
+		Password:       mustEnv("X_AUTH_PASSWORD"),
+		AccessSecret:   []byte(mustEnv("X_AUTH_ACCESS_SECRET")),
+		RefreshSecret:  []byte(mustEnv("X_AUTH_REFRESH_SECRET")),
+		AccessTTL:      utils.GetEnv(log, "X_AUTH_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:     utils.GetEnv(log, "X_AUTH_REFRESH_TTL", 168*time.Hour),
+		CookieDomain:   utils.GetEnv(log, "X_AUTH_COOKIE_DOMAIN", ""),
+		CookieSecure:   utils.GetEnv(log, "X_AUTH_COOKIE_SECURE", true),
+		CookieSameSite: parseSameSite(utils.GetEnv(log, "X_AUTH_COOKIE_SAMESITE", "strict")),
+	}
+}

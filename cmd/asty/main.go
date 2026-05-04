@@ -9,7 +9,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/upway/asty/internal/platform/asty"
+	"asty/internal/platform/asty"
 )
 
 func main() {

@@ -31,14 +31,17 @@
 - ✅ Metrics collector (collector.go) - CPU/Memory from /proc
 - ✅ Artifact downloader (artifact.go) - tar.gz extraction with SHA256 verification
 
-### Оркестрация (TODO)
+### Оркестрация (завершено)
 
-- ⏳ DNS discovery (discovery.go)
-- ⏳ Leader election (leader.go)
-- ⏳ State management (state.go) - NATS JetStream KV
-- ⏳ Scheduler (scheduler.go) - locality-aware placement
-- ⏳ Autoscaler (autoscaler.go) - scaling decisions
-- ⏳ Deployer (deployer.go) - rolling updates, canary
+- ✅ DNS discovery (discovery.go) - A-record resolution, change detection
+- ✅ Leader election (leader.go) - TTL-based via JetStream KV
+- ✅ State management (state.go) - NATS JetStream KV, node/allocation CRUD
+- ✅ Scheduler (scheduler.go) - system/service placement, geo-diversity, proximity-aware
+- ✅ Command protocol (commands.go) - agent↔server communication
+- ✅ Autoscaler (autoscaler.go) - locality-aware scaling decisions, cooldown tracking
+- ✅ Deployer (deployer.go) - rolling updates, canary, auto-revert
+- ✅ Proximity matrix (proximity.go) - DC latency, nearest DC selection
+- ✅ Service loader (loader.go) - load .asty definitions from directory
 
 ### Операции (TODO)
 

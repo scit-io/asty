@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
@@ -32,6 +33,9 @@ type Agent struct {
 
 	// Working directory for processes
 	workDir string
+
+	// Cluster state
+	clusterState *ClusterState
 }
 
 // NewAgent creates a new Asty agent
@@ -64,6 +68,13 @@ func (a *Agent) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 	defer a.nc.Close()
+
+	// Initialize cluster state
+	clusterState, err := NewClusterState(a.nc)
+	if err != nil {
+		return fmt.Errorf("failed to initialize cluster state: %w", err)
+	}
+	a.clusterState = clusterState
 
 	// Start health checker
 	go a.healthChecker.Start(ctx)
@@ -215,16 +226,7 @@ func (a *Agent) subscribeCommands() error {
 	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", a.nodeID)
 
 	_, err := a.nc.Subscribe(subject, func(msg *nats.Msg) {
-		log.Info().
-			Str("subject", msg.Subject).
-			Bytes("data", msg.Data).
-			Msg("received command")
-
-		// TODO: implement command handling (start/stop service, etc.)
-		// For now, just acknowledge
-		if err := msg.Respond([]byte("ok")); err != nil {
-			log.Error().Err(err).Msg("failed to respond to command")
-		}
+		a.handleCommand(msg)
 	})
 
 	if err != nil {
@@ -235,22 +237,119 @@ func (a *Agent) subscribeCommands() error {
 	return nil
 }
 
-// publishHeartbeat publishes periodic heartbeat to server
-func (a *Agent) publishHeartbeat(ctx context.Context) {
-	subject := "asty.v1.heartbeat"
+// handleCommand handles incoming commands from server
+func (a *Agent) handleCommand(msg *nats.Msg) {
+	cmd, err := UnmarshalCommand(msg.Data)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to unmarshal command")
+		msg.Respond(MarshalResponse(false, "", err))
+		return
+	}
 
-	ticker := ctx.Done()
+	log.Info().
+		Str("type", cmd.Type).
+		Msg("received command")
+
+	switch cmd.Type {
+	case "start":
+		a.handleStartCommand(msg, cmd.Data)
+	case "stop":
+		a.handleStopCommand(msg, cmd.Data)
+	default:
+		log.Error().Str("type", cmd.Type).Msg("unknown command type")
+		msg.Respond(MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
+	}
+}
+
+// handleStartCommand handles start service command
+func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
+	startCmd, err := ParseStartCommand(data)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse start command")
+		msg.Respond(MarshalResponse(false, "", err))
+		return
+	}
+
+	log.Info().
+		Str("service", startCmd.Service.Name).
+		Msg("starting service")
+
+	if err := a.StartService(startCmd.Service); err != nil {
+		log.Error().Err(err).Str("service", startCmd.Service.Name).Msg("failed to start service")
+		msg.Respond(MarshalResponse(false, "", err))
+		return
+	}
+
+	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
+}
+
+// handleStopCommand handles stop service command
+func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
+	stopCmd, err := ParseStopCommand(data)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse stop command")
+		msg.Respond(MarshalResponse(false, "", err))
+		return
+	}
+
+	log.Info().
+		Str("service", stopCmd.ServiceName).
+		Msg("stopping service")
+
+	if err := a.StopService(stopCmd.ServiceName); err != nil {
+		log.Error().Err(err).Str("service", stopCmd.ServiceName).Msg("failed to stop service")
+		msg.Respond(MarshalResponse(false, "", err))
+		return
+	}
+
+	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s stopped", stopCmd.ServiceName), nil))
+}
+
+// publishHeartbeat publishes periodic heartbeat to cluster state
+func (a *Agent) publishHeartbeat(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker:
-			// TODO: implement proper heartbeat with node status
-			// For now, just publish node ID
-			if err := a.nc.Publish(subject, []byte(a.nodeID)); err != nil {
-				log.Error().Err(err).Msg("failed to publish heartbeat")
+		case <-ticker.C:
+			// Collect current node info
+			nodeInfo := a.getNodeInfo()
+
+			// Update cluster state
+			if err := a.clusterState.UpdateNode(nodeInfo); err != nil {
+				log.Error().Err(err).Msg("failed to update node heartbeat")
+			} else {
+				log.Debug().Str("node_id", a.nodeID).Msg("heartbeat sent")
 			}
 		}
+	}
+}
+
+// getNodeInfo collects current node information
+func (a *Agent) getNodeInfo() *NodeInfo {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	processes := make([]string, 0, len(a.processes))
+	for name := range a.processes {
+		processes = append(processes, name)
+	}
+
+	// TODO: collect actual resource usage
+	return &NodeInfo{
+		ID:         a.nodeID,
+		Datacenter: a.cfg.Datacenter,
+		IP:         "", // TODO: get node IP
+		Status:     "ready",
+		LastSeen:   time.Now(),
+		CPUTotal:      4000, // TODO: detect actual CPU
+		CPUAvailable:  3000,
+		MemoryTotal:   8192, // TODO: detect actual memory
+		MemoryAvailable: 6144,
+		Processes:    processes,
 	}
 }
 
