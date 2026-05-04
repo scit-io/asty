@@ -2,6 +2,7 @@ package asty
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -142,6 +143,9 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 
 	// Register process
 	a.processes[svc.Name] = proc
+
+	// Start log streaming to NATS
+	go a.streamProcessLogs(svc.Name, proc)
 
 	// Register health check if configured
 	if svc.Health.Type == "http" {
@@ -343,6 +347,7 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
 	log.Debug().
 		Str("service", logsCmd.ServiceName).
 		Int("lines", logsCmd.Lines).
+		Bool("follow", logsCmd.Follow).
 		Msg("retrieving logs")
 
 	a.mu.RLock()
@@ -499,4 +504,80 @@ func splitLines(data string, lastN int) []string {
 	}
 
 	return lines
+}
+
+// streamProcessLogs streams process logs to NATS in real-time
+func (a *Agent) streamProcessLogs(serviceName string, proc *Process) {
+	subject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", a.nodeID, serviceName)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	logLines := make(chan string, 100)
+
+	// Start tailing logs
+	go func() {
+		if err := proc.TailLogs(ctx, logLines); err != nil && err != context.Canceled {
+			log.Error().
+				Err(err).
+				Str("service", serviceName).
+				Msg("failed to tail logs")
+		}
+		close(logLines)
+	}()
+
+	log.Info().
+		Str("service", serviceName).
+		Str("subject", subject).
+		Msg("streaming logs to NATS")
+
+	// Publish log lines to NATS
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case line, ok := <-logLines:
+			if !ok {
+				// Channel closed, process stopped
+				log.Info().
+					Str("service", serviceName).
+					Msg("log channel closed, ending stream")
+				return
+			}
+
+			logEntry, err := json.Marshal(map[string]interface{}{
+				"line":      line,
+				"timestamp": time.Now().Unix(),
+			})
+			if err != nil {
+				continue
+			}
+
+			if err := a.nc.Publish(subject, logEntry); err != nil {
+				log.Error().
+					Err(err).
+					Str("service", serviceName).
+					Str("subject", subject).
+					Msg("failed to publish log line")
+			}
+
+		case <-ticker.C:
+			// Periodic check if process still exists
+			a.mu.RLock()
+			_, exists := a.processes[serviceName]
+			a.mu.RUnlock()
+
+			if !exists {
+				log.Info().
+					Str("service", serviceName).
+					Msg("process no longer exists, ending log stream")
+				cancel()
+				return
+			}
+
+		case <-ctx.Done():
+			return
+		}
+	}
 }

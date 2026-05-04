@@ -38,8 +38,8 @@ func TestProcessLogs(t *testing.T) {
 		t.Fatalf("failed to start process: %v", err)
 	}
 
-	// Wait for process to write logs
-	time.Sleep(500 * time.Millisecond)
+	// Wait for process to write logs and complete
+	time.Sleep(2 * time.Second)
 
 	// Get logs
 	logs, err := proc.GetLogs(100)

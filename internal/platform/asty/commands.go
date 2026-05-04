@@ -24,7 +24,8 @@ type StopServiceCommand struct {
 // GetLogsCommand instructs agent to retrieve service logs
 type GetLogsCommand struct {
 	ServiceName string `json:"service_name"`
-	Lines       int    `json:"lines"` // number of lines from end (0 = all)
+	Lines       int    `json:"lines"`  // number of lines from end (0 = all)
+	Follow      bool   `json:"follow"` // stream new lines (SSE mode)
 }
 
 // LogsResponse contains service logs
@@ -74,10 +75,11 @@ func MarshalStopCommand(serviceName string) ([]byte, error) {
 }
 
 // MarshalGetLogsCommand creates a get logs command
-func MarshalGetLogsCommand(serviceName string, lines int) ([]byte, error) {
+func MarshalGetLogsCommand(serviceName string, lines int, follow bool) ([]byte, error) {
 	cmd := GetLogsCommand{
 		ServiceName: serviceName,
 		Lines:       lines,
+		Follow:      follow,
 	}
 	data, err := json.Marshal(cmd)
 	if err != nil {

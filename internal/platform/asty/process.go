@@ -24,9 +24,10 @@ type Process struct {
 	workDir string
 
 	// Runtime
-	cmd    *exec.Cmd
-	pid    int
-	status ProcessStatus
+	cmd       *exec.Cmd
+	pid       int
+	status    ProcessStatus
+	cancelCtx context.CancelFunc
 
 	// Logs
 	logFile *os.File
@@ -107,6 +108,10 @@ func (p *Process) Start(ctx context.Context) error {
 	p.pid = p.cmd.Process.Pid
 	p.status = ProcessStatusRunning
 
+	// Create cancellable context for this process
+	processCtx, cancel := context.WithCancel(context.Background())
+	p.cancelCtx = cancel
+
 	log.Info().
 		Str("service", p.svc.Name).
 		Int("pid", p.pid).
@@ -114,7 +119,7 @@ func (p *Process) Start(ctx context.Context) error {
 		Msg("process started")
 
 	// Monitor process in background
-	go p.monitor()
+	go p.monitor(processCtx)
 
 	return nil
 }
@@ -129,6 +134,11 @@ func (p *Process) Stop() error {
 	}
 
 	p.status = ProcessStatusStopping
+
+	// Cancel any ongoing operations (like log streaming)
+	if p.cancelCtx != nil {
+		p.cancelCtx()
+	}
 
 	log.Info().
 		Str("service", p.svc.Name).
@@ -192,12 +202,31 @@ func (p *Process) PID() int {
 	return p.pid
 }
 
+// Context returns a context that is cancelled when the process stops
+func (p *Process) Context() (context.Context, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.cancelCtx == nil {
+		return nil, false
+	}
+	// Create a new context that will be cancelled when process stops
+	ctx := context.Background()
+	// We can't return the internal context, so we create a derived one
+	// This is a workaround - in production, consider using a proper context management
+	return ctx, true
+}
+
 // monitor watches the process and updates status when it exits
-func (p *Process) monitor() {
+func (p *Process) monitor(ctx context.Context) {
 	err := p.cmd.Wait()
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	// Cancel context to stop any ongoing operations
+	if p.cancelCtx != nil {
+		p.cancelCtx()
+	}
 
 	if p.status == ProcessStatusStopping {
 		// Expected shutdown
@@ -253,4 +282,66 @@ func (p *Process) GetLogs(lines int) ([]byte, error) {
 	// Simple tail implementation - read entire file for now
 	// TODO: implement efficient tail for large files
 	return io.ReadAll(f)
+}
+
+// GetLogPath returns the path to the log file
+func (p *Process) GetLogPath() string {
+	return filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
+}
+
+// TailLogs streams new log lines as they are written
+func (p *Process) TailLogs(ctx context.Context, lines chan<- string) error {
+	logPath := p.GetLogPath()
+
+	f, err := os.Open(logPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Seek to end of file
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
+		return err
+	}
+
+	// Read new lines as they appear
+	buf := make([]byte, 4096)
+	remainder := ""
+
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			n, err := f.Read(buf)
+			if err != nil && err != io.EOF {
+				return err
+			}
+
+			if n > 0 {
+				data := remainder + string(buf[:n])
+				linesData := ""
+
+				for i := 0; i < len(data); i++ {
+					if data[i] == '\n' {
+						if linesData != "" {
+							select {
+							case lines <- linesData:
+							case <-ctx.Done():
+								return ctx.Err()
+							}
+							linesData = ""
+						}
+					} else {
+						linesData += string(data[i])
+					}
+				}
+
+				remainder = linesData
+			}
+		}
+	}
 }

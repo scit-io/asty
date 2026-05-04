@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
 
@@ -763,7 +764,7 @@ func (api *API) writeError(w http.ResponseWriter, status int, message string, er
 	api.writeJSON(w, status, response)
 }
 
-// handleLogsAllocation returns logs for an allocation
+// handleLogsAllocation returns logs for an allocation via SSE
 func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -782,6 +783,8 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	if l := r.URL.Query().Get("lines"); l != "" {
 		fmt.Sscanf(l, "%d", &lines)
 	}
+
+	follow := r.URL.Query().Get("follow") == "true"
 
 	// Find allocation to get node_id and service_name
 	var allocation *ServiceAllocation
@@ -806,8 +809,8 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Request logs from agent via NATS
-	cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines)
+	// Request initial logs from agent via NATS
+	cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines, false)
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
 		return
@@ -834,14 +837,63 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return logs in expected format
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"allocation_id": allocID,
-		"service_name":  allocation.ServiceName,
-		"node_id":       allocation.NodeID,
-		"logs":          logsResp.Logs,
-		"line_count":    len(logsResp.Logs),
+	// If not following, return JSON with initial logs
+	if !follow {
+		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"allocation_id": allocID,
+			"service_name":  allocation.ServiceName,
+			"node_id":       allocation.NodeID,
+			"logs":          logsResp.Logs,
+			"line_count":    len(logsResp.Logs),
+		})
+		return
+	}
+
+	// SSE streaming mode
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial logs
+	for _, line := range logsResp.Logs {
+		logEntry, _ := json.Marshal(map[string]interface{}{
+			"line": line,
+			"timestamp": time.Now().Unix(),
+		})
+		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+	}
+	flusher.Flush()
+
+	// Subscribe to log stream via NATS
+	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", allocation.NodeID, allocation.ServiceName)
+	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
+		// Forward log line to SSE
+		fmt.Fprintf(w, "data: %s\n\n", msg.Data)
+		flusher.Flush()
 	})
+
+	if err != nil {
+		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to log stream")
+		return
+	}
+	defer sub.Unsubscribe()
+
+	log.Info().
+		Str("allocation_id", allocID).
+		Str("subject", streamSubject).
+		Msg("streaming logs via SSE")
+
+	// Keep connection alive until client disconnects
+	<-r.Context().Done()
+
+	log.Info().Str("allocation_id", allocID).Msg("log stream closed")
 }
 
 
