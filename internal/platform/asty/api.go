@@ -46,6 +46,7 @@ func (api *API) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/stream", api.handleStream)
 	mux.HandleFunc("/api/v1/metrics/cluster", api.handleMetricsCluster)
 	mux.HandleFunc("/api/v1/metrics/nodes/", api.handleMetricsNode)
+	mux.HandleFunc("/api/v1/logs/cluster", api.handleLogsCluster)
 	mux.HandleFunc("/api/v1/logs/allocation/", api.handleLogsAllocation)
 	mux.HandleFunc("/api/v1/logs/node/", api.handleLogsNode)
 	mux.HandleFunc("/metrics", api.handleMetrics)
@@ -935,5 +936,98 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 			"[asty] Node-level log aggregation not yet implemented",
 		},
 	})
+}
+
+// handleLogsCluster returns cluster-wide logs (server logs) via SSE
+func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Parse query parameters
+	lines := 100 // default
+	if l := r.URL.Query().Get("lines"); l != "" {
+		fmt.Sscanf(l, "%d", &lines)
+	}
+
+	follow := r.URL.Query().Get("follow") == "true"
+
+	// For now, return placeholder logs
+	// TODO: implement actual cluster log collection from server process
+	// This could be:
+	// 1. Streaming from server's own zerolog output
+	// 2. Aggregated events from NATS subjects
+	// 3. Combined logs from all agents
+
+	if !follow {
+		// Return JSON with recent cluster events
+		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"logs": []string{
+				fmt.Sprintf("[%s] [info] Asty server started", time.Now().Add(-10*time.Minute).Format(time.RFC3339)),
+				fmt.Sprintf("[%s] [info] Leader election: acquired leadership", time.Now().Add(-9*time.Minute).Format(time.RFC3339)),
+				fmt.Sprintf("[%s] [info] Cluster ready with 3 nodes", time.Now().Add(-8*time.Minute).Format(time.RFC3339)),
+				"[asty] Cluster-level log streaming not yet implemented",
+			},
+			"line_count": 4,
+		})
+		return
+	}
+
+	// SSE streaming mode
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Send initial placeholder logs
+	initialLogs := []string{
+		fmt.Sprintf("[%s] [info] Asty cluster log stream started", time.Now().Format(time.RFC3339)),
+		"[asty] Cluster-level log streaming will show:",
+		"  - Server lifecycle events (startup, shutdown, leader election)",
+		"  - Scheduling decisions (placement, scaling)",
+		"  - Deployment events (rolling updates, health checks)",
+		"  - Cluster state changes (node join/leave)",
+		"",
+		"[asty] Implementation pending: wire up server zerolog to NATS stream",
+	}
+
+	for _, line := range initialLogs {
+		logEntry, _ := json.Marshal(map[string]interface{}{
+			"line":      line,
+			"timestamp": time.Now().Unix(),
+		})
+		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+	}
+	flusher.Flush()
+
+	log.Info().Msg("cluster log stream opened")
+
+	// Keep connection alive with periodic heartbeats
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info().Msg("cluster log stream closed")
+			return
+		case <-ticker.C:
+			// Send keepalive
+			logEntry, _ := json.Marshal(map[string]interface{}{
+				"line":      fmt.Sprintf("[%s] [keepalive]", time.Now().Format(time.RFC3339)),
+				"timestamp": time.Now().Unix(),
+			})
+			fmt.Fprintf(w, "data: %s\n\n", logEntry)
+			flusher.Flush()
+		}
+	}
 }
 
