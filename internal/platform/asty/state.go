@@ -23,6 +23,7 @@ type NodeInfo struct {
 	Datacenter string    `json:"datacenter"`
 	IP         string    `json:"ip"`
 	Status     string    `json:"status"` // ready, draining, down
+	CreatedAt  time.Time `json:"created_at"`
 	LastSeen   time.Time `json:"last_seen"`
 
 	// Resources
@@ -33,6 +34,10 @@ type NodeInfo struct {
 
 	// Processes
 	Processes []string `json:"processes"` // list of service names
+
+	// Allocations counters (computed, not persisted in KV)
+	AllocationsRunning int `json:"allocations_running"` // Number of running allocations
+	AllocationsPlanned int `json:"allocations_planned"` // Total number of planned allocations
 }
 
 // ServiceAllocation represents a service instance placement
@@ -85,14 +90,30 @@ func NewClusterState(nc *nats.Conn) (*ClusterState, error) {
 
 // UpdateNode updates node information in cluster state
 func (cs *ClusterState) UpdateNode(node *NodeInfo) error {
-	node.LastSeen = time.Now()
+	now := time.Now()
+	node.LastSeen = now
+
+	key := fmt.Sprintf("node.%s", node.ID)
+
+	// Try to get existing node to preserve CreatedAt
+	if node.CreatedAt.IsZero() {
+		if existing, err := cs.bucket.Get(key); err == nil {
+			var existingNode NodeInfo
+			if json.Unmarshal(existing.Value(), &existingNode) == nil && !existingNode.CreatedAt.IsZero() {
+				node.CreatedAt = existingNode.CreatedAt
+			}
+		}
+		// If still zero (node doesn't exist or error), set to now
+		if node.CreatedAt.IsZero() {
+			node.CreatedAt = now
+		}
+	}
 
 	data, err := json.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("failed to marshal node info: %w", err)
 	}
 
-	key := fmt.Sprintf("node.%s", node.ID)
 	if _, err := cs.bucket.Put(key, data); err != nil {
 		return fmt.Errorf("failed to put node info: %w", err)
 	}
@@ -123,6 +144,10 @@ func (cs *ClusterState) GetNode(nodeID string) (*NodeInfo, error) {
 func (cs *ClusterState) ListNodes() ([]*NodeInfo, error) {
 	keys, err := cs.bucket.Keys()
 	if err != nil {
+		// If no keys found, return empty list instead of error
+		if err == nats.ErrNoKeysFound {
+			return []*NodeInfo{}, nil
+		}
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
@@ -208,6 +233,10 @@ func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*ServiceAlloc
 func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocation, error) {
 	keys, err := cs.bucket.Keys()
 	if err != nil {
+		// If no keys found, return empty list instead of error
+		if err == nats.ErrNoKeysFound {
+			return []*ServiceAllocation{}, nil
+		}
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 

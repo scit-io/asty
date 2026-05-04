@@ -133,6 +133,31 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Enrich nodes with allocation counts
+	for _, node := range nodes {
+		running := 0
+		planned := 0
+
+		// Iterate through all services to count allocations for this node
+		for _, svc := range api.server.services {
+			allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+			if err != nil {
+				continue
+			}
+			for _, alloc := range allocs {
+				if alloc.NodeID == node.ID {
+					planned++
+					if alloc.Status == "running" {
+						running++
+					}
+				}
+			}
+		}
+
+		node.AllocationsRunning = running
+		node.AllocationsPlanned = planned
+	}
+
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"nodes": nodes,
 		"count": len(nodes),
@@ -372,6 +397,28 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
 	}
+
+	// Enrich node with allocation counts
+	running := 0
+	planned := 0
+
+	for _, svc := range api.server.services {
+		allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+		if err != nil {
+			continue
+		}
+		for _, alloc := range allocs {
+			if alloc.NodeID == node.ID {
+				planned++
+				if alloc.Status == "running" {
+					running++
+				}
+			}
+		}
+	}
+
+	node.AllocationsRunning = running
+	node.AllocationsPlanned = planned
 
 	api.writeJSON(w, http.StatusOK, node)
 }

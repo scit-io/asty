@@ -3,6 +3,7 @@ package asty
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -361,11 +362,17 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 		processes = append(processes, name)
 	}
 
+	// Use explicit IP from config, or auto-detect
+	nodeIP := a.cfg.NodeIP
+	if nodeIP == "" {
+		nodeIP = getNodeIP(a.cfg.NATSHost)
+	}
+
 	// TODO: collect actual resource usage
 	return &NodeInfo{
 		ID:         a.nodeID,
 		Datacenter: a.cfg.Datacenter,
-		IP:         "", // TODO: get node IP
+		IP:         nodeIP,
 		Status:     "ready",
 		LastSeen:   time.Now(),
 		CPUTotal:      4000, // TODO: detect actual CPU
@@ -383,4 +390,34 @@ func generateNodeID() string {
 		return "unknown"
 	}
 	return hostname
+}
+
+// getNodeIP returns the primary IP address of the node
+// If natsHost is a loopback address (127.0.0.x), returns the same to match local development setup
+func getNodeIP(natsHost string) string {
+	// Parse NATS host to check if it's loopback
+	natsIP := net.ParseIP(natsHost)
+	if natsIP != nil && natsIP.IsLoopback() {
+		// For loopback NATS connections, use the NATS host IP
+		// This supports local dev with multiple 127.0.0.x aliases
+		return natsHost
+	}
+
+	// Otherwise, find first non-loopback IPv4 address
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Warn().Err(err).Msg("failed to get network interfaces")
+		return ""
+	}
+
+	for _, addr := range addrs {
+		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+
+	log.Warn().Msg("no non-loopback IP address found")
+	return ""
 }

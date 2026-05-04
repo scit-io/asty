@@ -212,17 +212,18 @@ start_asty() {
   echo "$server_pid" >> "$PID_FILE"
   info "Server: PID=$server_pid | Логи: $server_log"
 
-  # Запускаем N agents (каждый с уникальным node ID)
+  # Запускаем N agents (каждый с уникальным node ID и IP)
   for ((i=1; i<=nodes; i++)); do
-    local agent_log="/tmp/asty-dev-agent-$i.log"
+    local agent_log="/tmp/asty-dev-node-$i.log"
     local addr="127.0.0.$i"
-    mkdir -p "$DATA_BASE/agent$i"
+    mkdir -p "$DATA_BASE/node$i"
 
-    export A_NODE_ID="agent-$i"
+    export A_NODE_ID="dev-node-$i"
+    export A_NODE_IP="$addr"
     "$BIN_DIR/asty" -mode agent >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"
-    info "Agent $i: node_id=agent-$i | PID=$agent_pid | Логи: $agent_log"
+    info "Node $i: id=dev-node-$i | ip=$addr | PID=$agent_pid | Логи: $agent_log"
   done
 }
 
@@ -281,8 +282,8 @@ print_status() {
   info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"
   info ""
-  info "Логи сервера:  tail -f /tmp/asty-dev-server.log"
-  info "Логи агента 1: tail -f /tmp/asty-dev-agent-1.log"
+  info "Логи сервера: tail -f /tmp/asty-dev-server.log"
+  info "Логи ноды 1:  tail -f /tmp/asty-dev-node-1.log"
   echo ""
   info "Остановить: $SCRIPT_DIR/start.sh stop"
 }

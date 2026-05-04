@@ -7,9 +7,22 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ArrowLeft, Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import { ThemeToggle } from '@/components/theme-toggle'
 
 export default function ServiceDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
@@ -109,37 +122,49 @@ export default function ServiceDetail() {
   }
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(`/nodes/${nodeId}`)}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold">{allocation.service_name}</h1>
-            <p className="text-muted-foreground font-mono text-sm">
-              {allocation.id} on{' '}
-              <button
-                className="underline hover:text-foreground"
-                onClick={() => navigate(`/nodes/${nodeId}`)}
-              >
-                {allocation.node_id}
-              </button>
-            </p>
+    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-8">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink to="/">Dashboard</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbLink to={`/nodes/${nodeId}`}>Node {allocation.node_id}</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>{allocation.service_name}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <div className="space-y-2 w-full sm:w-auto">
+          <div className="flex items-center gap-3 sm:gap-4 justify-end">
+            <h1 className="text-2xl sm:text-3xl font-bold">{allocation.service_name}</h1>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      allocation.status === 'running'
+                        ? 'bg-green-500'
+                        : allocation.status === 'failed'
+                        ? 'bg-red-500'
+                        : 'bg-gray-400'
+                    }`}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="capitalize">{allocation.status}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-          <Badge
-            variant={
-              allocation.status === 'running'
-                ? 'default'
-                : allocation.status === 'failed'
-                ? 'destructive'
-                : 'secondary'
-            }
-          >
-            {allocation.status}
-          </Badge>
+          <p className="text-muted-foreground font-mono text-xs sm:text-sm text-right">
+            {allocation.id}
+          </p>
         </div>
-        <ThemeToggle />
       </div>
 
       <Tabs defaultValue="overview" className="space-y-4">
@@ -151,7 +176,7 @@ export default function ServiceDetail() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-4">
+          <div className="grid gap-4 grid-cols-2 sm:grid-cols-2 lg:grid-cols-4">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
@@ -188,9 +213,12 @@ export default function ServiceDetail() {
                 <Clock className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-sm font-bold">
+                <div className="text-sm font-bold mt-1 mb-2">
                   {formatDistanceToNow(new Date(allocation.started_at), { addSuffix: true })}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(allocation.started_at).toLocaleString()}
+                </p>
               </CardContent>
             </Card>
           </div>

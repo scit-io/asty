@@ -8,9 +8,22 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { ArrowLeft, Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle } from 'lucide-react'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
+import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import { ThemeToggle } from '@/components/theme-toggle'
 
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
@@ -106,98 +119,140 @@ export default function NodeDetail() {
   const memPercent = node.memory_total > 0 ? Math.round((memUsed / node.memory_total) * 100) : 0
 
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-3xl font-bold font-mono">{node.id}</h1>
-            <p className="text-muted-foreground">{node.datacenter}</p>
+    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-8">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink to="/">Dashboard</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>Node {node.id}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <div className="space-y-2 w-full sm:w-auto">
+          <div className="flex items-center gap-3 sm:gap-4 justify-end">
+            <h1 className="text-2xl sm:text-3xl font-bold font-mono">{node.id}</h1>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      node.status === 'ready'
+                        ? 'bg-green-500'
+                        : node.status === 'down'
+                        ? 'bg-red-500'
+                        : 'bg-gray-400'
+                    }`}
+                  />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="capitalize">{node.status}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
-          <Badge
-            variant={
-              node.status === 'ready'
-                ? 'default'
-                : node.status === 'down'
-                ? 'destructive'
-                : 'secondary'
-            }
-          >
-            {node.status}
-          </Badge>
+          <p className="text-sm sm:text-base text-muted-foreground text-right">
+            <span className="font-mono">{node.ip}</span> / {node.datacenter}
+          </p>
         </div>
-        <ThemeToggle />
       </div>
 
-      <Tabs defaultValue="overview" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{cpuPercent}%</div>
+            <p className="text-xs text-muted-foreground">
+              {cpuUsed} / {node.cpu_total} MHz
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{memPercent}%</div>
+            <p className="text-xs text-muted-foreground">
+              {memUsed} / {node.memory_total} MB
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Services</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {node.allocations_running || 0} / {node.allocations_planned || 0}
+            </div>
+            <p className="text-xs text-muted-foreground">Running / Planned</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Created At</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm font-bold mt-1 mb-2">
+              {formatDistanceToNow(new Date(node.created_at), { addSuffix: true })}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {new Date(node.created_at).toLocaleString()}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Actions</CardTitle>
+            <Settings className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent className="flex flex-col gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => api.pauseNode(nodeId!)}
+            >
+              <StopCircle className="h-4 w-4 mr-2" />
+              Pause
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => api.drainNode(nodeId!)}
+            >
+              <PlayCircle className="h-4 w-4 mr-2" />
+              Drain
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="services" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="services">Services</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="actions">Actions</TabsTrigger>
         </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-4">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">CPU Usage</CardTitle>
-                <Cpu className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{cpuPercent}%</div>
-                <p className="text-xs text-muted-foreground">
-                  {cpuUsed} / {node.cpu_total} MHz
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Memory Usage</CardTitle>
-                <MemoryStick className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{memPercent}%</div>
-                <p className="text-xs text-muted-foreground">
-                  {memUsed} / {node.memory_total} MB
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Services</CardTitle>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{allocations.length}</div>
-                <p className="text-xs text-muted-foreground">Running</p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Last Seen</CardTitle>
-                <Clock className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-sm font-bold">
-                  {formatDistanceToNow(new Date(node.last_seen), { addSuffix: true })}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
 
         <TabsContent value="services" className="space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Running Services</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="overflow-x-auto">
               {allocsLoading ? (
                 <Skeleton className="h-64" />
               ) : allocations.length === 0 ? (
@@ -280,37 +335,6 @@ export default function NodeDetail() {
                   <div className="text-muted-foreground">No logs available</div>
                 )}
               </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="actions" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Node Actions</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex gap-4">
-                <Button
-                  variant="outline"
-                  onClick={() => api.pauseNode(nodeId!)}
-                >
-                  <StopCircle className="h-4 w-4 mr-2" />
-                  Pause Node
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => api.drainNode(nodeId!)}
-                >
-                  <PlayCircle className="h-4 w-4 mr-2" />
-                  Drain Node
-                </Button>
-              </div>
-              <Alert>
-                <AlertDescription>
-                  Actions will affect all services running on this node. Use with caution.
-                </AlertDescription>
-              </Alert>
             </CardContent>
           </Card>
         </TabsContent>

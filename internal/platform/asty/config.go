@@ -18,6 +18,7 @@ type Config struct {
 	Domain     string
 	Datacenter string
 	NodeID     string
+	NodeIP     string // Explicit node IP address (optional, auto-detected if not set)
 	Token      string
 	LogLevel   string
 
@@ -60,6 +61,7 @@ func LoadConfig() (*Config, error) {
 		Domain:     getEnv("A_DOMAIN", ""),
 		Datacenter: getEnv("A_DATACENTER", "dc1"),
 		NodeID:     getEnv("A_NODE_ID", ""),
+		NodeIP:     getEnv("A_NODE_IP", ""),
 		Token:      getEnv("A_TOKEN", ""),
 		LogLevel:   getEnv("A_LOG_LEVEL", "info"),
 

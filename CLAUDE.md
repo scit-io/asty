@@ -99,12 +99,16 @@ All inter-service communication is NATS Pub/Sub. No service-to-service HTTP call
 Environment variables with `A_` prefix:
 - `A_DOMAIN` — DNS for node discovery (required)
 - `A_DATACENTER` — datacenter name (default: dc1)
+- `A_NODE_ID` — explicit node ID (default: auto-generated from hostname)
+- `A_NODE_IP` — explicit node IP address (default: auto-detected; for loopback NATS connections uses A_NATS_HOST)
 - `A_NATS_HOST`, `A_NATS_PORT` — NATS connection (default: 127.0.0.1:4222)
 - `A_NATS_USER`, `A_NATS_PASSWORD` — NATS auth
 - `A_LOG_LEVEL` — zerolog level (debug/info/warn/error)
 - `A_MIN_COPIES` — minimum service replicas (default: 3)
 - `A_TARGET_CPU`, `A_TARGET_MEMORY` — autoscaling thresholds (default: 75%)
 - `A_TRAFFIC_RPS_THRESHOLD` — sustained RPS to trigger scale-up (default: 5)
+
+**Local development with multiple nodes**: Set `A_NODE_IP` and `A_NATS_HOST` to unique loopback IPs (e.g., 127.0.0.2, 127.0.0.3) for each agent.
 
 See `internal/platform/asty/config.go` for full list.
 

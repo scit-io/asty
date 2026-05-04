@@ -1,13 +1,17 @@
 export interface Node {
   id: string
   datacenter: string
+  ip: string
   status: 'ready' | 'down' | 'initializing'
   cpu_total: number
   cpu_available: number
   memory_total: number
   memory_available: number
   processes: string[]
+  created_at: string
   last_seen: string
+  allocations_running: number
+  allocations_planned: number
 }
 
 export interface NodeDetail extends Node {

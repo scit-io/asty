@@ -5,9 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Server, CheckCircle, Package, Cpu, MemoryStick } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
-import { ThemeToggle } from '@/components/theme-toggle'
+import { Server, Cpu, MemoryStick } from 'lucide-react'
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -31,63 +29,19 @@ export default function Dashboard() {
     return (
       <div className="container mx-auto p-6 space-y-6">
         <Skeleton className="h-9 w-48" />
-        <div className="grid gap-4 md:grid-cols-3">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-        </div>
         <Skeleton className="h-96" />
       </div>
     )
   }
 
-  const stats = [
-    {
-      name: 'Total Nodes',
-      value: statusData?.cluster.nodes_total || 0,
-      icon: Server,
-      color: 'text-blue-500',
-    },
-    {
-      name: 'Healthy Nodes',
-      value: statusData?.cluster.nodes_healthy || 0,
-      icon: CheckCircle,
-      color: 'text-green-500',
-    },
-    {
-      name: 'Services',
-      value: statusData?.services.loaded || 0,
-      icon: Package,
-      color: 'text-purple-500',
-    },
-  ]
-
   return (
-    <div className="container mx-auto p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Cluster Dashboard</h1>
-        <ThemeToggle />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        {stats.map((stat) => (
-          <Card key={stat.name}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{stat.name}</CardTitle>
-              <stat.icon className={`h-4 w-4 ${stat.color}`} />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
 
       <Card>
-        <CardHeader>
+        <CardHeader className="text-right">
           <CardTitle>Nodes</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="overflow-x-auto">
           {nodes.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
               <Server className="h-12 w-12 mb-4" />
@@ -98,12 +52,12 @@ export default function Dashboard() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Node ID</TableHead>
-                  <TableHead>Datacenter</TableHead>
+                  <TableHead>IP</TableHead>
+                  <TableHead>DC</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>CPU</TableHead>
                   <TableHead>Memory</TableHead>
-                  <TableHead>Services</TableHead>
-                  <TableHead>Last Seen</TableHead>
+                  <TableHead className="text-right">Services</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -122,12 +76,13 @@ export default function Dashboard() {
                       onClick={() => navigate(`/nodes/${node.id}`)}
                     >
                       <TableCell className="font-mono font-medium">{node.id}</TableCell>
+                      <TableCell className="font-mono">{node.ip || '-'}</TableCell>
                       <TableCell>{node.datacenter}</TableCell>
                       <TableCell>
                         <Badge
                           variant={
                             node.status === 'ready'
-                              ? 'default'
+                              ? 'success'
                               : node.status === 'down'
                               ? 'destructive'
                               : 'secondary'
@@ -158,9 +113,8 @@ export default function Dashboard() {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell>{node.processes?.length || 0}</TableCell>
-                      <TableCell className="text-muted-foreground">
-                        {formatDistanceToNow(new Date(node.last_seen), { addSuffix: true })}
+                      <TableCell className="text-right">
+                        {node.allocations_running || 0} / {node.allocations_planned || 0}
                       </TableCell>
                     </TableRow>
                   )
