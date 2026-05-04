@@ -1,0 +1,51 @@
+# Gateway service — HTTP entry point (port :80)
+# Type: system — one copy per node
+# User: root — required for binding to port 80
+
+name: gateway
+type: system
+
+artifact:
+  url: https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/gateway_linux_${ARCH}.tar.gz
+  checksum: ${CHECKSUM}
+
+command: ./gateway
+user: root
+kill_timeout: 30s
+
+env:
+  PLATFORM_NATS_HOST: "127.0.0.1"
+  PLATFORM_NATS_PORT: "4222"
+  PLATFORM_NATS_USER: "${A_NATS_USER}"
+  PLATFORM_NATS_PASSWORD: "${A_NATS_PASSWORD}"
+  PLATFORM_HTTP_ADDR: ":80"
+  PLATFORM_ALLOWED_HOSTS: "${PLATFORM_ALLOWED_HOSTS}"
+  PLATFORM_GATEWAY_AUTH_RATE_PREFIX: "${PLATFORM_GATEWAY_AUTH_RATE_PREFIX}"
+  PLATFORM_GATEWAY_TRUSTED_PROXY: "${PLATFORM_GATEWAY_TRUSTED_PROXY}"
+  PLATFORM_LOG_LEVEL: "${PLATFORM_LOG_LEVEL}"
+
+resources:
+  cpu: 200       # MHz
+  memory: 64     # MB
+
+health:
+  type: http
+  path: /health
+  interval: 10s
+  timeout: 3s
+
+logs:
+  max_files: 5
+  max_file_size: 10  # MB
+
+update:
+  max_parallel: 1
+  min_healthy_time: 10s
+  healthy_deadline: 3m
+  progress_deadline: 10m
+  auto_revert: true
+
+restart:
+  attempts: 10
+  interval: 5m
+  delay: 15s

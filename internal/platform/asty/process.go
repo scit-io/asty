@@ -1,0 +1,243 @@
+package asty
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/rs/zerolog/log"
+)
+
+// Process represents a running service instance
+type Process struct {
+	mu sync.Mutex
+
+	// Config
+	svc    *ServiceDefinition
+	nodeID string
+	workDir string
+
+	// Runtime
+	cmd    *exec.Cmd
+	pid    int
+	status ProcessStatus
+
+	// Logs
+	logFile *os.File
+}
+
+// ProcessStatus represents the current state of a process
+type ProcessStatus string
+
+const (
+	ProcessStatusStarting ProcessStatus = "starting"
+	ProcessStatusRunning  ProcessStatus = "running"
+	ProcessStatusStopping ProcessStatus = "stopping"
+	ProcessStatusStopped  ProcessStatus = "stopped"
+	ProcessStatusFailed   ProcessStatus = "failed"
+)
+
+// NewProcess creates a new process instance
+func NewProcess(svc *ServiceDefinition, nodeID, workDir string) *Process {
+	return &Process{
+		svc:     svc,
+		nodeID:  nodeID,
+		workDir: workDir,
+		status:  ProcessStatusStopped,
+	}
+}
+
+// Start starts the process
+func (p *Process) Start(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.status == ProcessStatusRunning {
+		return fmt.Errorf("process already running")
+	}
+
+	p.status = ProcessStatusStarting
+
+	// Setup log file
+	if err := p.setupLogs(); err != nil {
+		p.status = ProcessStatusFailed
+		return fmt.Errorf("failed to setup logs: %w", err)
+	}
+
+	// Prepare command
+	cmdPath := filepath.Join(p.workDir, p.svc.Command)
+	p.cmd = exec.CommandContext(ctx, cmdPath)
+	p.cmd.Dir = p.workDir
+
+	// Set environment variables
+	p.cmd.Env = os.Environ()
+	for k, v := range p.svc.Env {
+		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, os.ExpandEnv(v)))
+	}
+
+	// Redirect stdout/stderr to log file
+	p.cmd.Stdout = p.logFile
+	p.cmd.Stderr = p.logFile
+
+	// Start process
+	if err := p.cmd.Start(); err != nil {
+		p.status = ProcessStatusFailed
+		return fmt.Errorf("failed to start process: %w", err)
+	}
+
+	p.pid = p.cmd.Process.Pid
+	p.status = ProcessStatusRunning
+
+	log.Info().
+		Str("service", p.svc.Name).
+		Int("pid", p.pid).
+		Str("workdir", p.workDir).
+		Msg("process started")
+
+	// Monitor process in background
+	go p.monitor()
+
+	return nil
+}
+
+// Stop stops the process gracefully (SIGTERM → wait → SIGKILL)
+func (p *Process) Stop() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.status != ProcessStatusRunning {
+		return nil
+	}
+
+	p.status = ProcessStatusStopping
+
+	log.Info().
+		Str("service", p.svc.Name).
+		Int("pid", p.pid).
+		Msg("stopping process")
+
+	// Send SIGTERM
+	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("failed to send SIGTERM: %w", err)
+	}
+
+	// Wait for graceful shutdown with timeout
+	killTimeout := p.svc.GetKillTimeout()
+	done := make(chan error, 1)
+	go func() {
+		done <- p.cmd.Wait()
+	}()
+
+	select {
+	case <-time.After(killTimeout):
+		// Force kill
+		log.Warn().
+			Str("service", p.svc.Name).
+			Int("pid", p.pid).
+			Dur("timeout", killTimeout).
+			Msg("graceful shutdown timeout, sending SIGKILL")
+
+		if err := p.cmd.Process.Kill(); err != nil {
+			return fmt.Errorf("failed to kill process: %w", err)
+		}
+		<-done // Wait for actual exit
+
+	case err := <-done:
+		if err != nil && err.Error() != "signal: terminated" {
+			log.Warn().Err(err).Str("service", p.svc.Name).Msg("process exited with error")
+		}
+	}
+
+	p.status = ProcessStatusStopped
+	p.closeLogs()
+
+	log.Info().
+		Str("service", p.svc.Name).
+		Int("pid", p.pid).
+		Msg("process stopped")
+
+	return nil
+}
+
+// Status returns the current process status
+func (p *Process) Status() ProcessStatus {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.status
+}
+
+// PID returns the process ID
+func (p *Process) PID() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
+
+// monitor watches the process and updates status when it exits
+func (p *Process) monitor() {
+	err := p.cmd.Wait()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.status == ProcessStatusStopping {
+		// Expected shutdown
+		p.status = ProcessStatusStopped
+	} else {
+		// Unexpected exit
+		p.status = ProcessStatusFailed
+		log.Error().
+			Err(err).
+			Str("service", p.svc.Name).
+			Int("pid", p.pid).
+			Msg("process exited unexpectedly")
+	}
+
+	p.closeLogs()
+}
+
+// setupLogs creates and opens the log file for this process
+func (p *Process) setupLogs() error {
+	logDir := filepath.Join(p.workDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return err
+	}
+
+	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", p.svc.Name))
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+
+	p.logFile = f
+	return nil
+}
+
+// closeLogs closes the log file
+func (p *Process) closeLogs() {
+	if p.logFile != nil {
+		p.logFile.Close()
+		p.logFile = nil
+	}
+}
+
+// GetLogs returns the last N lines from the process log file
+func (p *Process) GetLogs(lines int) ([]byte, error) {
+	logPath := filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
+
+	f, err := os.Open(logPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Simple tail implementation - read entire file for now
+	// TODO: implement efficient tail for large files
+	return io.ReadAll(f)
+}
