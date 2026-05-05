@@ -104,6 +104,7 @@ export interface LogsResponse {
 export interface MetricsResponse {
   cpu: MetricPoint[]
   memory: MetricPoint[]
+  rps?: MetricPoint[]
   period: string
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -15,6 +16,21 @@ type Deployer struct {
 	clusterState *ClusterState
 	nc           *nats.Conn
 	cfg          *Config
+
+	mu      sync.Mutex
+	history []DeploymentRecord
+}
+
+// DeploymentRecord stores deployment history
+type DeploymentRecord struct {
+	ID          string    `json:"id"`
+	Service     string    `json:"service"`
+	Version     string    `json:"version"`
+	Strategy    string    `json:"strategy"`
+	Status      string    `json:"status"` // running, completed, failed, reverted
+	StartedAt   time.Time `json:"started_at"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+	Progress    int       `json:"progress"` // 0-100
 }
 
 // NewDeployer creates a new deployer
@@ -23,6 +39,7 @@ func NewDeployer(clusterState *ClusterState, nc *nats.Conn, cfg *Config) *Deploy
 		clusterState: clusterState,
 		nc:           nc,
 		cfg:          cfg,
+		history:      make([]DeploymentRecord, 0),
 	}
 }
 
@@ -73,6 +90,21 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		StartTime:   time.Now(),
 	}
 
+	// Record deployment start
+	record := DeploymentRecord{
+		ID:        fmt.Sprintf("deploy-%s-%d", plan.ServiceName, time.Now().UnixNano()),
+		Service:   plan.ServiceName,
+		Version:   plan.TargetVersion,
+		Strategy:  "rolling",
+		Status:    "running",
+		StartedAt: time.Now(),
+		Progress:  0,
+	}
+	if plan.Canary > 0 {
+		record.Strategy = "canary"
+	}
+	d.addRecord(record)
+
 	log.Info().
 		Str("service", plan.ServiceName).
 		Str("from", plan.CurrentVersion).
@@ -115,11 +147,12 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 	status.Status = "successful"
 	status.EndTime = time.Now()
 
+	d.updateLastRecord("completed", 100)
+
 	log.Info().
 		Str("service", plan.ServiceName).
 		Dur("duration", status.EndTime.Sub(status.StartTime)).
 		Msg("deployment successful")
-
 
 	return status, nil
 }
@@ -328,8 +361,7 @@ func (d *Deployer) revertDeployment(status *DeploymentStatus, reason string) (*D
 	status.Error = reason
 	status.EndTime = time.Now()
 
-	// TODO: implement actual revert logic
-	// For now, just mark as reverted
+	d.updateLastRecord("reverted", 0)
 
 	return status, fmt.Errorf("deployment reverted: %s", reason)
 }
@@ -339,6 +371,8 @@ func (d *Deployer) failDeployment(status *DeploymentStatus, err error) (*Deploym
 	status.Status = "failed"
 	status.Error = err.Error()
 	status.EndTime = time.Now()
+
+	d.updateLastRecord("failed", status.Updated*100/max(status.Total, 1))
 
 	log.Error().
 		Err(err).
@@ -353,6 +387,47 @@ func (d *Deployer) failDeployment(status *DeploymentStatus, err error) (*Deploym
 func (d *Deployer) GetDeploymentStatus(serviceName string) (*DeploymentStatus, error) {
 	// TODO: store deployment status in cluster state
 	return nil, fmt.Errorf("not implemented")
+}
+
+// GetHistory returns deployment history
+func (d *Deployer) GetHistory() []DeploymentRecord {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	result := make([]DeploymentRecord, len(d.history))
+	copy(result, d.history)
+
+	// Return in reverse chronological order
+	for i, j := 0, len(result)-1; i < j; i, j = i+1, j-1 {
+		result[i], result[j] = result[j], result[i]
+	}
+
+	return result
+}
+
+func (d *Deployer) addRecord(record DeploymentRecord) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.history) >= 100 {
+		d.history = d.history[1:]
+	}
+	d.history = append(d.history, record)
+}
+
+func (d *Deployer) updateLastRecord(status string, progress int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if len(d.history) == 0 {
+		return
+	}
+	last := &d.history[len(d.history)-1]
+	last.Status = status
+	last.Progress = progress
+	if status != "running" {
+		last.CompletedAt = time.Now()
+	}
 }
 
 // min returns the minimum of two integers

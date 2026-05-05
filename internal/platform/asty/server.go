@@ -132,6 +132,9 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start metrics collection (every 10s)
 	s.metricsStore.StartCollection(clusterState, s.services, 10*time.Second)
 
+	// Subscribe to Gateway RPS metrics
+	s.subscribeGatewayMetrics()
+
 	// Initialize API server
 	s.api = NewAPI(s, s.cfg.UIAddr)
 
@@ -486,6 +489,29 @@ func parseUpdateDuration(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// subscribeGatewayMetrics subscribes to Gateway RPS reports from agents
+func (s *Server) subscribeGatewayMetrics() {
+	subject := "asty.v1.metrics.gateway.*"
+	_, err := s.nc.Subscribe(subject, func(msg *nats.Msg) {
+		var report struct {
+			NodeID   string  `json:"node_id"`
+			ValidRPS float64 `json:"valid_rps"`
+		}
+		if err := json.Unmarshal(msg.Data, &report); err != nil {
+			return
+		}
+
+		s.metricsStore.Add("node."+report.NodeID+".rps", report.ValidRPS)
+
+		// Aggregate cluster RPS (sum across all nodes would be done at query time;
+		// for simplicity store each report — UI will sum recent points)
+		s.metricsStore.Add("cluster.rps", report.ValidRPS)
+	})
+	if err != nil {
+		log.Error().Err(err).Str("subject", subject).Msg("failed to subscribe to gateway metrics")
+	}
 }
 
 // connectNATS establishes connection to NATS

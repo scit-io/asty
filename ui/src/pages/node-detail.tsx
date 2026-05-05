@@ -58,6 +58,7 @@ export default function NodeDetail() {
   const [allocations, setAllocations] = useState<Allocation[]>([])
   const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
+  const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
   const [error, setError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
   const isStreamingRef = useRef(false)
@@ -90,12 +91,13 @@ export default function NodeDetail() {
 
         const [allocsRes, metricsRes] = await Promise.all([
           api.getNodeAllocations(nodeId).catch(() => ({ allocations: [] })),
-          api.getNodeMetrics(nodeId).catch(() => ({ cpu: [], memory: [], period: '1h' })),
+          api.getNodeMetrics(nodeId).catch(() => ({ cpu: [], memory: [], rps: [], period: '1h' })),
         ])
         if (!cancelled) {
           setAllocations((allocsRes as { allocations: Allocation[] }).allocations || [])
           setCpuMetrics(metricsRes.cpu || [])
           setMemoryMetrics(metricsRes.memory || [])
+          setRpsMetrics(metricsRes.rps || [])
         }
       } catch {
         // keep current state on error
@@ -305,9 +307,10 @@ export default function NodeDetail() {
         </Card>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <MetricsChart title="CPU Usage" data={cpuMetrics} color="hsl(var(--chart-1))" />
         <MetricsChart title="Memory Usage" data={memoryMetrics} color="hsl(var(--chart-2))" />
+        <MetricsChart title="Gateway RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
       </div>
 
       <Tabs defaultValue="services" className="space-y-4">

@@ -617,10 +617,11 @@ func (api *API) handleDeployments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: implement deployments storage
+	history := api.server.deployer.GetHistory()
+
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"deployments": []interface{}{},
-		"count":       0,
+		"deployments": history,
+		"count":       len(history),
 	})
 }
 
@@ -644,10 +645,12 @@ func (api *API) handleMetricsCluster(w http.ResponseWriter, r *http.Request) {
 
 	cpu := api.server.metricsStore.Get("cluster.cpu", since)
 	memory := api.server.metricsStore.Get("cluster.memory", since)
+	rps := api.server.metricsStore.Get("cluster.rps", since)
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cpu":    cpu,
 		"memory": memory,
+		"rps":    rps,
 		"period": duration.String(),
 	})
 }
@@ -679,11 +682,13 @@ func (api *API) handleMetricsNode(w http.ResponseWriter, r *http.Request) {
 
 	cpu := api.server.metricsStore.Get("node."+nodeID+".cpu", since)
 	memory := api.server.metricsStore.Get("node."+nodeID+".memory", since)
+	rps := api.server.metricsStore.Get("node."+nodeID+".rps", since)
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"node_id": nodeID,
 		"cpu":     cpu,
 		"memory":  memory,
+		"rps":     rps,
 		"period":  duration.String(),
 	})
 }

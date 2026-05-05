@@ -29,10 +29,12 @@ export default function Dashboard() {
   const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
   const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
+  const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
   const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const statusStreamRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -50,6 +52,7 @@ export default function Dashboard() {
         setClusterStatus(statusRes)
         setCpuMetrics(metricsRes.cpu || [])
         setMemoryMetrics(metricsRes.memory || [])
+        setRpsMetrics(metricsRes.rps || [])
       } catch {
         // keep current state
       }
@@ -58,6 +61,32 @@ export default function Dashboard() {
 
     fetchData()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [])
+
+  // SSE stream for real-time cluster status updates
+  useEffect(() => {
+    const eventSource = new EventSource('/api/v1/stream')
+
+    eventSource.addEventListener('status', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.cluster) {
+          setClusterStatus((prev) => prev ? { ...prev, cluster: data.cluster } : prev)
+        }
+      } catch {
+        // ignore parse errors
+      }
+    })
+
+    eventSource.onerror = () => {
+      eventSource.close()
+    }
+
+    statusStreamRef.current = eventSource
+    return () => {
+      eventSource.close()
+      statusStreamRef.current = null
+    }
   }, [])
 
   useEffect(() => {
@@ -164,9 +193,10 @@ export default function Dashboard() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="grid gap-4 md:grid-cols-3">
         <MetricsChart title="Cluster CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
         <MetricsChart title="Cluster Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
+        <MetricsChart title="Gateway RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
       </div>
 
       <Tabs defaultValue="nodes" className="space-y-4">
