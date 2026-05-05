@@ -101,8 +101,11 @@ func (s *Server) Start(ctx context.Context) error {
 	natsWriter := NewNATSWriter(s.nc, "asty.v1.server.logs")
 	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
+	// Initialize metrics store (24h retention)
+	s.metricsStore = NewMetricsStore(24 * time.Hour)
+
 	// Initialize autoscaler
-	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg)
+	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.metricsStore)
 
 	// Initialize proximity matrix
 	s.proximityMatrix = NewProximityMatrix()
@@ -126,11 +129,8 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 	s.services = services
 
-	// Initialize metrics store (24h retention)
-	s.metricsStore = NewMetricsStore(24 * time.Hour)
-
 	// Start metrics collection (every 10s)
-	s.metricsStore.StartCollection(clusterState, 10*time.Second)
+	s.metricsStore.StartCollection(clusterState, s.services, 10*time.Second)
 
 	// Initialize API server
 	s.api = NewAPI(s, s.cfg.UIAddr)

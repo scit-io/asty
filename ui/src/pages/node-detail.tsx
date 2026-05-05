@@ -21,8 +21,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { MetricsChart } from '@/components/metrics-chart'
 import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import type { MetricPoint } from '@/types'
 
 interface Node {
   id: string
@@ -54,6 +56,8 @@ export default function NodeDetail() {
   const navigate = useNavigate()
   const [node, setNode] = useState<Node | null>(null)
   const [allocations, setAllocations] = useState<Allocation[]>([])
+  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
+  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [error, setError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
   const isStreamingRef = useRef(false)
@@ -84,11 +88,14 @@ export default function NodeDetail() {
         setNode(nodeData)
         setError(null)
 
-        try {
-          const allocsRes = await api.getNodeAllocations(nodeId)
-          if (!cancelled) setAllocations(allocsRes.allocations || [])
-        } catch {
-          // allocations endpoint may not exist yet
+        const [allocsRes, metricsRes] = await Promise.all([
+          api.getNodeAllocations(nodeId).catch(() => ({ allocations: [] })),
+          api.getNodeMetrics(nodeId).catch(() => ({ cpu: [], memory: [], period: '1h' })),
+        ])
+        if (!cancelled) {
+          setAllocations((allocsRes as { allocations: Allocation[] }).allocations || [])
+          setCpuMetrics(metricsRes.cpu || [])
+          setMemoryMetrics(metricsRes.memory || [])
         }
       } catch {
         // keep current state on error
@@ -260,11 +267,15 @@ export default function NodeDetail() {
           </CardHeader>
           <CardContent>
             <div className="text-sm font-bold mt-1 mb-2">
-              {formatDistanceToNow(new Date(node.created_at), { addSuffix: true })}
+              {node.created_at
+                ? formatDistanceToNow(new Date(node.created_at), { addSuffix: true })
+                : '-'}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {new Date(node.created_at).toLocaleString()}
-            </p>
+            {node.created_at && (
+              <p className="text-xs text-muted-foreground">
+                {new Date(node.created_at).toLocaleString()}
+              </p>
+            )}
           </CardContent>
         </Card>
 
@@ -292,6 +303,11 @@ export default function NodeDetail() {
             </Button>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <MetricsChart title="CPU Usage" data={cpuMetrics} color="hsl(var(--chart-1))" />
+        <MetricsChart title="Memory Usage" data={memoryMetrics} color="hsl(var(--chart-2))" />
       </div>
 
       <Tabs defaultValue="services" className="space-y-4">

@@ -20,8 +20,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { MetricsChart } from '@/components/metrics-chart'
 import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import type { MetricPoint } from '@/types'
 
 interface Allocation {
   id: string
@@ -40,6 +42,8 @@ interface Allocation {
 export default function ServiceDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
   const [allocation, setAllocation] = useState<Allocation | null>(null)
+  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
+  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [error, setError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
   const isStreamingRef = useRef(false)
@@ -69,6 +73,17 @@ export default function ServiceDetail() {
         if (cancelled) return
         setAllocation(allocData)
         setError(null)
+
+        const metricsRes = await api.getAllocationMetrics(allocId).catch(() => ({
+          allocation_id: allocId,
+          cpu: [],
+          memory: [],
+          period: '1h',
+        }))
+        if (!cancelled) {
+          setCpuMetrics(metricsRes.cpu || [])
+          setMemoryMetrics(metricsRes.memory || [])
+        }
       } catch {
         // keep current state
       }
@@ -212,7 +227,7 @@ export default function ServiceDetail() {
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="health">Health</TabsTrigger>
+          <TabsTrigger value="metrics">Metrics</TabsTrigger>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="actions">Actions</TabsTrigger>
         </TabsList>
@@ -256,11 +271,15 @@ export default function ServiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="text-sm font-bold mt-1 mb-2">
-                  {formatDistanceToNow(new Date(allocation.started_at), { addSuffix: true })}
+                  {allocation.started_at
+                    ? formatDistanceToNow(new Date(allocation.started_at), { addSuffix: true })
+                    : '-'}
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {new Date(allocation.started_at).toLocaleString()}
-                </p>
+                {allocation.started_at && (
+                  <p className="text-xs text-muted-foreground">
+                    {new Date(allocation.started_at).toLocaleString()}
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -279,21 +298,7 @@ export default function ServiceDetail() {
                 <span className="font-mono">{allocation.pid}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">Started</span>
-                <span>{new Date(allocation.started_at).toLocaleString()}</span>
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="health" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Health Status</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-lg font-medium">Current Status</span>
+                <span className="text-muted-foreground">Health</span>
                 <Badge
                   variant={
                     allocation.health_status === 'healthy'
@@ -302,13 +307,23 @@ export default function ServiceDetail() {
                       ? 'destructive'
                       : 'secondary'
                   }
-                  className="text-lg px-4 py-1"
                 >
                   {allocation.health_status}
                 </Badge>
               </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Started</span>
+                <span>{allocation.started_at ? new Date(allocation.started_at).toLocaleString() : '-'}</span>
+              </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="metrics" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <MetricsChart title="CPU Usage" data={cpuMetrics} color="hsl(var(--chart-1))" />
+            <MetricsChart title="Memory Usage" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" MB" />
+          </div>
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-4">

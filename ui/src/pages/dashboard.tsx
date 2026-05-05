@@ -1,11 +1,14 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
+import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Server, Cpu, MemoryStick, FileText } from 'lucide-react'
+import { MetricsChart } from '@/components/metrics-chart'
+import { Server, Cpu, MemoryStick, FileText, Activity, Shield } from 'lucide-react'
+import type { MetricPoint, ClusterStatus } from '@/types'
 
 interface Node {
   id: string
@@ -23,6 +26,9 @@ interface Node {
 export default function Dashboard() {
   const navigate = useNavigate()
   const [nodes, setNodes] = useState<Node[]>([])
+  const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
+  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
+  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
   const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -32,22 +38,25 @@ export default function Dashboard() {
     let timer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
 
-    const fetchNodes = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch('/api/v1/nodes')
-        if (!res.ok) return
-        const data = await res.json()
+        const [nodesRes, statusRes, metricsRes] = await Promise.all([
+          api.getNodes(),
+          api.getStatus(),
+          api.getClusterMetrics('1h'),
+        ])
         if (cancelled) return
-        setNodes(data.nodes || [])
+        setNodes(nodesRes.nodes || [])
+        setClusterStatus(statusRes)
+        setCpuMetrics(metricsRes.cpu || [])
+        setMemoryMetrics(metricsRes.memory || [])
       } catch {
-        // backend unavailable — keep current state, don't re-render
+        // keep current state
       }
-      if (!cancelled) {
-        timer = setTimeout(fetchNodes, 5000)
-      }
+      if (!cancelled) timer = setTimeout(fetchData, 5000)
     }
 
-    fetchNodes()
+    fetchData()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [])
 
@@ -97,6 +106,69 @@ export default function Dashboard() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+      {clusterStatus && (
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Nodes</CardTitle>
+              <Server className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{clusterStatus.cluster.nodes_healthy}</div>
+              <p className="text-xs text-muted-foreground">
+                of {clusterStatus.cluster.nodes_total} total
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Services</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">{clusterStatus.services.loaded}</div>
+              <p className="text-xs text-muted-foreground">loaded</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Leader</CardTitle>
+              <Shield className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-sm font-bold mt-1 font-mono truncate">
+                {clusterStatus.cluster.leader || 'none'}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {clusterStatus.cluster.is_leader ? 'this node' : 'remote'}
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Cluster Health</CardTitle>
+              <Activity className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold">
+                {clusterStatus.cluster.nodes_total > 0
+                  ? Math.round((clusterStatus.cluster.nodes_healthy / clusterStatus.cluster.nodes_total) * 100)
+                  : 0}%
+              </div>
+              <p className="text-xs text-muted-foreground">nodes healthy</p>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <MetricsChart title="Cluster CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
+        <MetricsChart title="Cluster Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
+      </div>
+
       <Tabs defaultValue="nodes" className="space-y-4">
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="nodes">

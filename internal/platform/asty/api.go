@@ -46,6 +46,10 @@ func (api *API) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/stream", api.handleStream)
 	mux.HandleFunc("/api/v1/metrics/cluster", api.handleMetricsCluster)
 	mux.HandleFunc("/api/v1/metrics/nodes/", api.handleMetricsNode)
+	mux.HandleFunc("/api/v1/metrics/services/", api.handleMetricsService)
+	mux.HandleFunc("/api/v1/metrics/allocations/", api.handleMetricsAllocation)
+	mux.HandleFunc("/api/v1/autoscaler/events", api.handleAutoscalerEvents)
+	mux.HandleFunc("/api/v1/autoscaler/status", api.handleAutoscalerStatus)
 	mux.HandleFunc("/api/v1/logs/cluster", api.handleLogsCluster)
 	mux.HandleFunc("/api/v1/logs/allocation/", api.handleLogsAllocation)
 	mux.HandleFunc("/api/v1/logs/node/", api.handleLogsNode)
@@ -94,12 +98,24 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"version": "0.1.0",
 		"api":     "/api/v1",
 		"endpoints": map[string]string{
-			"status":      "/api/v1/status",
-			"nodes":       "/api/v1/nodes",
-			"services":    "/api/v1/services",
-			"allocations": "/api/v1/allocations",
-			"health":      "/health",
-			"metrics":     "/metrics",
+			"status":             "/api/v1/status",
+			"nodes":             "/api/v1/nodes",
+			"services":          "/api/v1/services",
+			"allocations":       "/api/v1/allocations",
+			"deploy":            "/api/v1/deploy",
+			"deployments":       "/api/v1/deployments",
+			"metrics_cluster":   "/api/v1/metrics/cluster",
+			"metrics_node":      "/api/v1/metrics/nodes/:id",
+			"metrics_service":   "/api/v1/metrics/services/:name",
+			"metrics_alloc":     "/api/v1/metrics/allocations/:id",
+			"autoscaler_status": "/api/v1/autoscaler/status",
+			"autoscaler_events": "/api/v1/autoscaler/events",
+			"stream":            "/api/v1/stream",
+			"logs_cluster":      "/api/v1/logs/cluster",
+			"logs_node":         "/api/v1/logs/node/:id",
+			"logs_allocation":   "/api/v1/logs/allocation/:id",
+			"health":            "/health",
+			"metrics":           "/metrics",
 		},
 		"docs": "https://github.com/yourorg/asty",
 	}
@@ -669,6 +685,161 @@ func (api *API) handleMetricsNode(w http.ResponseWriter, r *http.Request) {
 		"cpu":     cpu,
 		"memory":  memory,
 		"period":  duration.String(),
+	})
+}
+
+// handleMetricsService returns per-service metrics
+func (api *API) handleMetricsService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	serviceName := r.URL.Path[len("/api/v1/metrics/services/"):]
+	if serviceName == "" {
+		api.writeError(w, http.StatusBadRequest, "service name required", nil)
+		return
+	}
+
+	period := r.URL.Query().Get("period")
+	duration := 1 * time.Hour
+	if period != "" {
+		if d, err := time.ParseDuration(period); err == nil {
+			duration = d
+		}
+	}
+
+	since := time.Now().Add(-duration)
+
+	cpu := api.server.metricsStore.Get("service."+serviceName+".cpu", since)
+	memory := api.server.metricsStore.Get("service."+serviceName+".memory", since)
+	allocCount := api.server.metricsStore.Get("service."+serviceName+".alloc_count", since)
+
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"service":           serviceName,
+		"cpu":               cpu,
+		"memory":            memory,
+		"allocations_count": allocCount,
+		"period":            duration.String(),
+	})
+}
+
+// handleMetricsAllocation returns per-allocation metrics
+func (api *API) handleMetricsAllocation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	allocID := r.URL.Path[len("/api/v1/metrics/allocations/"):]
+	if allocID == "" {
+		api.writeError(w, http.StatusBadRequest, "allocation ID required", nil)
+		return
+	}
+
+	period := r.URL.Query().Get("period")
+	duration := 1 * time.Hour
+	if period != "" {
+		if d, err := time.ParseDuration(period); err == nil {
+			duration = d
+		}
+	}
+
+	since := time.Now().Add(-duration)
+
+	cpu := api.server.metricsStore.Get("alloc."+allocID+".cpu", since)
+	memory := api.server.metricsStore.Get("alloc."+allocID+".memory", since)
+
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"allocation_id": allocID,
+		"cpu":           cpu,
+		"memory":        memory,
+		"period":        duration.String(),
+	})
+}
+
+// handleAutoscalerEvents returns autoscaler scaling events
+func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	service := r.URL.Query().Get("service")
+	limit := 100
+	if l := r.URL.Query().Get("limit"); l != "" {
+		fmt.Sscanf(l, "%d", &limit)
+	}
+
+	events := api.server.metricsStore.GetEvents(service, limit)
+
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"events": events,
+		"count":  len(events),
+	})
+}
+
+// handleAutoscalerStatus returns current autoscaler state per service
+func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	servicesStatus := make(map[string]interface{})
+
+	for _, svc := range api.server.services {
+		if svc.Type == "system" {
+			continue
+		}
+
+		allocs, _ := api.server.clusterState.ListAllocations(svc.Name)
+		running := 0
+		for _, a := range allocs {
+			if a.Status == "running" {
+				running++
+			}
+		}
+
+		cooldownUp := false
+		cooldownDown := false
+		var lastAction string
+		var lastActionAt int64
+
+		if api.server.autoscaler != nil {
+			if t, ok := api.server.autoscaler.lastScaleUp[svc.Name]; ok {
+				if time.Since(t) < api.server.cfg.CooldownUp {
+					cooldownUp = true
+				}
+				lastAction = "scale_up"
+				lastActionAt = t.Unix()
+			}
+			if t, ok := api.server.autoscaler.lastScaleDown[svc.Name]; ok {
+				if time.Since(t) < api.server.cfg.CooldownDown {
+					cooldownDown = true
+				}
+				if t.Unix() > lastActionAt {
+					lastAction = "scale_down"
+					lastActionAt = t.Unix()
+				}
+			}
+		}
+
+		servicesStatus[svc.Name] = map[string]interface{}{
+			"current_copies":     running,
+			"min_copies":         api.server.cfg.MinCopies,
+			"target_cpu":         api.server.cfg.TargetCPU,
+			"target_memory":      api.server.cfg.TargetMemory,
+			"traffic_threshold":  api.server.cfg.TrafficRPSThreshold,
+			"cooldown_up_active": cooldownUp,
+			"cooldown_down_active": cooldownDown,
+			"last_action":        lastAction,
+			"last_action_at":     lastActionAt,
+		}
+	}
+
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"services": servicesStatus,
 	})
 }
 

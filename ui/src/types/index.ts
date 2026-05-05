@@ -100,3 +100,70 @@ export interface LogsResponse {
   logs: string[]
   line_count?: number
 }
+
+export interface MetricsResponse {
+  cpu: MetricPoint[]
+  memory: MetricPoint[]
+  period: string
+}
+
+export interface ServiceMetricsResponse extends MetricsResponse {
+  service: string
+  allocations_count: MetricPoint[]
+}
+
+export interface AllocationMetricsResponse extends MetricsResponse {
+  allocation_id: string
+}
+
+export interface ScalingEvent {
+  timestamp: number
+  service: string
+  action: 'scale_up' | 'scale_down'
+  reason: string
+  from_count: number
+  to_count: number
+  node_id?: string
+}
+
+export interface AutoscalerServiceStatus {
+  current_copies: number
+  min_copies: number
+  target_cpu: number
+  target_memory: number
+  traffic_threshold: number
+  cooldown_up_active: boolean
+  cooldown_down_active: boolean
+  last_action: string
+  last_action_at: number
+}
+
+export interface AutoscalerStatusResponse {
+  services: Record<string, AutoscalerServiceStatus>
+}
+
+export interface AutoscalerEventsResponse {
+  events: ScalingEvent[]
+  count: number
+}
+
+export interface ServiceDetailResponse {
+  service: ServiceDefinition
+  allocations: Allocation[]
+}
+
+export interface DeploymentRecord {
+  id: string
+  service: string
+  version: string
+  strategy: string
+  status: string
+  started_at: string
+  completed_at?: string
+  progress: number
+}
+
+export interface DeploymentsResponse {
+  deployments: DeploymentRecord[]
+  count: number
+}

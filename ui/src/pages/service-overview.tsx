@@ -1,0 +1,332 @@
+import { useNavigate, useParams } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { api } from '@/api/client'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from '@/components/ui/breadcrumb'
+import { MetricsChart } from '@/components/metrics-chart'
+import { Cpu, MemoryStick, Activity, Layers } from 'lucide-react'
+import { formatDistanceToNow } from 'date-fns'
+import type {
+  ServiceDefinition,
+  Allocation,
+  MetricPoint,
+  ScalingEvent,
+  AutoscalerServiceStatus,
+} from '@/types'
+
+export default function ServiceOverview() {
+  const { name } = useParams<{ name: string }>()
+  const navigate = useNavigate()
+  const [service, setService] = useState<ServiceDefinition | null>(null)
+  const [allocations, setAllocations] = useState<Allocation[]>([])
+  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
+  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
+  const [allocCountMetrics, setAllocCountMetrics] = useState<MetricPoint[]>([])
+  const [events, setEvents] = useState<ScalingEvent[]>([])
+  const [autoscalerStatus, setAutoscalerStatus] = useState<AutoscalerServiceStatus | null>(null)
+
+  useEffect(() => {
+    if (!name) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const fetchData = async () => {
+      try {
+        const [svcRes, metricsRes, eventsRes, asRes] = await Promise.all([
+          api.getService(name),
+          api.getServiceMetrics(name),
+          api.getAutoscalerEvents(name, 50),
+          api.getAutoscalerStatus(),
+        ])
+        if (cancelled) return
+        setService(svcRes.service)
+        setAllocations(svcRes.allocations || [])
+        setCpuMetrics(metricsRes.cpu || [])
+        setMemoryMetrics(metricsRes.memory || [])
+        setAllocCountMetrics(metricsRes.allocations_count || [])
+        setEvents(eventsRes.events || [])
+        setAutoscalerStatus(asRes.services?.[name] || null)
+      } catch {
+        // keep current state
+      }
+      if (!cancelled) timer = setTimeout(fetchData, 5000)
+    }
+
+    fetchData()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [name])
+
+  if (!service) {
+    return (
+      <div className="container mx-auto p-6">
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Activity className="h-12 w-12 mb-4" />
+          <p>Loading service...</p>
+        </div>
+      </div>
+    )
+  }
+
+  const runningCount = allocations.filter((a) => a.status === 'running').length
+
+  return (
+    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <Breadcrumb>
+          <BreadcrumbList>
+            <BreadcrumbItem>
+              <BreadcrumbLink to="/services">Services</BreadcrumbLink>
+            </BreadcrumbItem>
+            <BreadcrumbSeparator />
+            <BreadcrumbItem>
+              <BreadcrumbPage>{name}</BreadcrumbPage>
+            </BreadcrumbItem>
+          </BreadcrumbList>
+        </Breadcrumb>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
+          <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>
+            {service.Type}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Running</CardTitle>
+            <Layers className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{runningCount}</div>
+            <p className="text-xs text-muted-foreground">
+              of {allocations.length} total
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">CPU Limit</CardTitle>
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{service.Resources.CPU}</div>
+            <p className="text-xs text-muted-foreground">MHz per instance</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Memory Limit</CardTitle>
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{service.Resources.Memory}</div>
+            <p className="text-xs text-muted-foreground">MB per instance</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Health Check</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm font-bold mt-1">{service.Health.Type || 'none'}</div>
+            {service.Health.Path && (
+              <p className="text-xs text-muted-foreground font-mono">{service.Health.Path}</p>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="metrics" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="metrics">Metrics</TabsTrigger>
+          <TabsTrigger value="allocations">Allocations</TabsTrigger>
+          <TabsTrigger value="autoscaler">Autoscaler</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="metrics" className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <MetricsChart title="CPU Usage (aggregate)" data={cpuMetrics} color="hsl(var(--chart-1))" />
+            <MetricsChart title="Memory Usage (aggregate)" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" MB" />
+          </div>
+          <MetricsChart title="Running Allocations" data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
+        </TabsContent>
+
+        <TabsContent value="allocations" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Allocations</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {allocations.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Activity className="h-12 w-12 mb-4" />
+                  <p>No allocations</p>
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Node</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Health</TableHead>
+                      <TableHead>CPU</TableHead>
+                      <TableHead>Memory</TableHead>
+                      <TableHead>Restarts</TableHead>
+                      <TableHead>Started</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {allocations.map((alloc) => (
+                      <TableRow
+                        key={alloc.id}
+                        className="cursor-pointer hover:bg-muted/50"
+                        onClick={() => navigate(`/nodes/${alloc.node_id}/alloc/${alloc.id}`)}
+                      >
+                        <TableCell className="font-mono text-xs">{alloc.id.slice(0, 8)}</TableCell>
+                        <TableCell className="font-mono">{alloc.node_id}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              alloc.status === 'running' ? 'default'
+                                : alloc.status === 'failed' ? 'destructive'
+                                : 'secondary'
+                            }
+                          >
+                            {alloc.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              alloc.health_status === 'healthy' ? 'default'
+                                : alloc.health_status === 'unhealthy' ? 'destructive'
+                                : 'secondary'
+                            }
+                          >
+                            {alloc.health_status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>{alloc.cpu_usage}%</TableCell>
+                        <TableCell>{alloc.memory_usage} MB</TableCell>
+                        <TableCell>{alloc.restarts}</TableCell>
+                        <TableCell className="text-sm">
+                          {alloc.started_at
+                            ? formatDistanceToNow(new Date(alloc.started_at), { addSuffix: true })
+                            : '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="autoscaler" className="space-y-4">
+          {autoscalerStatus && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Autoscaler Configuration</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Current Copies</span>
+                  <span className="font-bold">{autoscalerStatus.current_copies}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Min Copies</span>
+                  <span>{autoscalerStatus.min_copies}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Target CPU</span>
+                  <span>{autoscalerStatus.target_cpu}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Target Memory</span>
+                  <span>{autoscalerStatus.target_memory}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Traffic Threshold</span>
+                  <span>{autoscalerStatus.traffic_threshold} rps</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Cooldown</span>
+                  <div className="flex gap-2">
+                    {autoscalerStatus.cooldown_up_active && <Badge variant="secondary">up</Badge>}
+                    {autoscalerStatus.cooldown_down_active && <Badge variant="secondary">down</Badge>}
+                    {!autoscalerStatus.cooldown_up_active && !autoscalerStatus.cooldown_down_active && (
+                      <span className="text-sm">inactive</span>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Scaling Events</CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {events.length === 0 ? (
+                <div className="text-muted-foreground text-center py-8">
+                  No scaling events yet
+                </div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Time</TableHead>
+                      <TableHead>Action</TableHead>
+                      <TableHead>Reason</TableHead>
+                      <TableHead>Copies</TableHead>
+                      <TableHead>Node</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {events.map((event, idx) => (
+                      <TableRow key={idx}>
+                        <TableCell className="text-sm">
+                          {new Date(event.timestamp * 1000).toLocaleString()}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={event.action === 'scale_up' ? 'default' : 'secondary'}>
+                            {event.action === 'scale_up' ? 'Scale Up' : 'Scale Down'}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm">{event.reason}</TableCell>
+                        <TableCell>
+                          {event.from_count} → {event.to_count}
+                        </TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {event.node_id || '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}

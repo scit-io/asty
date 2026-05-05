@@ -13,6 +13,7 @@ type Autoscaler struct {
 	clusterState *ClusterState
 	scheduler    *Scheduler
 	cfg          *Config
+	metricsStore *MetricsStore
 
 	// Cooldown tracking
 	lastScaleUp   map[string]time.Time // key: service name
@@ -20,12 +21,13 @@ type Autoscaler struct {
 }
 
 // NewAutoscaler creates a new autoscaler
-func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config) *Autoscaler {
+func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config, metricsStore *MetricsStore) *Autoscaler {
 	return &Autoscaler{
-		clusterState: clusterState,
-		scheduler:    scheduler,
-		cfg:          cfg,
-		lastScaleUp:  make(map[string]time.Time),
+		clusterState:  clusterState,
+		scheduler:     scheduler,
+		cfg:           cfg,
+		metricsStore:  metricsStore,
+		lastScaleUp:   make(map[string]time.Time),
 		lastScaleDown: make(map[string]time.Time),
 	}
 }
@@ -255,8 +257,16 @@ func (as *Autoscaler) executeScaleUp(ctx context.Context, decision *ScalingDecis
 	// Update cooldown
 	as.lastScaleUp[svc.Name] = time.Now()
 
-	// TODO: trigger agent command to start service
-	// This should be handled by the scheduler reconciliation loop
+	// Record event
+	allocs, _ := as.clusterState.ListAllocations(svc.Name)
+	as.metricsStore.AddEvent(ScalingEvent{
+		Service:   svc.Name,
+		Action:    "scale_up",
+		Reason:    decision.Reason,
+		FromCount: len(allocs) - 1,
+		ToCount:   len(allocs),
+		NodeID:    decision.TargetNode,
+	})
 
 	return nil
 }
@@ -282,6 +292,8 @@ func (as *Autoscaler) executeScaleDown(ctx context.Context, decision *ScalingDec
 		return fmt.Errorf("no allocation to remove")
 	}
 
+	fromCount := len(runningAllocs)
+
 	// Delete allocation
 	if err := as.clusterState.DeleteAllocation(svc.Name, targetAlloc.NodeID); err != nil {
 		return fmt.Errorf("failed to delete allocation: %w", err)
@@ -290,8 +302,15 @@ func (as *Autoscaler) executeScaleDown(ctx context.Context, decision *ScalingDec
 	// Update cooldown
 	as.lastScaleDown[svc.Name] = time.Now()
 
-	// TODO: trigger agent command to stop service
-	// This should be handled by the scheduler reconciliation loop
+	// Record event
+	as.metricsStore.AddEvent(ScalingEvent{
+		Service:   svc.Name,
+		Action:    "scale_down",
+		Reason:    decision.Reason,
+		FromCount: fromCount,
+		ToCount:   fromCount - 1,
+		NodeID:    targetAlloc.NodeID,
+	})
 
 	log.Info().
 		Str("service", svc.Name).

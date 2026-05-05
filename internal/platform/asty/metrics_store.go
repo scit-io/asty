@@ -11,11 +11,25 @@ type MetricPoint struct {
 	Value     float64 `json:"value"`
 }
 
+// ScalingEvent represents an autoscaling decision event
+type ScalingEvent struct {
+	Timestamp int64  `json:"timestamp"`
+	Service   string `json:"service"`
+	Action    string `json:"action"` // "scale_up" | "scale_down"
+	Reason    string `json:"reason"` // "traffic_rps" | "cpu_threshold" | "memory_threshold"
+	FromCount int    `json:"from_count"`
+	ToCount   int    `json:"to_count"`
+	NodeID    string `json:"node_id,omitempty"`
+}
+
 // MetricsStore stores timeseries metrics in memory
 type MetricsStore struct {
 	mu      sync.RWMutex
 	metrics map[string][]MetricPoint // key: "cluster.cpu", "node.agent-1.cpu", etc
 	maxAge  time.Duration
+
+	eventsMu sync.RWMutex
+	events   []ScalingEvent // ring buffer, max 1000
 }
 
 // NewMetricsStore creates a new metrics store
@@ -23,6 +37,7 @@ func NewMetricsStore(maxAge time.Duration) *MetricsStore {
 	return &MetricsStore{
 		metrics: make(map[string][]MetricPoint),
 		maxAge:  maxAge,
+		events:  make([]ScalingEvent, 0, 1000),
 	}
 }
 
@@ -80,17 +95,51 @@ func (ms *MetricsStore) cleanOld(key string) {
 }
 
 // StartCollection starts periodic metrics collection
-func (ms *MetricsStore) StartCollection(state *ClusterState, interval time.Duration) {
+func (ms *MetricsStore) StartCollection(state *ClusterState, services []*ServiceDefinition, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
 		for range ticker.C {
-			ms.collectMetrics(state)
+			ms.collectMetrics(state, services)
 		}
 	}()
 }
 
+// AddEvent records a scaling event
+func (ms *MetricsStore) AddEvent(event ScalingEvent) {
+	ms.eventsMu.Lock()
+	defer ms.eventsMu.Unlock()
+
+	if event.Timestamp == 0 {
+		event.Timestamp = time.Now().Unix()
+	}
+
+	if len(ms.events) >= 1000 {
+		ms.events = ms.events[1:]
+	}
+	ms.events = append(ms.events, event)
+}
+
+// GetEvents returns scaling events, optionally filtered by service
+func (ms *MetricsStore) GetEvents(service string, limit int) []ScalingEvent {
+	ms.eventsMu.RLock()
+	defer ms.eventsMu.RUnlock()
+
+	if limit <= 0 {
+		limit = 100
+	}
+
+	var filtered []ScalingEvent
+	for i := len(ms.events) - 1; i >= 0 && len(filtered) < limit; i-- {
+		if service == "" || ms.events[i].Service == service {
+			filtered = append(filtered, ms.events[i])
+		}
+	}
+
+	return filtered
+}
+
 // collectMetrics collects current metrics from cluster state
-func (ms *MetricsStore) collectMetrics(state *ClusterState) {
+func (ms *MetricsStore) collectMetrics(state *ClusterState, services []*ServiceDefinition) {
 	nodes, err := state.ListNodes()
 	if err != nil {
 		return
@@ -138,4 +187,34 @@ func (ms *MetricsStore) collectMetrics(state *ClusterState) {
 
 	ms.Add("cluster.cpu", clusterCPU)
 	ms.Add("cluster.memory", clusterMem)
+
+	// Per-service aggregate metrics
+	for _, svc := range services {
+		allocs, err := state.ListAllocations(svc.Name)
+		if err != nil {
+			continue
+		}
+
+		var svcCPU, svcMem float64
+		var running int
+		for _, alloc := range allocs {
+			if alloc.Status == "running" {
+				svcCPU += float64(alloc.CPUUsage)
+				svcMem += float64(alloc.MemoryUsage)
+				running++
+			}
+		}
+
+		ms.Add("service."+svc.Name+".cpu", svcCPU)
+		ms.Add("service."+svc.Name+".memory", svcMem)
+		ms.Add("service."+svc.Name+".alloc_count", float64(running))
+
+		// Per-allocation metrics
+		for _, alloc := range allocs {
+			if alloc.Status == "running" {
+				ms.Add("alloc."+alloc.ID+".cpu", float64(alloc.CPUUsage))
+				ms.Add("alloc."+alloc.ID+".memory", float64(alloc.MemoryUsage))
+			}
+		}
+	}
 }

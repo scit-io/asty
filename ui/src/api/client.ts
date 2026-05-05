@@ -6,6 +6,13 @@ import type {
   AllocationsResponse,
   AllocationDetail,
   LogsResponse,
+  MetricsResponse,
+  ServiceMetricsResponse,
+  AllocationMetricsResponse,
+  AutoscalerStatusResponse,
+  AutoscalerEventsResponse,
+  ServiceDetailResponse,
+  DeploymentsResponse,
 } from '../types'
 
 const API_BASE = '/api/v1'
@@ -32,12 +39,48 @@ export const api = {
 
   // Services
   getServices: () => fetchJSON<ServicesResponse>(`${API_BASE}/services`),
+  getService: (name: string) =>
+    fetchJSON<ServiceDetailResponse>(`${API_BASE}/services/${name}`),
+  scaleService: (name: string, count: number) =>
+    fetchJSON(`${API_BASE}/services/${name}/scale`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ count }),
+    }),
 
   // Allocations
   getAllocation: (id: string) =>
     fetchJSON<AllocationDetail>(`${API_BASE}/allocations/${id}`),
   getAllocationLogs: (id: string) =>
     fetchJSON<LogsResponse>(`${API_BASE}/logs/allocation/${id}`),
+
+  // Metrics
+  getClusterMetrics: (period?: string) =>
+    fetchJSON<MetricsResponse>(`${API_BASE}/metrics/cluster?period=${period || '1h'}`),
+  getNodeMetrics: (id: string, period?: string) =>
+    fetchJSON<MetricsResponse>(`${API_BASE}/metrics/nodes/${id}?period=${period || '1h'}`),
+  getServiceMetrics: (name: string, period?: string) =>
+    fetchJSON<ServiceMetricsResponse>(`${API_BASE}/metrics/services/${name}?period=${period || '1h'}`),
+  getAllocationMetrics: (id: string, period?: string) =>
+    fetchJSON<AllocationMetricsResponse>(`${API_BASE}/metrics/allocations/${id}?period=${period || '1h'}`),
+
+  // Autoscaler
+  getAutoscalerStatus: () =>
+    fetchJSON<AutoscalerStatusResponse>(`${API_BASE}/autoscaler/status`),
+  getAutoscalerEvents: (service?: string, limit?: number) =>
+    fetchJSON<AutoscalerEventsResponse>(
+      `${API_BASE}/autoscaler/events?service=${service || ''}&limit=${limit || 100}`
+    ),
+
+  // Deploy
+  deploy: (service: string, version: string) =>
+    fetchJSON(`${API_BASE}/deploy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ service, version }),
+    }),
+  getDeployments: () =>
+    fetchJSON<DeploymentsResponse>(`${API_BASE}/deployments`),
 
   // Actions
   drainNode: (id: string) =>
