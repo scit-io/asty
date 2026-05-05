@@ -1,21 +1,88 @@
-# Service Logs
+# Asty Logging System
 
 ## Overview
 
-Asty provides **real-time log streaming** via Server-Sent Events (SSE). Logs are collected from service processes running on agents and streamed live to the web UI.
+Asty provides **three-level real-time log streaming** via Server-Sent Events (SSE):
+1. **Cluster Level** — server events (scheduling, deployments, leader election)
+2. **Node Level** — agent events (service lifecycle, process management)
+3. **Service Level** — application logs (process stdout/stderr)
+
+All logs are streamed live to the web UI via NATS → SSE.
 
 ## Architecture
 
+### Three-Level Log Flow
+
 ```
-UI ←── SSE ←── API Server ←── NATS (Pub/Sub) ←── Agent ←── Process Log Files
+┌─────────────────────────────────────────────────────────────────┐
+│                         1. CLUSTER LEVEL                        │
+│  Server → ClusterLogger → NATS (asty.v1.server.logs)          │
+│                             ↓                                   │
+│  API (/api/v1/logs/cluster) → SSE → UI (Dashboard → Logs)     │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                          2. NODE LEVEL                          │
+│  Agent → AgentLogger → NATS (asty.v1.agent.{id}.logs.agent)   │
+│                             ↓                                   │
+│  API (/api/v1/logs/node/{id}) → SSE → UI (Node Detail → Logs) │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                        3. SERVICE LEVEL                         │
+│  Process stdout/stderr → File → Agent TailLogs                 │
+│                             ↓                                   │
+│  NATS (asty.v1.agent.{id}.logs.{svc}) → API → SSE → UI        │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Process (agent)**: Each service process writes stdout/stderr to `{workdir}/logs/{service_name}.log`
-2. **Agent**: Continuously tails log files and publishes new lines to NATS subject `asty.v1.agent.{node_id}.logs.{service_name}`
-3. **Server**: Subscribes to NATS log stream and forwards via SSE to HTTP clients
-4. **UI**: Opens SSE connection to `/api/v1/logs/allocation/{id}?follow=true` and displays live logs
+### Data Flow
+1. **Server/Agent**: Publish log events to NATS subjects
+2. **API**: Subscribes to NATS and forwards via SSE
+3. **UI**: Opens SSE connection and displays logs in real-time
 
 ## Implementation
+
+### 1. Cluster Level (Server)
+
+**Purpose**: Track orchestrator events (autoscaling, deployments, leader election, node discovery)
+
+**Implementation**:
+- `ClusterLogger` (`cluster_logger.go`) — publishes events to NATS
+- NATS subject: `asty.v1.server.logs`
+- Integrated into:
+  - `autoscaler.go` — scale up/down decisions
+  - `deployer.go` — deployment started/completed/failed
+  - `server.go` — leader election, node discovery
+
+**API Endpoint**: `GET /api/v1/logs/cluster?follow=true`
+
+**UI**: Dashboard → Logs tab
+
+---
+
+### 2. Node Level (Agent)
+
+**Purpose**: Track agent events (service lifecycle, process management)
+
+**Implementation**:
+- Agent uses `ClusterLogger` with agent-specific subject
+- NATS subject: `asty.v1.agent.{node_id}.logs.agent`
+- Events:
+  - Agent started
+  - Service started/stopped
+
+**API Endpoint**: `GET /api/v1/logs/node/{node_id}?follow=true`
+
+**UI**: Node Detail → Logs tab
+
+**Note**: Full agent stdout/stderr available via `journalctl -u asty-agent` or `docker logs`
+
+---
+
+### 3. Service Level (Process Logs)
+
+**Purpose**: Application logs from running services (stdout/stderr)
 
 ### Agent Side
 
@@ -78,25 +145,33 @@ UI ←── SSE ←── API Server ←── NATS (Pub/Sub) ←── Agent �
 ### API
 
 ```bash
-# Get last 100 lines (JSON response)
-curl http://localhost:8080/api/v1/logs/allocation/{alloc-id}
+# Cluster logs (server events)
+curl -N http://localhost:8080/api/v1/logs/cluster?follow=true&lines=100
 
-# Get last 50 lines
-curl http://localhost:8080/api/v1/logs/allocation/{alloc-id}?lines=50
+# Node logs (agent events)
+curl -N http://localhost:8080/api/v1/logs/node/{node-id}?follow=true&lines=100
 
-# Stream logs in real-time (SSE)
+# Service logs (process stdout/stderr)
+curl http://localhost:8080/api/v1/logs/allocation/{alloc-id}?lines=100
 curl -N http://localhost:8080/api/v1/logs/allocation/{alloc-id}?follow=true&lines=50
 ```
 
 ### Web UI
 
-1. Navigate to Dashboard
-2. Click on a node
-3. Click on a service allocation
-4. Select "Logs" tab
-5. Logs stream in real-time with "Live" badge indicator
-6. Click "Clear" to clear the log buffer
-7. Auto-scrolls to bottom as new logs arrive
+**Cluster Logs**:
+1. Dashboard → Logs tab
+2. Live streaming of cluster events (scaling, deployments, leader election)
+3. Clear button to reset log buffer
+
+**Node Logs**:
+1. Dashboard → Click node → Logs tab
+2. Live streaming of agent events (service started/stopped)
+3. Clear button + Live badge indicator
+
+**Service Logs**:
+1. Dashboard → Click node → Click service → Logs tab
+2. Real-time stdout/stderr from process
+3. Auto-scroll, Clear button, Live badge
 
 ## Log Rotation
 
@@ -107,10 +182,10 @@ Log files are currently **not rotated**. Future implementation should:
 
 ## Limitations
 
-- **No node-level logs**: `/api/v1/logs/node/{id}` returns placeholder — agent logs go to system logger (journalctl, docker logs)
-- **No log rotation**: Log files grow unbounded (TODO: implement rotation via `logs.max_files` and `logs.max_file_size`)
+- **No log rotation**: Service log files grow unbounded (TODO: implement rotation via `logs.max_files` and `logs.max_file_size`)
 - **No search/filter**: UI shows raw logs without search or filtering capability
 - **Memory buffering**: UI keeps all received logs in memory (consider implementing virtual scrolling for very long sessions)
+- **Event-only node/cluster logs**: Only important events are streamed; full stdout/stderr available via system logger (journalctl, docker logs)
 
 ## Future Enhancements
 
