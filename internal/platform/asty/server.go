@@ -48,6 +48,9 @@ type Server struct {
 
 	// Metrics storage
 	metricsStore *MetricsStore
+
+	// Cluster logger for streaming logs to UI
+	clusterLogger *ClusterLogger
 }
 
 // NewServer creates a new Asty server
@@ -95,8 +98,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize scheduler
 	s.scheduler = NewScheduler(clusterState, s.cfg)
 
+	// Initialize cluster logger for streaming to UI
+	s.clusterLogger = NewClusterLogger(s.nc, s.nodeID)
+
 	// Initialize autoscaler
-	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg)
+	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.clusterLogger)
 
 	// Initialize proximity matrix
 	s.proximityMatrix = NewProximityMatrix()
@@ -108,7 +114,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.proximityMatrix.RunValidation(ctx, clusterState)
 
 	// Initialize deployer
-	s.deployer = NewDeployer(clusterState, s.nc, s.cfg)
+	s.deployer = NewDeployer(clusterState, s.nc, s.cfg, s.clusterLogger)
 
 	// Initialize service loader
 	s.serviceLoader = NewServiceLoader("./deployments/infra")
@@ -149,6 +155,13 @@ func (s *Server) Start(ctx context.Context) error {
 		Str("leader", leader).
 		Bool("is_leader", leader == s.nodeID).
 		Msg("leader elected")
+
+	// Log cluster event
+	s.clusterLogger.Info("leader elected", map[string]interface{}{
+		"leader":    leader,
+		"is_leader": leader == s.nodeID,
+		"node_id":   s.nodeID,
+	})
 
 	// Discover cluster nodes
 	go s.watchClusterNodes(ctx)
@@ -363,6 +376,9 @@ func (s *Server) watchLeadership(ctx context.Context) {
 			// Became leader
 			if isLeader && !wasLeader {
 				log.Info().Msg("became leader, starting scheduler and autoscaler")
+				s.clusterLogger.Info("became cluster leader", map[string]interface{}{
+					"node_id": s.nodeID,
+				})
 				go s.runScheduler(ctx)
 				go s.runAutoscaler(ctx)
 			}
@@ -385,6 +401,12 @@ func (s *Server) watchClusterNodes(ctx context.Context) {
 			Strs("nodes", nodes).
 			Int("count", len(nodes)).
 			Msg("cluster nodes updated")
+
+		// Log cluster event
+		s.clusterLogger.Info("cluster nodes updated", map[string]interface{}{
+			"node_count": len(nodes),
+			"nodes":      nodes,
+		})
 
 		// TODO: trigger re-evaluation of placements
 	})

@@ -38,6 +38,9 @@ type Agent struct {
 
 	// Cluster state
 	clusterState *ClusterState
+
+	// Agent logger for streaming to UI
+	agentLogger *ClusterLogger
 }
 
 // NewAgent creates a new Asty agent
@@ -86,6 +89,13 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	a.clusterState = clusterState
 
+	// Initialize agent logger for streaming to UI
+	// Use ClusterLogger with agent-specific subject
+	a.agentLogger = &ClusterLogger{
+		nc:      a.nc,
+		subject: fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID),
+	}
+
 	// Start health checker
 	go a.healthChecker.Start(ctx)
 
@@ -101,6 +111,12 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.publishHeartbeat(ctx)
 
 	log.Info().Msg("agent ready")
+
+	// Log agent event
+	a.agentLogger.Info("agent started", map[string]interface{}{
+		"node_id":    a.nodeID,
+		"datacenter": a.cfg.Datacenter,
+	})
 
 	<-ctx.Done()
 
@@ -162,6 +178,12 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		Int("pid", proc.PID()).
 		Msg("service started")
 
+	// Log agent event
+	a.agentLogger.Info("service started", map[string]interface{}{
+		"service": svc.Name,
+		"pid":     proc.PID(),
+	})
+
 	// Update allocation in cluster state with PID
 	alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID)
 	if err != nil {
@@ -207,6 +229,11 @@ func (a *Agent) StopService(serviceName string) error {
 	log.Info().
 		Str("service", serviceName).
 		Msg("service stopped")
+
+	// Log agent event
+	a.agentLogger.Info("service stopped", map[string]interface{}{
+		"service": serviceName,
+	})
 
 	return nil
 }

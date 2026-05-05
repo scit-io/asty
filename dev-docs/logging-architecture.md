@@ -35,9 +35,13 @@ Asty имеет **три уровня логирования**, каждый с�
 Логи работы **оркестратора как системы**: события сервера, решения планировщика, деплойменты, состояние кластера.
 
 ### Источник данных
-- **Server process** (`cmd/asty` в режиме `server`)
-- Zerolog вывод сервера
-- События из модулей: `scheduler.go`, `autoscaler.go`, `deployer.go`, `leader.go`
+- **ClusterLogger** (`cluster_logger.go`) — event bus для важных событий
+- Публикует в NATS subject: `asty.v1.server.logs`
+- События из модулей:
+  - `autoscaler.go` — scaling up/down decisions
+  - `deployer.go` — deployment started/completed/failed
+  - `leader.go` — leader election changes
+  - `server.go` — node discovery, cluster state changes
 
 ### Примеры логов
 ```json
@@ -64,14 +68,13 @@ GET /api/v1/logs/cluster?follow=true&lines=100
 - Показывает события всего кластера
 
 ### Implementation Status
-🚧 **In Progress**
+✅ **Implemented**
 
-- ✅ API endpoint реализован
-- ✅ UI tab добавлен
-- ⚠️ **TODO**: Подключить реальные логи сервера
-  - Вариант 1: Streaming zerolog output to NATS
-  - Вариант 2: Event bus для важных событий (scheduling, deployments)
-  - Вариант 3: Агрегация событий из NATS subjects
+- ✅ API endpoint реализован (`/api/v1/logs/cluster`)
+- ✅ UI tab добавлен (Dashboard → Logs)
+- ✅ ClusterLogger публикует события в NATS (`asty.v1.server.logs`)
+- ✅ События логируются из: autoscaler, deployer, leader election, node discovery
+- ✅ SSE streaming реальных событий кластера
 
 ---
 
@@ -81,9 +84,12 @@ GET /api/v1/logs/cluster?follow=true&lines=100
 Логи работы **агента на конкретной ноде**: lifecycle процессов, health checks, metrics collection, взаимодействие с NATS.
 
 ### Источник данных
-- **Agent process** (`cmd/asty` в режиме `agent`)
-- Zerolog вывод агента
-- События из модулей: `agent.go`, `process.go`, `health.go`, `collector.go`
+- **AgentLogger** (использует `ClusterLogger`) — event bus для важных событий агента
+- Публикует в NATS subject: `asty.v1.agent.{node_id}.logs.agent`
+- События из модулей:
+  - `agent.go` — agent started, service started/stopped
+  - `process.go` — process lifecycle events
+  - Полные stdout/stderr логи агента доступны через systemd/docker
 
 ### Примеры логов
 ```json
@@ -110,16 +116,15 @@ GET /api/v1/logs/node/{node_id}?follow=true&lines=100
 - Полезно для debugging node-specific issues
 
 ### Implementation Status
-🔴 **Not Implemented**
+✅ **Implemented**
 
-- ⚠️ API возвращает placeholder
-- ⚠️ UI tab нужно добавить в `node-detail.tsx`
-- **TODO**: Реализовать сбор логов агента
-  - Вариант 1: Agent пишет в файл + tail (как service logs)
-  - Вариант 2: Agent публикует в NATS `asty.v1.agent.{node_id}.logs.agent`
-  - Вариант 3: Сбор через systemd journalctl / docker logs
+- ✅ API endpoint реализован (`/api/v1/logs/node/{id}`)
+- ✅ UI tab добавлен (Node Detail → Logs)
+- ✅ Agent публикует важные события в NATS (`asty.v1.agent.{node_id}.logs.agent`)
+- ✅ События: agent started, service started/stopped
+- ✅ SSE streaming для real-time мониторинга агента
 
-**Проблема**: Agent логи обычно идут в stdout → systemd/docker. Нужен механизм перенаправления в NATS для streaming.
+**Note**: Полные stdout/stderr логи агента доступны через systemd (`journalctl -u asty-agent`) или docker logs. UI показывает только важные события.
 
 ---
 
@@ -171,8 +176,8 @@ GET /api/v1/logs/allocation/{alloc_id}?follow=true&lines=100
 
 | Level    | Source              | API Endpoint                 | UI Location            | Status          |
 |----------|---------------------|------------------------------|------------------------|-----------------|
-| Cluster  | Server zerolog      | `/api/v1/logs/cluster`      | Dashboard → Logs       | 🚧 In Progress  |
-| Node     | Agent zerolog       | `/api/v1/logs/node/{id}`    | Node Detail → Logs     | 🔴 Not Impl     |
+| Cluster  | Server events       | `/api/v1/logs/cluster`      | Dashboard → Logs       | ✅ Implemented  |
+| Node     | Agent events        | `/api/v1/logs/node/{id}`    | Node Detail → Logs     | ✅ Implemented  |
 | Service  | Process stdout/stderr| `/api/v1/logs/allocation/{id}`| Service Detail → Logs | ✅ Implemented  |
 
 ---

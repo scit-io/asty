@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
+import { useState, useEffect, useRef } from 'react'
 import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -28,6 +29,10 @@ import { formatDistanceToNow } from 'date-fns'
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
+  const [logLines, setLogLines] = useState<string[]>([])
+  const [isStreaming, setIsStreaming] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
+  const logsEndRef = useRef<HTMLDivElement>(null)
 
   // Fallback: get node from nodes list if detail endpoint doesn't exist
   const { data: nodesData } = useQuery({
@@ -61,12 +66,55 @@ export default function NodeDetail() {
     retry: false,
   })
 
-  const { data: logs } = useQuery({
-    queryKey: ['node-logs', nodeId],
-    queryFn: () => api.getNodeLogs(nodeId!),
-    enabled: !!nodeId,
-    retry: false,
-  })
+  // Start SSE node log streaming
+  useEffect(() => {
+    if (!nodeId) return
+
+    const startStreaming = () => {
+      const eventSource = new EventSource(
+        `/api/v1/logs/node/${nodeId}?follow=true&lines=100`
+      )
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          setLogLines((prev) => [...prev, data.line])
+
+          setTimeout(() => {
+            logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+          }, 100)
+        } catch (err) {
+          console.error('Failed to parse node log event:', err)
+        }
+      }
+
+      eventSource.onerror = (error) => {
+        console.error('Node SSE error:', error)
+        eventSource.close()
+        setIsStreaming(false)
+
+        setTimeout(() => {
+          if (eventSourceRef.current === eventSource) {
+            startStreaming()
+          }
+        }, 5000)
+      }
+
+      eventSource.onopen = () => {
+        setIsStreaming(true)
+      }
+
+      eventSourceRef.current = eventSource
+    }
+
+    startStreaming()
+
+    return () => {
+      eventSourceRef.current?.close()
+      eventSourceRef.current = null
+      setIsStreaming(false)
+    }
+  }, [nodeId])
 
   if (nodeLoading) {
     return (
@@ -320,19 +368,38 @@ export default function NodeDetail() {
 
         <TabsContent value="logs" className="space-y-4">
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Node Logs</CardTitle>
+              <div className="flex items-center gap-2">
+                {isStreaming && (
+                  <Badge variant="outline" className="animate-pulse">
+                    Live
+                  </Badge>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLogLines([])}
+                >
+                  Clear
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               <div className="bg-muted rounded-md p-4 h-96 overflow-auto font-mono text-sm">
-                {logs?.logs && logs.logs.length > 0 ? (
-                  logs.logs.map((line, idx) => (
-                    <div key={idx} className="text-foreground">
-                      {line}
-                    </div>
-                  ))
+                {logLines.length > 0 ? (
+                  <>
+                    {logLines.map((line, idx) => (
+                      <div key={idx} className="text-foreground whitespace-pre-wrap">
+                        {line}
+                      </div>
+                    ))}
+                    <div ref={logsEndRef} />
+                  </>
                 ) : (
-                  <div className="text-muted-foreground">No logs available</div>
+                  <div className="text-muted-foreground">
+                    {isStreaming ? 'Waiting for logs...' : 'Connecting to log stream...'}
+                  </div>
                 )}
               </div>
             </CardContent>

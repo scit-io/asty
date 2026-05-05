@@ -12,17 +12,19 @@ import (
 
 // Deployer handles service deployments with rolling updates
 type Deployer struct {
-	clusterState *ClusterState
-	nc           *nats.Conn
-	cfg          *Config
+	clusterState  *ClusterState
+	nc            *nats.Conn
+	cfg           *Config
+	clusterLogger *ClusterLogger
 }
 
 // NewDeployer creates a new deployer
-func NewDeployer(clusterState *ClusterState, nc *nats.Conn, cfg *Config) *Deployer {
+func NewDeployer(clusterState *ClusterState, nc *nats.Conn, cfg *Config, clusterLogger *ClusterLogger) *Deployer {
 	return &Deployer{
-		clusterState: clusterState,
-		nc:           nc,
-		cfg:          cfg,
+		clusterState:  clusterState,
+		nc:            nc,
+		cfg:           cfg,
+		clusterLogger: clusterLogger,
 	}
 }
 
@@ -80,6 +82,16 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		Int("total", status.Total).
 		Msg("starting deployment")
 
+	// Log cluster event
+	if d.clusterLogger != nil {
+		d.clusterLogger.Info("deployment started", map[string]interface{}{
+			"service":         plan.ServiceName,
+			"current_version": plan.CurrentVersion,
+			"target_version":  plan.TargetVersion,
+			"total_allocs":    status.Total,
+		})
+	}
+
 	// Phase 1: Canary deployment
 	if plan.Canary > 0 {
 		canarySuccess, err := d.deployCanary(ctx, plan, status)
@@ -118,6 +130,16 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		Str("service", plan.ServiceName).
 		Dur("duration", status.EndTime.Sub(status.StartTime)).
 		Msg("deployment successful")
+
+	// Log cluster event
+	if d.clusterLogger != nil {
+		d.clusterLogger.Info("deployment completed", map[string]interface{}{
+			"service":        plan.ServiceName,
+			"version":        plan.TargetVersion,
+			"duration_secs":  int(status.EndTime.Sub(status.StartTime).Seconds()),
+			"updated_allocs": status.Total,
+		})
+	}
 
 	return status, nil
 }
@@ -342,6 +364,14 @@ func (d *Deployer) failDeployment(status *DeploymentStatus, err error) (*Deploym
 		Err(err).
 		Str("service", status.ServiceName).
 		Msg("deployment failed")
+
+	// Log cluster event
+	if d.clusterLogger != nil {
+		d.clusterLogger.Error("deployment failed", map[string]interface{}{
+			"service": status.ServiceName,
+			"error":   err.Error(),
+		})
+	}
 
 	return status, err
 }

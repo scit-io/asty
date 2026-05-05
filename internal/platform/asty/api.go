@@ -925,17 +925,91 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 		fmt.Sscanf(l, "%d", &lines)
 	}
 
-	// Node logs (agent logs) are not implemented yet
-	// Agent writes logs to stdout/stderr which are captured by systemd or container runtime
-	// This would require reading from journalctl or similar system logging
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"node_id": nodeID,
-		"lines":   lines,
-		"logs": []string{
-			fmt.Sprintf("[%s] Node agent logs available via system logger (journalctl, docker logs, etc.)", time.Now().Format(time.RFC3339)),
-			"[asty] Node-level log aggregation not yet implemented",
-		},
+	follow := r.URL.Query().Get("follow") == "true"
+
+	// Non-streaming mode: return placeholder
+	if !follow {
+		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"node_id": nodeID,
+			"logs": []string{
+				fmt.Sprintf("[%s] [info] Node agent log stream available via SSE (follow=true)", time.Now().Format(time.RFC3339)),
+				"[asty] Use follow=true for real-time agent events",
+			},
+			"line_count": 2,
+		})
+		return
+	}
+
+	// SSE streaming mode
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	// Subscribe to node log stream via NATS
+	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", nodeID)
+
+	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
+		// msg.Data contains JSON: {"timestamp": ..., "level": ..., "message": ..., ...}
+		var entry map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &entry); err != nil {
+			return
+		}
+
+		// Format log line for UI
+		level := entry["level"]
+		message := entry["message"]
+		timeStr := entry["time"]
+
+		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
+
+		// Add extra fields if present
+		delete(entry, "timestamp")
+		delete(entry, "time")
+		delete(entry, "level")
+		delete(entry, "message")
+
+		if len(entry) > 0 {
+			extraJSON, _ := json.Marshal(entry)
+			logLine += " " + string(extraJSON)
+		}
+
+		// Send to SSE
+		logEntry, _ := json.Marshal(map[string]interface{}{
+			"line":      logLine,
+			"timestamp": entry["timestamp"],
+		})
+		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+		flusher.Flush()
 	})
+
+	if err != nil {
+		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to node log stream")
+		http.Error(w, "Failed to subscribe to log stream", http.StatusInternalServerError)
+		return
+	}
+	defer sub.Unsubscribe()
+
+	// Send initial message
+	initMsg, _ := json.Marshal(map[string]interface{}{
+		"line":      fmt.Sprintf("[%s] [info] Node agent log stream connected", time.Now().Format(time.RFC3339)),
+		"timestamp": time.Now().Unix(),
+	})
+	fmt.Fprintf(w, "data: %s\n\n", initMsg)
+	flusher.Flush()
+
+	log.Info().Str("node_id", nodeID).Str("subject", streamSubject).Msg("node log stream opened")
+
+	// Keep connection alive until client disconnects
+	<-r.Context().Done()
+
+	log.Info().Str("node_id", nodeID).Msg("node log stream closed")
 }
 
 // handleLogsCluster returns cluster-wide logs (server logs) via SSE
@@ -953,23 +1027,15 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 
 	follow := r.URL.Query().Get("follow") == "true"
 
-	// For now, return placeholder logs
-	// TODO: implement actual cluster log collection from server process
-	// This could be:
-	// 1. Streaming from server's own zerolog output
-	// 2. Aggregated events from NATS subjects
-	// 3. Combined logs from all agents
-
+	// Non-streaming mode: return recent logs (not implemented yet - would need log buffer)
 	if !follow {
-		// Return JSON with recent cluster events
+		// Return JSON with placeholder - real implementation would need ring buffer
 		api.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"logs": []string{
-				fmt.Sprintf("[%s] [info] Asty server started", time.Now().Add(-10*time.Minute).Format(time.RFC3339)),
-				fmt.Sprintf("[%s] [info] Leader election: acquired leadership", time.Now().Add(-9*time.Minute).Format(time.RFC3339)),
-				fmt.Sprintf("[%s] [info] Cluster ready with 3 nodes", time.Now().Add(-8*time.Minute).Format(time.RFC3339)),
-				"[asty] Cluster-level log streaming not yet implemented",
+				fmt.Sprintf("[%s] [info] Cluster log stream available via SSE (follow=true)", time.Now().Format(time.RFC3339)),
+				"[asty] Use follow=true for real-time cluster events",
 			},
-			"line_count": 4,
+			"line_count": 2,
 		})
 		return
 	}
@@ -986,48 +1052,64 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send initial placeholder logs
-	initialLogs := []string{
-		fmt.Sprintf("[%s] [info] Asty cluster log stream started", time.Now().Format(time.RFC3339)),
-		"[asty] Cluster-level log streaming will show:",
-		"  - Server lifecycle events (startup, shutdown, leader election)",
-		"  - Scheduling decisions (placement, scaling)",
-		"  - Deployment events (rolling updates, health checks)",
-		"  - Cluster state changes (node join/leave)",
-		"",
-		"[asty] Implementation pending: wire up server zerolog to NATS stream",
-	}
+	// Subscribe to cluster log stream via NATS
+	streamSubject := api.server.clusterLogger.GetSubject()
 
-	for _, line := range initialLogs {
+	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
+		// msg.Data already contains JSON: {"timestamp": ..., "level": ..., "message": ..., ...}
+		// Parse it to extract line and format for UI
+		var entry map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &entry); err != nil {
+			return
+		}
+
+		// Format log line for UI
+		level := entry["level"]
+		message := entry["message"]
+		timeStr := entry["time"]
+
+		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
+
+		// Add extra fields if present
+		delete(entry, "timestamp")
+		delete(entry, "time")
+		delete(entry, "level")
+		delete(entry, "message")
+
+		if len(entry) > 0 {
+			extraJSON, _ := json.Marshal(entry)
+			logLine += " " + string(extraJSON)
+		}
+
+		// Send to SSE
 		logEntry, _ := json.Marshal(map[string]interface{}{
-			"line":      line,
-			"timestamp": time.Now().Unix(),
+			"line":      logLine,
+			"timestamp": entry["timestamp"],
 		})
 		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+		flusher.Flush()
+	})
+
+	if err != nil {
+		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to cluster log stream")
+		http.Error(w, "Failed to subscribe to log stream", http.StatusInternalServerError)
+		return
 	}
+	defer sub.Unsubscribe()
+
+	// Send initial message
+	initMsg, _ := json.Marshal(map[string]interface{}{
+		"line":      fmt.Sprintf("[%s] [info] Cluster log stream connected", time.Now().Format(time.RFC3339)),
+		"timestamp": time.Now().Unix(),
+	})
+	fmt.Fprintf(w, "data: %s\n\n", initMsg)
 	flusher.Flush()
 
-	log.Info().Msg("cluster log stream opened")
+	log.Info().Str("subject", streamSubject).Msg("cluster log stream opened")
 
-	// Keep connection alive with periodic heartbeats
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
+	// Keep connection alive until client disconnects
+	<-r.Context().Done()
 
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info().Msg("cluster log stream closed")
-			return
-		case <-ticker.C:
-			// Send keepalive
-			logEntry, _ := json.Marshal(map[string]interface{}{
-				"line":      fmt.Sprintf("[%s] [keepalive]", time.Now().Format(time.RFC3339)),
-				"timestamp": time.Now().Unix(),
-			})
-			fmt.Fprintf(w, "data: %s\n\n", logEntry)
-			flusher.Flush()
-		}
-	}
+	log.Info().Msg("cluster log stream closed")
 }
 
