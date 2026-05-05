@@ -311,8 +311,8 @@ stop_all() {
   # Docker инфраструктура
   stop_infra
 
-  # Временные данные
-  rm -rf "$DATA_BASE"
+  # Временные данные (sudo — агенты создают файлы от root)
+  sudo rm -rf "$DATA_BASE"
   rm -f "$NATS_CONF_RENDERED"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
 
