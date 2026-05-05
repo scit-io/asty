@@ -29,6 +29,11 @@ func NewArtifactDownloader() *ArtifactDownloader {
 
 // Download downloads and extracts an artifact to the destination directory
 func (ad *ArtifactDownloader) Download(url, checksum, destDir string) error {
+	// Handle local development mode
+	if strings.HasPrefix(url, "file://") || url == "local" {
+		return ad.copyLocal(url, destDir)
+	}
+
 	log.Info().
 		Str("url", url).
 		Str("dest", destDir).
@@ -166,6 +171,58 @@ func (ad *ArtifactDownloader) extractFile(r io.Reader, destPath string, mode os.
 	if _, err := io.Copy(f, r); err != nil {
 		return err
 	}
+
+	return nil
+}
+
+// copyLocal copies a local binary to the destination directory
+func (ad *ArtifactDownloader) copyLocal(url, destDir string) error {
+	// Extract service name from destDir (last path component)
+	serviceName := filepath.Base(destDir)
+
+	// Determine source path
+	var sourcePath string
+	if strings.HasPrefix(url, "file://") {
+		sourcePath = strings.TrimPrefix(url, "file://")
+	} else {
+		// url == "local" — use convention: find binary in ../../../bin/<serviceName>
+		// Assuming agent runs from project root
+		sourcePath = filepath.Join("bin", serviceName)
+	}
+
+	log.Info().
+		Str("source", sourcePath).
+		Str("dest", destDir).
+		Msg("copying local binary")
+
+	// Create destination directory
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return fmt.Errorf("failed to create dest dir: %w", err)
+	}
+
+	// Open source file
+	src, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed to open source binary: %w", err)
+	}
+	defer src.Close()
+
+	// Create destination file
+	destPath := filepath.Join(destDir, serviceName)
+	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
+		return fmt.Errorf("failed to create dest binary: %w", err)
+	}
+	defer dst.Close()
+
+	// Copy file
+	if _, err := io.Copy(dst, src); err != nil {
+		return fmt.Errorf("failed to copy binary: %w", err)
+	}
+
+	log.Info().
+		Str("dest", destPath).
+		Msg("local binary copied successfully")
 
 	return nil
 }

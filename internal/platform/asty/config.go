@@ -48,6 +48,9 @@ type Config struct {
 
 	// Agent work directory
 	WorkDir string
+
+	// Service definitions directory
+	ServiceDir string
 }
 
 // LoadConfig loads configuration from environment variables (A_* prefix)
@@ -91,6 +94,9 @@ func LoadConfig() (*Config, error) {
 
 		// Agent
 		WorkDir: getEnv("A_WORK_DIR", "/var/lib/asty"),
+
+		// Service definitions
+		ServiceDir: getEnv("A_SERVICE_DIR", "./deployments/infra"),
 	}
 
 	// Validate required fields (unless dev mode)

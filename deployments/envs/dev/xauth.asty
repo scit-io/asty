@@ -1,0 +1,56 @@
+# xauth service — JWT authentication
+# Type: service — autoscaled based on load
+# Dev version: uses pre-built local binary
+
+name: xauth
+type: service
+
+artifact:
+  url: local
+  checksum: ""
+
+command: ./xauth
+user: nobody
+kill_timeout: 30s
+
+env:
+  A_NATS_HOST: "127.0.0.1"
+  A_NATS_PORT: "4222"
+  A_NATS_USER: "${A_NATS_USER}"
+  A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
+  A_LOG_LEVEL: "${A_LOG_LEVEL}"
+  X_AUTH_USERNAME: "${X_AUTH_USERNAME}"
+  X_AUTH_PASSWORD: "${X_AUTH_PASSWORD}"
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"
+  X_AUTH_REFRESH_SECRET: "${X_AUTH_REFRESH_SECRET}"
+  X_AUTH_COOKIE_DOMAIN: "${X_AUTH_COOKIE_DOMAIN}"
+  X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"
+  X_AUTH_ACCESS_TTL: "${X_AUTH_ACCESS_TTL}"
+  X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"
+  X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
+
+resources:
+  cpu: 100       # MHz
+  memory: 32     # MB
+
+health:
+  type: http
+  path: /health
+  interval: 10s
+  timeout: 3s
+
+logs:
+  max_files: 5
+  max_file_size: 10  # MB
+
+update:
+  max_parallel: 2
+  min_healthy_time: 10s
+  healthy_deadline: 3m
+  progress_deadline: 10m
+  auto_revert: true
+
+restart:
+  attempts: 10
+  interval: 5m
+  delay: 15s

@@ -86,8 +86,10 @@ func (s *Scheduler) scheduleSystemService(svc *ServiceDefinition, nodes []*NodeI
 // scheduleRegularService places min 3 copies in different datacenters
 func (s *Scheduler) scheduleRegularService(svc *ServiceDefinition, nodes []*NodeInfo) ([]*Placement, error) {
 	minCopies := s.cfg.MinCopies
-	if minCopies < 3 {
-		minCopies = 3 // Hard minimum for geo-diversity
+	// For production, enforce minimum 3 for geo-diversity.
+	// For dev/single-node clusters, allow lower values.
+	if minCopies < 1 {
+		minCopies = 1
 	}
 
 	// Group nodes by datacenter

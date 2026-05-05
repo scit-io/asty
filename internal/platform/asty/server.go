@@ -117,7 +117,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.deployer = NewDeployer(clusterState, s.nc, s.cfg, s.clusterLogger)
 
 	// Initialize service loader
-	s.serviceLoader = NewServiceLoader("./deployments/infra")
+	s.serviceLoader = NewServiceLoader(s.cfg.ServiceDir)
 
 	// Load service definitions
 	services, err := s.serviceLoader.LoadAll()

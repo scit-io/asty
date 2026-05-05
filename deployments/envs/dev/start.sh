@@ -177,8 +177,16 @@ start_asty() {
   local nodes=$1
   log "Запуск Asty: 1 server + $nodes agents..."
 
-  # Загружаем dev.vars
-  eval "$(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$' | sed 's/[[:space:]]*=[[:space:]]*/=/')"
+  # Загружаем dev.vars и экспортируем все переменные
+  while IFS='=' read -r key value; do
+    # Skip comments and empty lines
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    # Strip leading/trailing whitespace
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | xargs)
+    # Export variable
+    export "$key=$value"
+  done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
 
   # Определяем host-порт NATS
   local nats_host_port
@@ -201,6 +209,7 @@ start_asty() {
   export A_TRAFFIC_RPS_THRESHOLD="${A_TRAFFIC_RPS_THRESHOLD:-5}"
   export A_UI_ADDR="${A_UI_ADDR:-127.0.0.1:4747}"
   export A_WORK_DIR="${A_WORK_DIR:-$DATA_BASE/work}"
+  export A_SERVICE_DIR="${A_SERVICE_DIR:-${SCRIPT_DIR}}"
 
   # Запускаем 1 server
   local server_log="/tmp/asty-dev-server.log"
