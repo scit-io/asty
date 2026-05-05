@@ -10,10 +10,9 @@ import (
 
 // Autoscaler handles automatic scaling decisions
 type Autoscaler struct {
-	clusterState  *ClusterState
-	scheduler     *Scheduler
-	cfg           *Config
-	clusterLogger *ClusterLogger
+	clusterState *ClusterState
+	scheduler    *Scheduler
+	cfg          *Config
 
 	// Cooldown tracking
 	lastScaleUp   map[string]time.Time // key: service name
@@ -21,13 +20,12 @@ type Autoscaler struct {
 }
 
 // NewAutoscaler creates a new autoscaler
-func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config, clusterLogger *ClusterLogger) *Autoscaler {
+func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config) *Autoscaler {
 	return &Autoscaler{
-		clusterState:  clusterState,
-		scheduler:     scheduler,
-		cfg:           cfg,
-		clusterLogger: clusterLogger,
-		lastScaleUp:   make(map[string]time.Time),
+		clusterState: clusterState,
+		scheduler:    scheduler,
+		cfg:          cfg,
+		lastScaleUp:  make(map[string]time.Time),
 		lastScaleDown: make(map[string]time.Time),
 	}
 }
@@ -242,16 +240,6 @@ func (as *Autoscaler) executeScaleUp(ctx context.Context, decision *ScalingDecis
 		Str("target_node", decision.TargetNode).
 		Msg("scaling up")
 
-	// Log cluster event
-	if as.clusterLogger != nil {
-		as.clusterLogger.Info("scaling service up", map[string]interface{}{
-			"service":     svc.Name,
-			"reason":      decision.Reason,
-			"target_node": decision.TargetNode,
-			"action":      "scale_up",
-		})
-	}
-
 	// Create allocation
 	alloc := &ServiceAllocation{
 		ServiceName: svc.Name,
@@ -279,15 +267,6 @@ func (as *Autoscaler) executeScaleDown(ctx context.Context, decision *ScalingDec
 		Str("service", svc.Name).
 		Str("reason", decision.Reason).
 		Msg("scaling down")
-
-	// Log cluster event
-	if as.clusterLogger != nil {
-		as.clusterLogger.Info("scaling service down", map[string]interface{}{
-			"service": svc.Name,
-			"reason":  decision.Reason,
-			"action":  "scale_down",
-		})
-	}
 
 	// Get current allocations
 	allocs, err := as.clusterState.ListAllocations(svc.Name)

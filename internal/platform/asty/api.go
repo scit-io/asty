@@ -965,7 +965,15 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 		// Format log line for UI
 		level := entry["level"]
 		message := entry["message"]
-		timeStr := entry["time"]
+
+		var timeStr string
+		if t, ok := entry["time"].(string); ok {
+			timeStr = t
+		} else if ts, ok := entry["timestamp"].(float64); ok {
+			timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
+		} else {
+			timeStr = time.Now().Format(time.RFC3339)
+		}
 
 		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
 
@@ -1053,7 +1061,7 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Subscribe to cluster log stream via NATS
-	streamSubject := api.server.clusterLogger.GetSubject()
+	streamSubject := "asty.v1.server.logs"
 
 	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
 		// msg.Data already contains JSON: {"timestamp": ..., "level": ..., "message": ..., ...}
@@ -1066,7 +1074,15 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 		// Format log line for UI
 		level := entry["level"]
 		message := entry["message"]
-		timeStr := entry["time"]
+
+		var timeStr string
+		if t, ok := entry["time"].(string); ok {
+			timeStr = t
+		} else if ts, ok := entry["timestamp"].(float64); ok {
+			timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
+		} else {
+			timeStr = time.Now().Format(time.RFC3339)
+		}
 
 		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
 

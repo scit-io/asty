@@ -76,20 +76,41 @@ CONF_CLUSTER
 # =============================================================================
 start_infra() {
   local nodes=$1
-  log "Запуск инфраструктуры: $nodes нод NATS + PostgreSQL..."
-  render_nats_conf "$nodes"
+  NATS_NODES=$nodes
+
+  log "Запуск инфраструктуры: $NATS_NODES нод NATS + PostgreSQL..."
+  render_nats_conf "$NATS_NODES"
   export DEV_NATS_CONF="$NATS_CONF_RENDERED"
 
-  if [[ $nodes -gt 1 ]]; then
+  if [[ $NATS_NODES -gt 1 ]]; then
     export NATS_CLIENT_PORTS="4222-4322:4222"
     export NATS_HTTP_PORTS="8222-8322:8222"
   else
     unset NATS_CLIENT_PORTS NATS_HTTP_PORTS
   fi
 
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
-  docker compose -f "$COMPOSE_FILE" up -d --scale nats="$nodes"
-  info "NATS мониторинг: http://localhost:8222"
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes 2>/dev/null || true
+
+  # Запускаем 1 ноду — она сразу становится leader
+  docker compose -f "$COMPOSE_FILE" up -d --scale nats=1
+  info "NATS: запущена 1 нода, ждём готовность..."
+  local port
+  port=$(docker port dev-nats-1 8222/tcp 2>/dev/null | awk -F: '{print $NF; exit}')
+  local elapsed=0
+  until curl -s "http://127.0.0.1:$port/healthz?js-server-only=true" 2>/dev/null | grep -q '"ok"'; do
+    sleep 1
+    elapsed=$((elapsed + 1))
+    [[ $elapsed -lt 30 ]] || die "NATS не готов за 30s"
+  done
+  info "NATS готов (${elapsed}s)"
+
+  # Добавляем остальные ноды — они подключатся к существующему leader
+  if [[ $NATS_NODES -gt 1 ]]; then
+    docker compose -f "$COMPOSE_FILE" up -d --scale nats="$NATS_NODES"
+    info "NATS: масштабировано до $NATS_NODES нод"
+  fi
+
+  info "NATS: $NATS_NODES нод | мониторинг: http://localhost:8222"
 }
 
 # =============================================================================
@@ -124,7 +145,7 @@ wait_nats() {
 
 stop_infra() {
   log "Остановка инфраструктуры..."
-  docker compose -f "$COMPOSE_FILE" down
+  docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes
 }
 
 # =============================================================================
@@ -190,7 +211,7 @@ start_asty() {
 
   # Определяем host-порт NATS
   local nats_host_port
-  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
+  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '{print $NF; exit}')
   [[ -n "$nats_host_port" ]] || die "не удалось определить host-порт NATS"
   info "NATS host-порт: $nats_host_port"
 
@@ -350,7 +371,7 @@ start_infra "$NODES"
 build_binaries
 
 setup_loopback_aliases "$NODES"
-wait_nats "$NODES"
+wait_nats "$NATS_NODES"
 
 start_asty "$NODES"
 wait_asty

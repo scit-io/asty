@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -49,8 +50,6 @@ type Server struct {
 	// Metrics storage
 	metricsStore *MetricsStore
 
-	// Cluster logger for streaming logs to UI
-	clusterLogger *ClusterLogger
 }
 
 // NewServer creates a new Asty server
@@ -98,11 +97,12 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize scheduler
 	s.scheduler = NewScheduler(clusterState, s.cfg)
 
-	// Initialize cluster logger for streaming to UI
-	s.clusterLogger = NewClusterLogger(s.nc, s.nodeID)
+	// Attach NATS writer to zerolog — all server logs stream to UI
+	natsWriter := NewNATSWriter(s.nc, "asty.v1.server.logs")
+	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
 	// Initialize autoscaler
-	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.clusterLogger)
+	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg)
 
 	// Initialize proximity matrix
 	s.proximityMatrix = NewProximityMatrix()
@@ -114,7 +114,7 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.proximityMatrix.RunValidation(ctx, clusterState)
 
 	// Initialize deployer
-	s.deployer = NewDeployer(clusterState, s.nc, s.cfg, s.clusterLogger)
+	s.deployer = NewDeployer(clusterState, s.nc, s.cfg)
 
 	// Initialize service loader
 	s.serviceLoader = NewServiceLoader(s.cfg.ServiceDir)
@@ -155,13 +155,6 @@ func (s *Server) Start(ctx context.Context) error {
 		Str("leader", leader).
 		Bool("is_leader", leader == s.nodeID).
 		Msg("leader elected")
-
-	// Log cluster event
-	s.clusterLogger.Info("leader elected", map[string]interface{}{
-		"leader":    leader,
-		"is_leader": leader == s.nodeID,
-		"node_id":   s.nodeID,
-	})
 
 	// Discover cluster nodes
 	go s.watchClusterNodes(ctx)
@@ -275,6 +268,10 @@ func (s *Server) watchAllocations(ctx context.Context) {
 							if err := s.clusterState.UpdateAllocation(alloc); err != nil {
 								log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation status")
 							}
+							log.Info().
+								Str("service", svc.Name).
+								Str("node_id", alloc.NodeID).
+								Msg("service started on node")
 						}
 					}
 				}
@@ -405,9 +402,6 @@ func (s *Server) watchLeadership(ctx context.Context) {
 			// Became leader
 			if isLeader && !wasLeader {
 				log.Info().Msg("became leader, starting scheduler and autoscaler")
-				s.clusterLogger.Info("became cluster leader", map[string]interface{}{
-					"node_id": s.nodeID,
-				})
 				go s.runScheduler(ctx)
 				go s.runAutoscaler(ctx)
 			}
@@ -430,14 +424,6 @@ func (s *Server) watchClusterNodes(ctx context.Context) {
 			Strs("nodes", nodes).
 			Int("count", len(nodes)).
 			Msg("cluster nodes updated")
-
-		// Log cluster event
-		s.clusterLogger.Info("cluster nodes updated", map[string]interface{}{
-			"node_count": len(nodes),
-			"nodes":      nodes,
-		})
-
-		// TODO: trigger re-evaluation of placements
 	})
 }
 

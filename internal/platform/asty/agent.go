@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -40,7 +41,6 @@ type Agent struct {
 	clusterState *ClusterState
 
 	// Agent logger for streaming to UI
-	agentLogger *ClusterLogger
 }
 
 // NewAgent creates a new Asty agent
@@ -89,12 +89,10 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	a.clusterState = clusterState
 
-	// Initialize agent logger for streaming to UI
-	// Use ClusterLogger with agent-specific subject
-	a.agentLogger = &ClusterLogger{
-		nc:      a.nc,
-		subject: fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID),
-	}
+	// Attach NATS writer to zerolog — all agent logs stream to UI
+	agentSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID)
+	natsWriter := NewNATSWriter(a.nc, agentSubject)
+	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
 	// Start health checker
 	go a.healthChecker.Start(ctx)
@@ -113,13 +111,10 @@ func (a *Agent) Start(ctx context.Context) error {
 	// Monitor and restart failed processes
 	go a.monitorProcesses(ctx)
 
-	log.Info().Msg("agent ready")
-
-	// Log agent event
-	a.agentLogger.Info("agent started", map[string]interface{}{
-		"node_id":    a.nodeID,
-		"datacenter": a.cfg.Datacenter,
-	})
+	log.Info().
+		Str("node_id", a.nodeID).
+		Str("datacenter", a.cfg.Datacenter).
+		Msg("agent ready")
 
 	<-ctx.Done()
 
@@ -181,12 +176,6 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		Int("pid", proc.PID()).
 		Msg("service started")
 
-	// Log agent event
-	a.agentLogger.Info("service started", map[string]interface{}{
-		"service": svc.Name,
-		"pid":     proc.PID(),
-	})
-
 	// Update allocation in cluster state with PID
 	alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID)
 	if err != nil {
@@ -234,11 +223,6 @@ func (a *Agent) StopService(serviceName string) error {
 	log.Info().
 		Str("service", serviceName).
 		Msg("service stopped")
-
-	// Log agent event
-	a.agentLogger.Info("service stopped", map[string]interface{}{
-		"service": serviceName,
-	})
 
 	return nil
 }
@@ -600,13 +584,6 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 			delete(a.processes, serviceName)
 			a.mu.Unlock()
 
-			// Log agent event
-			a.agentLogger.Error("service restart attempts exhausted", map[string]interface{}{
-				"service":      serviceName,
-				"restarts":     alloc.Restarts,
-				"max_attempts": maxAttempts,
-			})
-
 			continue
 		}
 
@@ -625,12 +602,11 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 		a.healthChecker.Unregister(serviceName)
 		a.metricsCollector.Unregister(proc.PID())
 
-		// Log restart attempt
-		a.agentLogger.Warn("restarting failed service", map[string]interface{}{
-			"service":  serviceName,
-			"restarts": alloc.Restarts,
-			"old_pid":  proc.PID(),
-		})
+		log.Warn().
+			Str("service", serviceName).
+			Int("restarts", alloc.Restarts).
+			Int("old_pid", proc.PID()).
+			Msg("restarting failed service")
 
 		// Wait before restart using configured delay
 		restartDelay := svc.Restart.GetDelay()
