@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -45,17 +46,17 @@ type Agent struct {
 
 // NewAgent creates a new Asty agent
 func NewAgent(cfg *Config) (*Agent, error) {
-	workDir := cfg.WorkDir
-	if workDir == "" {
-		workDir = "/var/lib/asty"
-	}
-	if err := os.MkdirAll(workDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create work directory: %w", err)
-	}
-
 	nodeID := cfg.NodeID
 	if nodeID == "" {
 		nodeID = generateNodeID()
+	}
+
+	workDir := filepath.Join(cfg.WorkDir, nodeID)
+	if workDir == nodeID {
+		workDir = filepath.Join("/var/lib/asty", nodeID)
+	}
+	if err := os.MkdirAll(workDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create work directory: %w", err)
 	}
 
 	return &Agent{
@@ -129,8 +130,17 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Already running — not an error, desired state achieved
-	if _, exists := a.processes[svc.Name]; exists {
+	// Already running — update allocation state and return
+	if proc, exists := a.processes[svc.Name]; exists {
+		if alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID); err == nil {
+			if alloc.PID != proc.PID() || alloc.Status != "running" {
+				alloc.PID = proc.PID()
+				alloc.Status = "running"
+				alloc.StartedAt = time.Now()
+				alloc.ConsecutiveFailures = 0
+				_ = a.clusterState.UpdateAllocation(alloc)
+			}
+		}
 		return nil
 	}
 
@@ -184,8 +194,7 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		alloc.PID = proc.PID()
 		alloc.Status = "running"
 		alloc.StartedAt = time.Now()
-		// Reset restart counter on successful start
-		alloc.Restarts = 0
+		alloc.ConsecutiveFailures = 0
 		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
 			log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation with PID")
 		} else {
@@ -566,10 +575,10 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 
 		// Check restart attempts limit from service definition
 		maxAttempts := svc.Restart.GetAttempts()
-		if alloc.Restarts >= maxAttempts {
+		if alloc.ConsecutiveFailures >= maxAttempts {
 			log.Error().
 				Str("service", serviceName).
-				Int("restarts", alloc.Restarts).
+				Int("consecutive_failures", alloc.ConsecutiveFailures).
 				Int("max_attempts", maxAttempts).
 				Msg("restart attempts exhausted, giving up")
 
@@ -587,13 +596,19 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 			continue
 		}
 
-		// Increment restart counter
+		// Increment restart counters
 		alloc.Restarts++
+		alloc.ConsecutiveFailures++
 		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
 			log.Error().Err(err).Str("service", serviceName).Msg("failed to update restart counter")
 		}
 
-		// Stop the failed process
+		// Kill the failed process tree to release ports
+		if pid := proc.PID(); pid > 0 {
+			syscall.Kill(-pid, syscall.SIGKILL)
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+
 		a.mu.Lock()
 		delete(a.processes, serviceName)
 		a.mu.Unlock()

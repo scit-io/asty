@@ -95,6 +95,9 @@ func (p *Process) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, os.ExpandEnv(v)))
 	}
 
+	// Start in own process group so we can kill the entire tree
+	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	// Redirect stdout/stderr to log file
 	p.cmd.Stdout = p.logFile
 	p.cmd.Stderr = p.logFile
@@ -145,10 +148,8 @@ func (p *Process) Stop() error {
 		Int("pid", p.pid).
 		Msg("stopping process")
 
-	// Send SIGTERM
-	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-		return fmt.Errorf("failed to send SIGTERM: %w", err)
-	}
+	// Send SIGTERM to entire process group
+	syscall.Kill(-p.pid, syscall.SIGTERM)
 
 	// Wait for graceful shutdown with timeout
 	killTimeout := p.svc.GetKillTimeout()
@@ -166,9 +167,7 @@ func (p *Process) Stop() error {
 			Dur("timeout", killTimeout).
 			Msg("graceful shutdown timeout, sending SIGKILL")
 
-		if err := p.cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("failed to kill process: %w", err)
-		}
+		syscall.Kill(-p.pid, syscall.SIGKILL)
 		<-done // Wait for actual exit
 
 	case err := <-done:

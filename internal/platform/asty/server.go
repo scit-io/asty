@@ -279,7 +279,7 @@ func (s *Server) watchAllocations(ctx context.Context) {
 				// Check for failed allocations that exceeded restart limit
 				// These need to be rescheduled to different nodes
 				for _, alloc := range allocs {
-					if alloc.Status == "failed" && alloc.Restarts >= 3 {
+					if alloc.Status == "failed" && alloc.ConsecutiveFailures >= 3 {
 						log.Warn().
 							Str("service", svc.Name).
 							Str("node_id", alloc.NodeID).

@@ -283,6 +283,7 @@ wait_asty() {
 cleanup_orphans() {
   local killed=0
   sudo pkill -9 -f "$BIN_DIR/asty" 2>/dev/null && killed=1 || true
+  sudo pkill -9 -f "$DATA_BASE/work/" 2>/dev/null && killed=1 || true
   for svc in gateway xauth xhttp xws; do
     sudo pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
   done
