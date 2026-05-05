@@ -12,10 +12,9 @@ import (
 
 // ClusterState manages cluster state in NATS JetStream KV
 type ClusterState struct {
-	nc          *nats.Conn
-	js          nats.JetStreamContext
-	bucket      nats.KeyValue // nodes (with TTL)
-	allocBucket nats.KeyValue // allocations (no TTL)
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+	bucket nats.KeyValue
 }
 
 // NodeInfo represents information about a cluster node
@@ -66,40 +65,26 @@ func NewClusterState(nc *nats.Conn) (*ClusterState, error) {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	// Nodes bucket — TTL ensures stale nodes are auto-removed
+	// Create or get KV bucket for cluster state
 	bucket, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:      "asty-nodes",
-		Description: "Asty node heartbeats",
-		TTL:         5 * time.Minute,
-		History:     1,
+		Bucket:      "asty-cluster",
+		Description: "Asty cluster state",
+		History:     10,
 	})
 	if err != nil {
-		bucket, err = js.KeyValue("asty-nodes")
+		// Try to get existing bucket
+		bucket, err = js.KeyValue("asty-cluster")
 		if err != nil {
-			return nil, fmt.Errorf("failed to create/get nodes KV bucket: %w", err)
-		}
-	}
-
-	// Allocations bucket — no TTL, state persists until explicitly removed
-	allocBucket, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:      "asty-allocs",
-		Description: "Asty service allocations",
-		History:     1,
-	})
-	if err != nil {
-		allocBucket, err = js.KeyValue("asty-allocs")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create/get allocs KV bucket: %w", err)
+			return nil, fmt.Errorf("failed to create/get KV bucket: %w", err)
 		}
 	}
 
 	log.Info().Msg("cluster state initialized")
 
 	return &ClusterState{
-		nc:          nc,
-		js:          js,
-		bucket:      bucket,
-		allocBucket: allocBucket,
+		nc:     nc,
+		js:     js,
+		bucket: bucket,
 	}, nil
 }
 
@@ -217,8 +202,8 @@ func (cs *ClusterState) CreateAllocation(alloc *ServiceAllocation) error {
 		return fmt.Errorf("failed to marshal allocation: %w", err)
 	}
 
-	key := fmt.Sprintf("%s.%s", alloc.ServiceName, alloc.NodeID)
-	if _, err := cs.allocBucket.Put(key, data); err != nil {
+	key := fmt.Sprintf("alloc.%s.%s", alloc.ServiceName, alloc.NodeID)
+	if _, err := cs.bucket.Put(key, data); err != nil {
 		return fmt.Errorf("failed to put allocation: %w", err)
 	}
 
@@ -227,8 +212,8 @@ func (cs *ClusterState) CreateAllocation(alloc *ServiceAllocation) error {
 
 // GetAllocation retrieves a service allocation
 func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*ServiceAllocation, error) {
-	key := fmt.Sprintf("%s.%s", serviceName, nodeID)
-	entry, err := cs.allocBucket.Get(key)
+	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
+	entry, err := cs.bucket.Get(key)
 	if err != nil {
 		if err == nats.ErrKeyNotFound {
 			return nil, fmt.Errorf("allocation not found")
@@ -246,7 +231,7 @@ func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*ServiceAlloc
 
 // ListAllocations returns all allocations for a service
 func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocation, error) {
-	keys, err := cs.allocBucket.Keys()
+	keys, err := cs.bucket.Keys()
 	if err != nil {
 		if err == nats.ErrNoKeysFound {
 			return []*ServiceAllocation{}, nil
@@ -254,7 +239,7 @@ func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocatio
 		return nil, fmt.Errorf("failed to list keys: %w", err)
 	}
 
-	prefix := fmt.Sprintf("%s.", serviceName)
+	prefix := fmt.Sprintf("alloc.%s.", serviceName)
 	allocs := make([]*ServiceAllocation, 0)
 
 	for _, key := range keys {
@@ -262,7 +247,7 @@ func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocatio
 			continue
 		}
 
-		entry, err := cs.allocBucket.Get(key)
+		entry, err := cs.bucket.Get(key)
 		if err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("failed to get allocation entry")
 			continue
@@ -289,8 +274,8 @@ func (cs *ClusterState) UpdateAllocation(alloc *ServiceAllocation) error {
 		return fmt.Errorf("failed to marshal allocation: %w", err)
 	}
 
-	key := fmt.Sprintf("%s.%s", alloc.ServiceName, alloc.NodeID)
-	if _, err := cs.allocBucket.Put(key, data); err != nil {
+	key := fmt.Sprintf("alloc.%s.%s", alloc.ServiceName, alloc.NodeID)
+	if _, err := cs.bucket.Put(key, data); err != nil {
 		return fmt.Errorf("failed to update allocation: %w", err)
 	}
 
@@ -299,8 +284,8 @@ func (cs *ClusterState) UpdateAllocation(alloc *ServiceAllocation) error {
 
 // DeleteAllocation removes an allocation
 func (cs *ClusterState) DeleteAllocation(serviceName, nodeID string) error {
-	key := fmt.Sprintf("%s.%s", serviceName, nodeID)
-	if err := cs.allocBucket.Delete(key); err != nil {
+	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
+	if err := cs.bucket.Delete(key); err != nil {
 		return fmt.Errorf("failed to delete allocation: %w", err)
 	}
 

@@ -36,7 +36,7 @@ Asty (коммерческое название) и platform.go (рабочее 
 
 - **Locality-aware autoscaler** — главная фича
 - **NATS как единый транспорт** вместо Serf+RPC — минус 2 порта
-- **NATS JetStream KV** как state store вместо Raft
+- **NATS JetStream KV** как state store вместо Raft (один бакет `asty-cluster`, без TTL — stale ноды фильтруются по `LastSeen` в scheduler)
 - **Leader election через NATS** вместо Raft
 
 ## Коммуникация
