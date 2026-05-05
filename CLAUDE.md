@@ -144,7 +144,17 @@ health:
   type: http
   path: /health
   interval: 10s
+
+restart:
+  attempts: 3       # Max restart attempts before giving up (default: 3)
+  delay: 5s         # Delay between restart attempts (default: 5s)
 ```
+
+**Restart Policy:**
+- When a process exits unexpectedly, the agent automatically attempts to restart it
+- After `restart.attempts` failures, the allocation is marked as permanently failed
+- Failed allocations are removed and rescheduled to different nodes by the server
+- Restart counter resets to 0 on successful start
 
 Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from orchestrator's environment.
 

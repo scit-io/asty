@@ -273,6 +273,30 @@ func (s *Server) watchAllocations(ctx context.Context) {
 						// Note: agent will update allocation with PID and status after starting process
 					}
 				}
+
+				// Check for failed allocations that exceeded restart limit
+				// These need to be rescheduled to different nodes
+				for _, alloc := range allocs {
+					if alloc.Status == "failed" && alloc.Restarts >= 3 {
+						log.Warn().
+							Str("service", svc.Name).
+							Str("node_id", alloc.NodeID).
+							Int("restarts", alloc.Restarts).
+							Msg("allocation failed permanently, will reschedule")
+
+						// Remove failed allocation
+						if err := s.clusterState.DeleteAllocation(svc.Name, alloc.NodeID); err != nil {
+							log.Error().Err(err).Msg("failed to delete failed allocation")
+						}
+
+						// Trigger reconciliation to create new allocation on another node
+						go func(svc *ServiceDefinition) {
+							if err := s.scheduler.ReconcileService(ctx, svc); err != nil {
+								log.Error().Err(err).Str("service", svc.Name).Msg("failed to reschedule after failure")
+							}
+						}(svc)
+					}
+				}
 			}
 		}
 	}

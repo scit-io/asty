@@ -117,3 +117,20 @@ func (h *Health) GetTimeout() time.Duration {
 	}
 	return d
 }
+
+// GetRestartAttempts returns the number of restart attempts
+func (r *Restart) GetAttempts() int {
+	if r.Attempts <= 0 {
+		return 3 // default: 3 attempts
+	}
+	return r.Attempts
+}
+
+// GetRestartDelay parses the restart delay
+func (r *Restart) GetDelay() time.Duration {
+	d, _ := time.ParseDuration(r.Delay)
+	if d == 0 {
+		return 5 * time.Second // default: 5 seconds
+	}
+	return d
+}

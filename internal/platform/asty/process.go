@@ -202,6 +202,13 @@ func (p *Process) PID() int {
 	return p.pid
 }
 
+// ServiceDefinition returns the service definition
+func (p *Process) ServiceDefinition() *ServiceDefinition {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.svc
+}
+
 // Context returns a context that is cancelled when the process stops
 func (p *Process) Context() (context.Context, bool) {
 	p.mu.Lock()

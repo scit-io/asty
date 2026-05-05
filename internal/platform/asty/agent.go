@@ -110,6 +110,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	// Publish node heartbeat
 	go a.publishHeartbeat(ctx)
 
+	// Monitor and restart failed processes
+	go a.monitorProcesses(ctx)
+
 	log.Info().Msg("agent ready")
 
 	// Log agent event
@@ -192,6 +195,8 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		alloc.PID = proc.PID()
 		alloc.Status = "running"
 		alloc.StartedAt = time.Now()
+		// Reset restart counter on successful start
+		alloc.Restarts = 0
 		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
 			log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation with PID")
 		} else {
@@ -531,6 +536,119 @@ func splitLines(data string, lastN int) []string {
 	}
 
 	return lines
+}
+
+// monitorProcesses periodically checks for failed processes and restarts them
+func (a *Agent) monitorProcesses(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.checkAndRestartFailedProcesses()
+		}
+	}
+}
+
+// checkAndRestartFailedProcesses checks all processes and restarts failed ones
+func (a *Agent) checkAndRestartFailedProcesses() {
+	a.mu.Lock()
+	failedProcesses := make(map[string]*Process)
+	for name, proc := range a.processes {
+		if proc.Status() == ProcessStatusFailed {
+			failedProcesses[name] = proc
+		}
+	}
+	a.mu.Unlock()
+
+	for serviceName, proc := range failedProcesses {
+		log.Warn().
+			Str("service", serviceName).
+			Int("pid", proc.PID()).
+			Msg("detected failed process, attempting restart")
+
+		// Get service definition for restart policy
+		svc := proc.ServiceDefinition()
+
+		// Get allocation from cluster state to check restart policy
+		alloc, err := a.clusterState.GetAllocation(serviceName, a.nodeID)
+		if err != nil {
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to get allocation for restart")
+			continue
+		}
+
+		// Check restart attempts limit from service definition
+		maxAttempts := svc.Restart.GetAttempts()
+		if alloc.Restarts >= maxAttempts {
+			log.Error().
+				Str("service", serviceName).
+				Int("restarts", alloc.Restarts).
+				Int("max_attempts", maxAttempts).
+				Msg("restart attempts exhausted, giving up")
+
+			// Update allocation status to failed
+			alloc.Status = "failed"
+			if err := a.clusterState.UpdateAllocation(alloc); err != nil {
+				log.Error().Err(err).Str("service", serviceName).Msg("failed to update allocation status")
+			}
+
+			// Remove from processes map
+			a.mu.Lock()
+			delete(a.processes, serviceName)
+			a.mu.Unlock()
+
+			// Log agent event
+			a.agentLogger.Error("service restart attempts exhausted", map[string]interface{}{
+				"service":      serviceName,
+				"restarts":     alloc.Restarts,
+				"max_attempts": maxAttempts,
+			})
+
+			continue
+		}
+
+		// Increment restart counter
+		alloc.Restarts++
+		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to update restart counter")
+		}
+
+		// Stop the failed process
+		a.mu.Lock()
+		delete(a.processes, serviceName)
+		a.mu.Unlock()
+
+		// Unregister health check and metrics
+		a.healthChecker.Unregister(serviceName)
+		a.metricsCollector.Unregister(proc.PID())
+
+		// Log restart attempt
+		a.agentLogger.Warn("restarting failed service", map[string]interface{}{
+			"service":  serviceName,
+			"restarts": alloc.Restarts,
+			"old_pid":  proc.PID(),
+		})
+
+		// Wait before restart using configured delay
+		restartDelay := svc.Restart.GetDelay()
+		time.Sleep(restartDelay)
+
+		// Mark allocation as pending so server re-schedules it
+		alloc.Status = "pending"
+		alloc.PID = 0
+		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to mark allocation as pending")
+			continue
+		}
+
+		log.Info().
+			Str("service", serviceName).
+			Int("attempt", alloc.Restarts).
+			Msg("marked allocation for restart, waiting for server command")
+	}
 }
 
 // streamProcessLogs streams process logs to NATS in real-time
