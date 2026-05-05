@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -9,6 +9,17 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Server, Cpu, MemoryStick, FileText } from 'lucide-react'
+
+// Stable hash function to detect data changes
+function dataHash(data: any): string {
+  if (!data) return ''
+  // Exclude frequently changing fields like last_seen
+  const stable = JSON.stringify(data, (key, value) => {
+    if (key === 'last_seen' || key === 'created_at') return undefined
+    return value
+  })
+  return stable
+}
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -21,16 +32,24 @@ export default function Dashboard() {
     queryKey: ['status'],
     queryFn: api.getStatus,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
   })
 
   const { data: nodesData, isLoading: nodesLoading } = useQuery({
     queryKey: ['nodes'],
     queryFn: api.getNodes,
     refetchInterval: 5000,
+    structuralSharing: true,
   })
 
   const isLoading = statusLoading || nodesLoading
   const nodes = nodesData?.nodes || []
+
+  // Memoize nodes list to prevent unnecessary re-renders
+  // Only update when stable data changes (ignore last_seen timestamps)
+  const stableNodes = useMemo(() => {
+    return nodes
+  }, [dataHash(nodes)])
 
   // Start SSE cluster log streaming
   useEffect(() => {
@@ -126,7 +145,7 @@ export default function Dashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {nodes.map((node) => {
+                {stableNodes.map((node) => {
                   const cpuUsed = node.cpu_total - node.cpu_available
                   const cpuPercent =
                     node.cpu_total > 0 ? Math.round((cpuUsed / node.cpu_total) * 100) : 0

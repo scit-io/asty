@@ -39,6 +39,7 @@ export default function ServiceDetail() {
     queryFn: () => api.getNodeAllocations(nodeId!),
     enabled: !!nodeId,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
   })
 
   const { data: allocation, isLoading, error: allocError } = useQuery({
@@ -55,6 +56,7 @@ export default function ServiceDetail() {
     },
     enabled: !!allocId,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
     retry: false,
   })
 

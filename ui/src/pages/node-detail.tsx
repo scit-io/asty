@@ -39,6 +39,7 @@ export default function NodeDetail() {
     queryKey: ['nodes'],
     queryFn: api.getNodes,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
   })
 
   const { data: node, isLoading: nodeLoading, error: nodeError } = useQuery({
@@ -55,6 +56,7 @@ export default function NodeDetail() {
     },
     enabled: !!nodeId,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
     retry: false,
   })
 
@@ -63,6 +65,7 @@ export default function NodeDetail() {
     queryFn: () => api.getNodeAllocations(nodeId!),
     enabled: !!nodeId,
     refetchInterval: 5000,
+    structuralSharing: true, // Prevent re-render if data didn't change
     retry: false,
   })
 
