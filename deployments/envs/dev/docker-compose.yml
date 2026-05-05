@@ -14,6 +14,11 @@ services:
     volumes:
       # Конфиг рендерится start.sh в /tmp/asty-dev-nats.conf
       - ${DEV_NATS_CONF:-./nats.conf}:/etc/nats/nats.conf:ro
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 466M
     networks:
       - asty
 
@@ -27,6 +32,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 466M
     networks:
       - asty
 
