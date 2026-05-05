@@ -257,23 +257,33 @@ wait_asty() {
 }
 
 # =============================================================================
-# Очистка осиротевших процессов
+# Очистка осиротевших процессов (агрессивно убивает ВСЁ связанное с asty)
 # =============================================================================
 cleanup_orphans() {
   local killed=0
-  # Убиваем asty (и через полный путь, и через ./bin/)
+  # Убиваем asty (и через полный путь, и через ./bin/, и через любое упоминание)
   pkill -9 -f "$BIN_DIR/asty" 2>/dev/null && killed=1 || true
   pkill -9 -f "./bin/asty" 2>/dev/null && killed=1 || true
   pkill -9 -f "bin/asty" 2>/dev/null && killed=1 || true
+  pkill -9 -f "/asty" 2>/dev/null && killed=1 || true
+  pkill -9 asty 2>/dev/null && killed=1 || true
 
-  # Убиваем сервисы
+  # Убиваем сервисы (агрессивно)
   for svc in gateway xauth xhttp xws; do
     pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
     pkill -9 -f "./bin/$svc" 2>/dev/null && killed=1 || true
+    pkill -9 -f "bin/$svc" 2>/dev/null && killed=1 || true
+    pkill -9 "$svc" 2>/dev/null && killed=1 || true
   done
 
   # Убиваем UI dev server
   pkill -9 -f "vite.*up.mt/asty/ui" 2>/dev/null && killed=1 || true
+  pkill -9 -f "vite.*asty" 2>/dev/null && killed=1 || true
+
+  # Убиваем процессы на известных портах (последняя мера)
+  for port in 4222 4747 8222; do
+    lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null && killed=1 || true
+  done
 
   [[ $killed -eq 1 ]] && info "✓ осиротевшие процессы убраны" || true
 }
@@ -301,30 +311,50 @@ print_status() {
 # Остановка
 # =============================================================================
 stop_all() {
-  log "Остановка сервисов..."
+  log "Остановка сервисов и ПОЛНАЯ ОЧИСТКА ресурсов..."
 
   # Asty processes
   if [[ -f "$PID_FILE" ]]; then
     while IFS= read -r pid; do
-      kill "$pid" 2>/dev/null && info "✓ PID $pid завершён" || true
+      kill -9 "$pid" 2>/dev/null && info "✓ PID $pid завершён (SIGKILL)" || true
     done < "$PID_FILE"
     rm -f "$PID_FILE"
   fi
 
-  # Осиротевшие процессы
+  # Осиротевшие процессы (агрессивная очистка)
   cleanup_orphans
+
+  # Дополнительная агрессивная очистка всех asty-процессов (защита от "грязных рук")
+  log "Агрессивная очистка всех Asty/NATS процессов..."
+  pkill -9 -f "asty" 2>/dev/null && info "✓ все asty процессы убиты" || true
+  pkill -9 -f "gateway" 2>/dev/null && info "✓ все gateway процессы убиты" || true
+  pkill -9 -f "xauth" 2>/dev/null && info "✓ все xauth процессы убиты" || true
+  pkill -9 -f "xhttp" 2>/dev/null && info "✓ все xhttp процессы убиты" || true
+  pkill -9 -f "xws" 2>/dev/null && info "✓ все xws процессы убиты" || true
+  pkill -9 -f "vite.*up.mt/asty" 2>/dev/null && info "✓ UI dev server убит" || true
+
+  # Освобождение портов (на случай зависших процессов)
+  log "Освобождение портов..."
+  for port in 3000 4222 4747 6222 8222 8080 8081 8082 8083 8084 8085; do
+    lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null && info "✓ порт $port освобождён" || true
+  done
 
   # Docker инфраструктура
   stop_infra
 
   # Временные данные
+  log "Удаление временных данных..."
   rm -rf "$DATA_BASE"
+  rm -rf /var/lib/asty 2>/dev/null || true
+  rm -rf /tmp/asty* 2>/dev/null || true
   rm -f "$NATS_CONF_RENDERED"
+  rm -f /tmp/asty-dev-*.log 2>/dev/null || true
+  info "✓ временные файлы удалены"
 
   # Loopback-алиасы (macOS)
   teardown_loopback_aliases
 
-  log "Остановлено"
+  log "✓ ВСЁ ОСТАНОВЛЕНО И ВЫЧИЩЕНО"
 }
 
 # =============================================================================
