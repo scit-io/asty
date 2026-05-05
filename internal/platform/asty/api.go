@@ -302,15 +302,20 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	isLeader := api.server.leaderElection.IsLeader()
 
 	healthyNodes := 0
+	var leaderIP string
 	for _, node := range nodes {
 		if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
 			healthyNodes++
+		}
+		if node.ID == leader {
+			leaderIP = node.IP
 		}
 	}
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cluster": map[string]interface{}{
 			"leader":        leader,
+			"leader_ip":     leaderIP,
 			"is_leader":     isLeader,
 			"nodes_total":   len(nodes),
 			"nodes_healthy": healthyNodes,

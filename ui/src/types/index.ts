@@ -54,6 +54,7 @@ export interface MetricPoint {
 export interface ClusterStatus {
   cluster: {
     leader: string
+    leader_ip: string
     is_leader: boolean
     nodes_total: number
     nodes_healthy: number

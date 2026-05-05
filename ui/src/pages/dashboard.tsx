@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MetricsChart } from '@/components/metrics-chart'
-import { Server, Cpu, MemoryStick, FileText, Activity, Shield } from 'lucide-react'
+import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw } from 'lucide-react'
 import type { MetricPoint, ClusterStatus } from '@/types'
 
 interface Node {
@@ -167,11 +167,11 @@ export default function Dashboard() {
               <Shield className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-sm font-bold mt-1 font-mono truncate">
+              <div className="text-sm font-bold font-mono">
                 {clusterStatus.cluster.leader || 'none'}
               </div>
-              <p className="text-xs text-muted-foreground">
-                {clusterStatus.cluster.is_leader ? 'this node' : 'remote'}
+              <p className="text-xs text-muted-foreground font-mono">
+                {clusterStatus.cluster.leader_ip || '-'}
               </p>
             </CardContent>
           </Card>
@@ -203,7 +203,7 @@ export default function Dashboard() {
         <TabsList className="grid w-full grid-cols-2">
           <TabsTrigger value="nodes">
             <Server className="h-4 w-4 mr-2" />
-            Nodes
+            Cluster Nodes
           </TabsTrigger>
           <TabsTrigger value="logs">
             <FileText className="h-4 w-4 mr-2" />
@@ -213,8 +213,16 @@ export default function Dashboard() {
 
         <TabsContent value="nodes" className="space-y-4">
           <Card>
-            <CardHeader className="text-right">
+            <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Cluster Nodes</CardTitle>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => window.location.reload()}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
             </CardHeader>
             <CardContent className="overflow-x-auto">
           {nodes.length === 0 ? (
@@ -289,7 +297,7 @@ export default function Dashboard() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {node.allocations_running || 0} / {node.allocations_planned || 0}
+                        <span className="font-bold">{node.allocations_running || 0}</span> / {node.allocations_planned || 0}
                       </TableCell>
                     </TableRow>
                   )
