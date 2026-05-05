@@ -346,9 +346,11 @@ stop_all() {
   log "Удаление временных данных..."
   rm -rf "$DATA_BASE"
   rm -rf /var/lib/asty 2>/dev/null || true
-  rm -rf /tmp/asty* 2>/dev/null || true
+  rm -f "$PID_FILE"
   rm -f "$NATS_CONF_RENDERED"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
+  # Удаляем рабочие директории процессов, но НЕ конфиги которые могут пересоздаваться
+  find /tmp -maxdepth 1 -name "asty-logs-test*" -type d -exec rm -rf {} + 2>/dev/null || true
   info "✓ временные файлы удалены"
 
   # Loopback-алиасы (macOS)
