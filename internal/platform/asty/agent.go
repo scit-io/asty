@@ -134,9 +134,9 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Check if already running
+	// Already running — not an error, desired state achieved
 	if _, exists := a.processes[svc.Name]; exists {
-		return fmt.Errorf("service %s already running", svc.Name)
+		return nil
 	}
 
 	// Create service directory

@@ -269,8 +269,13 @@ func (s *Server) watchAllocations(ctx context.Context) {
 								Str("service", svc.Name).
 								Str("node_id", alloc.NodeID).
 								Msg("failed to send start command")
+						} else {
+							alloc.Status = "running"
+							alloc.UpdatedAt = time.Now()
+							if err := s.clusterState.UpdateAllocation(alloc); err != nil {
+								log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation status")
+							}
 						}
-						// Note: agent will update allocation with PID and status after starting process
 					}
 				}
 
