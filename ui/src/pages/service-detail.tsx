@@ -1,12 +1,10 @@
-import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   Breadcrumb,
@@ -22,93 +20,107 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle, ArrowLeft } from 'lucide-react'
+import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+
+interface Allocation {
+  id: string
+  service_name: string
+  node_id: string
+  status: string
+  health_status: string
+  cpu_usage: number
+  memory_usage: number
+  restarts: number
+  started_at: string
+  version: string
+  pid: number
+}
 
 export default function ServiceDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
-  const navigate = useNavigate()
+  const [allocation, setAllocation] = useState<Allocation | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
+  const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
 
-  // Fallback: get allocation from node allocations if detail endpoint doesn't exist
-  const { data: allocsData } = useQuery({
-    queryKey: ['node-allocations', nodeId],
-    queryFn: () => api.getNodeAllocations(nodeId!),
-    enabled: !!nodeId,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-  })
+  useEffect(() => {
+    if (!allocId || !nodeId) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
 
-  const { data: allocation, isLoading, error: allocError } = useQuery({
-    queryKey: ['allocation', allocId],
-    queryFn: async () => {
+    const fetchData = async () => {
       try {
-        return await api.getAllocation(allocId!)
-      } catch (error) {
-        // Fallback to node allocations list
-        const allocFromList = allocsData?.allocations.find(a => a.id === allocId)
-        if (allocFromList) return allocFromList
-        throw error
+        let allocData: Allocation
+        try {
+          allocData = await api.getAllocation(allocId)
+        } catch {
+          const allocsRes = await api.getNodeAllocations(nodeId)
+          const found = allocsRes.allocations.find(a => a.id === allocId)
+          if (found) {
+            allocData = found as Allocation
+          } else {
+            if (!cancelled) setError('Allocation not found')
+            return
+          }
+        }
+        if (cancelled) return
+        setAllocation(allocData)
+        setError(null)
+      } catch {
+        // keep current state
       }
-    },
-    enabled: !!allocId,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-    retry: false,
-  })
+      if (!cancelled) timer = setTimeout(fetchData, 5000)
+    }
 
-  // Start SSE log streaming
+    fetchData()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [nodeId, allocId])
+
   useEffect(() => {
     if (!allocId) return
+    let retryCount = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
 
     const startStreaming = () => {
-      const eventSource = new EventSource(
-        `/api/v1/logs/allocation/${allocId}?follow=true&lines=100`
-      )
+      if (cancelled) return
+      const eventSource = new EventSource(`/api/v1/logs/allocation/${allocId}?follow=true&lines=100`)
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
           setLogLines((prev) => [...prev, data.line])
-
-          // Auto-scroll to bottom
-          setTimeout(() => {
-            logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-          }, 100)
-        } catch (err) {
-          console.error('Failed to parse log event:', err)
+          setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+        } catch {
+          // ignore
         }
       }
 
-      eventSource.onerror = (error) => {
-        console.error('SSE error:', error)
+      eventSource.onerror = () => {
         eventSource.close()
-        setIsStreaming(false)
-
-        // Retry after 5 seconds
-        setTimeout(() => {
-          if (eventSourceRef.current === eventSource) {
-            startStreaming()
-          }
-        }, 5000)
+        isStreamingRef.current = false
+        if (cancelled) return
+        retryCount++
+        retryTimer = setTimeout(startStreaming, Math.min(5000 * Math.pow(2, retryCount - 1), 60000))
       }
 
       eventSource.onopen = () => {
-        setIsStreaming(true)
+        retryCount = 0
+        isStreamingRef.current = true
       }
 
       eventSourceRef.current = eventSource
     }
 
     startStreaming()
-
     return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       eventSourceRef.current?.close()
       eventSourceRef.current = null
-      setIsStreaming(false)
     }
   }, [allocId])
 
@@ -130,35 +142,11 @@ export default function ServiceDetail() {
     }
   }
 
-  if (isLoading) {
+  if (error) {
     return (
       <div className="container mx-auto p-6 space-y-6">
-        <Skeleton className="h-12 w-64" />
-        <Skeleton className="h-96" />
-      </div>
-    )
-  }
-
-  if (allocError) {
-    return (
-      <div className="container mx-auto p-6 space-y-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate(`/nodes/${nodeId}`)}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-3xl font-bold">Service Not Available</h1>
-        </div>
         <Alert variant="destructive">
-          <AlertDescription>
-            Unable to load service details. API endpoint may not be implemented yet.
-            <br />
-            <span className="text-xs mt-2 block">Error: {String(allocError)}</span>
-          </AlertDescription>
-        </Alert>
-        <Alert>
-          <AlertDescription>
-            <strong>Required API endpoint:</strong> GET /api/v1/allocations/{allocId}
-          </AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
     )
@@ -167,9 +155,10 @@ export default function ServiceDetail() {
   if (!allocation) {
     return (
       <div className="container mx-auto p-6">
-        <Alert variant="destructive">
-          <AlertDescription>Service allocation not found</AlertDescription>
-        </Alert>
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Activity className="h-12 w-12 mb-4" />
+          <p>Loading service...</p>
+        </div>
       </div>
     )
   }
@@ -327,7 +316,7 @@ export default function ServiceDetail() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Service Logs</CardTitle>
               <div className="flex items-center gap-2">
-                {isStreaming && (
+                {isStreamingRef.current && (
                   <Badge variant="default" className="animate-pulse">
                     Live
                   </Badge>
@@ -354,7 +343,7 @@ export default function ServiceDetail() {
                   </>
                 ) : (
                   <div className="text-muted-foreground">
-                    {isStreaming ? 'Waiting for logs...' : 'Connecting to log stream...'}
+                    {isStreamingRef.current ? 'Waiting for logs...' : 'Connecting to log stream...'}
                   </div>
                 )}
               </div>

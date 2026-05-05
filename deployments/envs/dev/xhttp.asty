@@ -14,8 +14,8 @@ user: nobody
 kill_timeout: 30s
 
 env:
-  A_NATS_HOST: "127.0.0.1"
-  A_NATS_PORT: "4222"
+  A_NATS_HOST: "${A_NATS_HOST}"
+  A_NATS_PORT: "${A_NATS_PORT}"
   A_NATS_USER: "${A_NATS_USER}"
   A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
   A_LOG_LEVEL: "${A_LOG_LEVEL}"

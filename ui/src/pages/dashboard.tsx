@@ -1,110 +1,99 @@
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect, useRef, useMemo } from 'react'
-import { api } from '@/api/client'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Server, Cpu, MemoryStick, FileText } from 'lucide-react'
 
-// Stable hash function to detect data changes
-function dataHash(data: any): string {
-  if (!data) return ''
-  // Exclude frequently changing fields like last_seen
-  const stable = JSON.stringify(data, (key, value) => {
-    if (key === 'last_seen' || key === 'created_at') return undefined
-    return value
-  })
-  return stable
+interface Node {
+  id: string
+  ip: string
+  datacenter: string
+  status: string
+  cpu_total: number
+  cpu_available: number
+  memory_total: number
+  memory_available: number
+  allocations_running: number
+  allocations_planned: number
 }
 
 export default function Dashboard() {
   const navigate = useNavigate()
+  const [nodes, setNodes] = useState<Node[]>([])
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
+  const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
 
-  const { isLoading: statusLoading } = useQuery({
-    queryKey: ['status'],
-    queryFn: api.getStatus,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-  })
-
-  const { data: nodesData, isLoading: nodesLoading } = useQuery({
-    queryKey: ['nodes'],
-    queryFn: api.getNodes,
-    refetchInterval: 5000,
-    structuralSharing: true,
-  })
-
-  const isLoading = statusLoading || nodesLoading
-  const nodes = nodesData?.nodes || []
-
-  // Memoize nodes list to prevent unnecessary re-renders
-  // Only update when stable data changes (ignore last_seen timestamps)
-  const stableNodes = useMemo(() => {
-    return nodes
-  }, [dataHash(nodes)])
-
-  // Start SSE cluster log streaming
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const fetchNodes = async () => {
+      try {
+        const res = await fetch('/api/v1/nodes')
+        if (!res.ok) return
+        const data = await res.json()
+        if (cancelled) return
+        setNodes(data.nodes || [])
+      } catch {
+        // backend unavailable — keep current state, don't re-render
+      }
+      if (!cancelled) {
+        timer = setTimeout(fetchNodes, 5000)
+      }
+    }
+
+    fetchNodes()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [])
+
+  useEffect(() => {
+    let retryCount = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
     const startStreaming = () => {
+      if (cancelled) return
       const eventSource = new EventSource('/api/v1/logs/cluster?follow=true&lines=100')
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
           setClusterLogs((prev) => [...prev, data.line])
-
-          setTimeout(() => {
-            logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-          }, 100)
-        } catch (err) {
-          console.error('Failed to parse cluster log event:', err)
+          setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+        } catch {
+          // ignore
         }
       }
 
-      eventSource.onerror = (error) => {
-        console.error('Cluster SSE error:', error)
+      eventSource.onerror = () => {
         eventSource.close()
-        setIsStreaming(false)
-
-        setTimeout(() => {
-          if (eventSourceRef.current === eventSource) {
-            startStreaming()
-          }
-        }, 5000)
+        isStreamingRef.current = false
+        if (cancelled) return
+        retryCount++
+        retryTimer = setTimeout(startStreaming, Math.min(5000 * Math.pow(2, retryCount - 1), 60000))
       }
 
       eventSource.onopen = () => {
-        setIsStreaming(true)
+        retryCount = 0
+        isStreamingRef.current = true
       }
 
       eventSourceRef.current = eventSource
     }
 
     startStreaming()
-
     return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       eventSourceRef.current?.close()
       eventSourceRef.current = null
-      setIsStreaming(false)
     }
   }, [])
-
-  if (isLoading) {
-    return (
-      <div className="container mx-auto p-6 space-y-6">
-        <Skeleton className="h-9 w-48" />
-        <Skeleton className="h-96" />
-      </div>
-    )
-  }
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -145,7 +134,7 @@ export default function Dashboard() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {stableNodes.map((node) => {
+                {nodes.map((node) => {
                   const cpuUsed = node.cpu_total - node.cpu_available
                   const cpuPercent =
                     node.cpu_total > 0 ? Math.round((cpuUsed / node.cpu_total) * 100) : 0
@@ -215,7 +204,7 @@ export default function Dashboard() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Asty Cluster Logs</CardTitle>
               <div className="flex items-center gap-2">
-                {isStreaming && (
+                {isStreamingRef.current && (
                   <Badge variant="default" className="animate-pulse">
                     Live
                   </Badge>
@@ -238,7 +227,7 @@ export default function Dashboard() {
                   </>
                 ) : (
                   <div className="text-muted-foreground">
-                    {isStreaming ? 'Waiting for cluster logs...' : 'Connecting to cluster log stream...'}
+                    {isStreamingRef.current ? 'Waiting for cluster logs...' : 'Connecting to cluster log stream...'}
                   </div>
                 )}
               </div>

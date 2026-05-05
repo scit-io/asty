@@ -1,4 +1,3 @@
-import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { api } from '@/api/client'
@@ -6,7 +5,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
@@ -23,131 +21,135 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings, ArrowLeft } from 'lucide-react'
+import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+
+interface Node {
+  id: string
+  ip: string
+  datacenter: string
+  status: string
+  cpu_total: number
+  cpu_available: number
+  memory_total: number
+  memory_available: number
+  allocations_running: number
+  allocations_planned: number
+  created_at: string
+}
+
+interface Allocation {
+  id: string
+  service_name: string
+  node_id: string
+  status: string
+  health_status: string
+  cpu_usage: number
+  memory_usage: number
+  restarts: number
+}
 
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
+  const [node, setNode] = useState<Node | null>(null)
+  const [allocations, setAllocations] = useState<Allocation[]>([])
+  const [error, setError] = useState<string | null>(null)
   const [logLines, setLogLines] = useState<string[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
+  const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
   const logsEndRef = useRef<HTMLDivElement>(null)
 
-  // Fallback: get node from nodes list if detail endpoint doesn't exist
-  const { data: nodesData } = useQuery({
-    queryKey: ['nodes'],
-    queryFn: api.getNodes,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-  })
-
-  const { data: node, isLoading: nodeLoading, error: nodeError } = useQuery({
-    queryKey: ['node', nodeId],
-    queryFn: async () => {
-      try {
-        return await api.getNode(nodeId!)
-      } catch (error) {
-        // Fallback to nodes list
-        const nodeFromList = nodesData?.nodes.find(n => n.id === nodeId)
-        if (nodeFromList) return nodeFromList
-        throw error
-      }
-    },
-    enabled: !!nodeId,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-    retry: false,
-  })
-
-  const { data: allocsData, isLoading: allocsLoading } = useQuery({
-    queryKey: ['node-allocations', nodeId],
-    queryFn: () => api.getNodeAllocations(nodeId!),
-    enabled: !!nodeId,
-    refetchInterval: 5000,
-    structuralSharing: true, // Prevent re-render if data didn't change
-    retry: false,
-  })
-
-  // Start SSE node log streaming
   useEffect(() => {
     if (!nodeId) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const fetchData = async () => {
+      try {
+        let nodeData: Node
+        try {
+          nodeData = await api.getNode(nodeId)
+        } catch {
+          const nodesRes = await api.getNodes()
+          const found = nodesRes.nodes.find(n => n.id === nodeId)
+          if (found) {
+            nodeData = found as Node
+          } else {
+            if (!cancelled) setError('Node not found')
+            return
+          }
+        }
+        if (cancelled) return
+        setNode(nodeData)
+        setError(null)
+
+        try {
+          const allocsRes = await api.getNodeAllocations(nodeId)
+          if (!cancelled) setAllocations(allocsRes.allocations || [])
+        } catch {
+          // allocations endpoint may not exist yet
+        }
+      } catch {
+        // keep current state on error
+      }
+      if (!cancelled) timer = setTimeout(fetchData, 5000)
+    }
+
+    fetchData()
+    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+  }, [nodeId])
+
+  useEffect(() => {
+    if (!nodeId) return
+    let retryCount = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
 
     const startStreaming = () => {
-      const eventSource = new EventSource(
-        `/api/v1/logs/node/${nodeId}?follow=true&lines=100`
-      )
+      if (cancelled) return
+      const eventSource = new EventSource(`/api/v1/logs/node/${nodeId}?follow=true&lines=100`)
 
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
           setLogLines((prev) => [...prev, data.line])
-
-          setTimeout(() => {
-            logsEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-          }, 100)
-        } catch (err) {
-          console.error('Failed to parse node log event:', err)
+          setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+        } catch {
+          // ignore
         }
       }
 
-      eventSource.onerror = (error) => {
-        console.error('Node SSE error:', error)
+      eventSource.onerror = () => {
         eventSource.close()
-        setIsStreaming(false)
-
-        setTimeout(() => {
-          if (eventSourceRef.current === eventSource) {
-            startStreaming()
-          }
-        }, 5000)
+        isStreamingRef.current = false
+        if (cancelled) return
+        retryCount++
+        retryTimer = setTimeout(startStreaming, Math.min(5000 * Math.pow(2, retryCount - 1), 60000))
       }
 
       eventSource.onopen = () => {
-        setIsStreaming(true)
+        retryCount = 0
+        isStreamingRef.current = true
       }
 
       eventSourceRef.current = eventSource
     }
 
     startStreaming()
-
     return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
       eventSourceRef.current?.close()
       eventSourceRef.current = null
-      setIsStreaming(false)
     }
   }, [nodeId])
 
-  if (nodeLoading) {
+  if (error) {
     return (
       <div className="container mx-auto p-6 space-y-6">
-        <Skeleton className="h-12 w-64" />
-        <Skeleton className="h-96" />
-      </div>
-    )
-  }
-
-  if (nodeError) {
-    return (
-      <div className="container mx-auto p-6 space-y-6">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/')}>
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <h1 className="text-3xl font-bold">Node Not Available</h1>
-        </div>
         <Alert variant="destructive">
-          <AlertDescription>
-            Unable to load node details. API endpoint may not be implemented yet.
-            <br />
-            <span className="text-xs mt-2 block">Error: {String(nodeError)}</span>
-          </AlertDescription>
-        </Alert>
-        <Alert>
-          <AlertDescription>
-            <strong>Required API endpoint:</strong> GET /api/v1/nodes/{nodeId}
-          </AlertDescription>
+          <AlertDescription>{error}</AlertDescription>
         </Alert>
       </div>
     )
@@ -156,14 +158,14 @@ export default function NodeDetail() {
   if (!node) {
     return (
       <div className="container mx-auto p-6">
-        <Alert variant="destructive">
-          <AlertDescription>Node not found</AlertDescription>
-        </Alert>
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Activity className="h-12 w-12 mb-4" />
+          <p>Loading node...</p>
+        </div>
       </div>
     )
   }
 
-  const allocations = allocsData?.allocations || []
   const cpuUsed = node.cpu_total - node.cpu_available
   const cpuPercent = node.cpu_total > 0 ? Math.round((cpuUsed / node.cpu_total) * 100) : 0
   const memUsed = node.memory_total - node.memory_available
@@ -304,9 +306,7 @@ export default function NodeDetail() {
               <CardTitle>Running Services</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
-              {allocsLoading ? (
-                <Skeleton className="h-64" />
-              ) : allocations.length === 0 ? (
+              {allocations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Activity className="h-12 w-12 mb-4" />
                   <p>No services running on this node</p>
@@ -374,7 +374,7 @@ export default function NodeDetail() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Node Logs</CardTitle>
               <div className="flex items-center gap-2">
-                {isStreaming && (
+                {isStreamingRef.current && (
                   <Badge variant="outline" className="animate-pulse">
                     Live
                   </Badge>
@@ -401,7 +401,7 @@ export default function NodeDetail() {
                   </>
                 ) : (
                   <div className="text-muted-foreground">
-                    {isStreaming ? 'Waiting for logs...' : 'Connecting to log stream...'}
+                    {isStreamingRef.current ? 'Waiting for logs...' : 'Connecting to log stream...'}
                   </div>
                 )}
               </div>

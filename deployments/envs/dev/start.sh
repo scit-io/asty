@@ -222,14 +222,14 @@ start_asty() {
   info "Server: PID=$server_pid | Логи: $server_log"
 
   # Запускаем N agents (каждый с уникальным node ID и IP)
+  # sudo нужен для bind на порт 80 (gateway)
   for ((i=1; i<=nodes; i++)); do
     local agent_log="/tmp/asty-dev-node-$i.log"
     local addr="127.0.0.$i"
     mkdir -p "$DATA_BASE/node$i"
 
-    export A_NODE_ID="dev-node-$i"
-    export A_NODE_IP="$addr"
-    "$BIN_DIR/asty" -mode agent >> "$agent_log" 2>&1 &
+    sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+      "$BIN_DIR/asty" -mode agent >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"
     info "Node $i: id=dev-node-$i | ip=$addr | PID=$agent_pid | Логи: $agent_log"
@@ -257,34 +257,14 @@ wait_asty() {
 }
 
 # =============================================================================
-# Очистка осиротевших процессов (агрессивно убивает ВСЁ связанное с asty)
+# Очистка осиротевших процессов (только наши бинарники по точному пути)
 # =============================================================================
 cleanup_orphans() {
   local killed=0
-  # Убиваем asty (и через полный путь, и через ./bin/, и через любое упоминание)
-  pkill -9 -f "$BIN_DIR/asty" 2>/dev/null && killed=1 || true
-  pkill -9 -f "./bin/asty" 2>/dev/null && killed=1 || true
-  pkill -9 -f "bin/asty" 2>/dev/null && killed=1 || true
-  pkill -9 -f "/asty" 2>/dev/null && killed=1 || true
-  pkill -9 asty 2>/dev/null && killed=1 || true
-
-  # Убиваем сервисы (агрессивно)
+  sudo pkill -9 -f "$BIN_DIR/asty" 2>/dev/null && killed=1 || true
   for svc in gateway xauth xhttp xws; do
-    pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
-    pkill -9 -f "./bin/$svc" 2>/dev/null && killed=1 || true
-    pkill -9 -f "bin/$svc" 2>/dev/null && killed=1 || true
-    pkill -9 "$svc" 2>/dev/null && killed=1 || true
+    sudo pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
   done
-
-  # Убиваем UI dev server
-  pkill -9 -f "vite.*up.mt/asty/ui" 2>/dev/null && killed=1 || true
-  pkill -9 -f "vite.*asty" 2>/dev/null && killed=1 || true
-
-  # Убиваем процессы на известных портах (последняя мера)
-  for port in 4222 4747 8222; do
-    lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null && killed=1 || true
-  done
-
   [[ $killed -eq 1 ]] && info "✓ осиротевшие процессы убраны" || true
 }
 
@@ -311,52 +291,35 @@ print_status() {
 # Остановка
 # =============================================================================
 stop_all() {
-  log "Остановка сервисов и ПОЛНАЯ ОЧИСТКА ресурсов..."
+  log "Остановка Asty..."
 
-  # Asty processes
+  # Asty processes по PID-файлу (sudo — агенты запущены от root)
   if [[ -f "$PID_FILE" ]]; then
     while IFS= read -r pid; do
-      kill -9 "$pid" 2>/dev/null && info "✓ PID $pid завершён (SIGKILL)" || true
+      sudo kill "$pid" 2>/dev/null && info "✓ PID $pid завершён" || true
+    done < "$PID_FILE"
+    sleep 1
+    while IFS= read -r pid; do
+      sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
     done < "$PID_FILE"
     rm -f "$PID_FILE"
   fi
 
-  # Осиротевшие процессы (агрессивная очистка)
+  # Осиротевшие процессы (только наши бинарники)
   cleanup_orphans
-
-  # Дополнительная агрессивная очистка всех asty-процессов (защита от "грязных рук")
-  log "Агрессивная очистка всех Asty/NATS процессов..."
-  pkill -9 -f "asty" 2>/dev/null && info "✓ все asty процессы убиты" || true
-  pkill -9 -f "gateway" 2>/dev/null && info "✓ все gateway процессы убиты" || true
-  pkill -9 -f "xauth" 2>/dev/null && info "✓ все xauth процессы убиты" || true
-  pkill -9 -f "xhttp" 2>/dev/null && info "✓ все xhttp процессы убиты" || true
-  pkill -9 -f "xws" 2>/dev/null && info "✓ все xws процессы убиты" || true
-  pkill -9 -f "vite.*up.mt/asty" 2>/dev/null && info "✓ UI dev server убит" || true
-
-  # Освобождение портов (на случай зависших процессов)
-  log "Освобождение портов..."
-  for port in 3000 4222 4747 6222 8222 8080 8081 8082 8083 8084 8085; do
-    lsof -ti:"$port" 2>/dev/null | xargs -r kill -9 2>/dev/null && info "✓ порт $port освобождён" || true
-  done
 
   # Docker инфраструктура
   stop_infra
 
   # Временные данные
-  log "Удаление временных данных..."
   rm -rf "$DATA_BASE"
-  rm -rf /var/lib/asty 2>/dev/null || true
-  rm -f "$PID_FILE"
   rm -f "$NATS_CONF_RENDERED"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
-  # Удаляем рабочие директории процессов, но НЕ конфиги которые могут пересоздаваться
-  find /tmp -maxdepth 1 -name "asty-logs-test*" -type d -exec rm -rf {} + 2>/dev/null || true
-  info "✓ временные файлы удалены"
 
   # Loopback-алиасы (macOS)
   teardown_loopback_aliases
 
-  log "✓ ВСЁ ОСТАНОВЛЕНО И ВЫЧИЩЕНО"
+  log "✓ Остановлено"
 }
 
 # =============================================================================
