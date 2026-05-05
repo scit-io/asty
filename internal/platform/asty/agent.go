@@ -8,6 +8,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -108,6 +110,9 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	// Publish node heartbeat
 	go a.publishHeartbeat(ctx)
+
+	// Publish process metrics to cluster state
+	go a.publishProcessMetrics(ctx)
 
 	// Monitor and restart failed processes
 	go a.monitorProcesses(ctx)
@@ -434,8 +439,14 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 	defer a.mu.RUnlock()
 
 	processes := make([]string, 0, len(a.processes))
-	for name := range a.processes {
+	var cpuUsed int
+	var memUsed int64
+	for name, proc := range a.processes {
 		processes = append(processes, name)
+		if m, ok := a.metricsCollector.GetMetrics(proc.PID()); ok {
+			cpuUsed += int(m.CPUPercent * 40) // scale: 100% of 1 core = 4000/100 = 40 MHz per %
+			memUsed += m.MemoryMB
+		}
 	}
 
 	// Use explicit IP from config, or auto-detect
@@ -444,18 +455,29 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 		nodeIP = getNodeIP(a.cfg.NATSHost)
 	}
 
-	// TODO: collect actual resource usage
+	cpuTotal := detectCPUMHz()
+	memTotal := detectMemoryMB()
+
+	cpuAvail := cpuTotal - cpuUsed
+	if cpuAvail < 0 {
+		cpuAvail = 0
+	}
+	memAvail := memTotal - memUsed
+	if memAvail < 0 {
+		memAvail = 0
+	}
+
 	return &NodeInfo{
-		ID:         a.nodeID,
-		Datacenter: a.cfg.Datacenter,
-		IP:         nodeIP,
-		Status:     "ready",
-		LastSeen:   time.Now(),
-		CPUTotal:      4000, // TODO: detect actual CPU
-		CPUAvailable:  3000,
-		MemoryTotal:   8192, // TODO: detect actual memory
-		MemoryAvailable: 6144,
-		Processes:    processes,
+		ID:              a.nodeID,
+		Datacenter:      a.cfg.Datacenter,
+		IP:              nodeIP,
+		Status:          "ready",
+		LastSeen:        time.Now(),
+		CPUTotal:        cpuTotal,
+		CPUAvailable:    cpuAvail,
+		MemoryTotal:     memTotal,
+		MemoryAvailable: memAvail,
+		Processes:       processes,
 	}
 }
 
@@ -529,6 +551,44 @@ func splitLines(data string, lastN int) []string {
 	}
 
 	return lines
+}
+
+// publishProcessMetrics periodically updates allocation metrics from collector
+func (a *Agent) publishProcessMetrics(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.mu.RLock()
+			procs := make(map[string]*Process, len(a.processes))
+			for name, proc := range a.processes {
+				procs[name] = proc
+			}
+			a.mu.RUnlock()
+
+			for serviceName, proc := range procs {
+				metrics, ok := a.metricsCollector.GetMetrics(proc.PID())
+				if !ok {
+					continue
+				}
+
+				alloc, err := a.clusterState.GetAllocation(serviceName, a.nodeID)
+				if err != nil {
+					continue
+				}
+
+				alloc.CPUUsage = int(metrics.CPUPercent)
+				alloc.MemoryUsage = int(metrics.MemoryMB)
+				if err := a.clusterState.UpdateAllocation(alloc); err != nil {
+					log.Error().Err(err).Str("service", serviceName).Msg("failed to update allocation metrics")
+				}
+			}
+		}
+	}
 }
 
 // monitorProcesses periodically checks for failed processes and restarts them
@@ -640,6 +700,56 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 			Int("attempt", alloc.Restarts).
 			Msg("marked allocation for restart, waiting for server command")
 	}
+}
+
+// detectCPUMHz returns total CPU capacity in MHz (cores * MHz per core)
+func detectCPUMHz() int {
+	data, err := os.ReadFile("/proc/cpuinfo")
+	if err != nil {
+		return 4000 // fallback
+	}
+
+	var totalMHz float64
+	var cores int
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "cpu MHz") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				mhz, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+				if err == nil {
+					totalMHz += mhz
+					cores++
+				}
+			}
+		}
+	}
+
+	if cores == 0 {
+		return 4000 // fallback
+	}
+	return int(totalMHz)
+}
+
+// detectMemoryMB returns total system memory in MB
+func detectMemoryMB() int64 {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 8192 // fallback
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, err := strconv.ParseInt(fields[1], 10, 64)
+				if err == nil {
+					return kb / 1024
+				}
+			}
+		}
+	}
+
+	return 8192 // fallback
 }
 
 // streamProcessLogs streams process logs to NATS in real-time

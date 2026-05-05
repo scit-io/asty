@@ -794,10 +794,6 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 	servicesStatus := make(map[string]interface{})
 
 	for _, svc := range api.server.services {
-		if svc.Type == "system" {
-			continue
-		}
-
 		allocs, _ := api.server.clusterState.ListAllocations(svc.Name)
 		running := 0
 		for _, a := range allocs {
