@@ -39,9 +39,15 @@ interface Allocation {
   pid: number
 }
 
+interface ServiceResources {
+  CPU: number
+  Memory: number
+}
+
 export default function ServiceDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
   const [allocation, setAllocation] = useState<Allocation | null>(null)
+  const [serviceResources, setServiceResources] = useState<ServiceResources | null>(null)
   const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -74,15 +80,24 @@ export default function ServiceDetail() {
         setAllocation(allocData)
         setError(null)
 
-        const metricsRes = await api.getAllocationMetrics(allocId).catch(() => ({
-          allocation_id: allocId,
-          cpu: [],
-          memory: [],
-          period: '1h',
-        }))
+        const [metricsRes, serviceRes] = await Promise.all([
+          api.getAllocationMetrics(allocId).catch(() => ({
+            allocation_id: allocId,
+            cpu: [],
+            memory: [],
+            period: '1h',
+          })),
+          api.getService(allocData.service_name).catch(() => null),
+        ])
         if (!cancelled) {
           setCpuMetrics(metricsRes.cpu || [])
           setMemoryMetrics(metricsRes.memory || [])
+          if (serviceRes) {
+            setServiceResources({
+              CPU: serviceRes.service.Resources.CPU,
+              Memory: serviceRes.service.Resources.Memory,
+            })
+          }
         }
       } catch {
         // keep current state
@@ -241,6 +256,11 @@ export default function ServiceDetail() {
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{allocation.cpu_usage}%</div>
+                {serviceResources && (
+                  <p className="text-xs text-muted-foreground">
+                    {Math.round((allocation.cpu_usage / 100) * serviceResources.CPU)} / {serviceResources.CPU} MHz
+                  </p>
+                )}
               </CardContent>
             </Card>
 
@@ -250,7 +270,12 @@ export default function ServiceDetail() {
                 <MemoryStick className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold">{allocation.memory_usage} MB</div>
+                <div className="text-2xl font-bold">
+                  {serviceResources ? Math.round((allocation.memory_usage / serviceResources.Memory) * 100) : '?'}%
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {allocation.memory_usage} / {serviceResources?.Memory || '?'} MB
+                </p>
               </CardContent>
             </Card>
 

@@ -6,9 +6,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 func detectCPUMHz() int {
+	// Allow override via A_CPU_TOTAL env variable
+	if override := os.Getenv("A_CPU_TOTAL"); override != "" {
+		log.Debug().Str("A_CPU_TOTAL", override).Msg("cpu override env detected")
+		if val, err := strconv.Atoi(override); err == nil && val > 0 {
+			log.Info().Int("cpu_mhz", val).Msg("using CPU override from A_CPU_TOTAL")
+			return val
+		} else {
+			log.Warn().Str("A_CPU_TOTAL", override).Err(err).Msg("failed to parse A_CPU_TOTAL")
+		}
+	}
+
 	data, err := os.ReadFile("/proc/cpuinfo")
 	if err != nil {
 		return 4000
@@ -36,6 +49,17 @@ func detectCPUMHz() int {
 }
 
 func detectMemoryMB() int64 {
+	// Allow override via A_MEMORY_TOTAL env variable
+	if override := os.Getenv("A_MEMORY_TOTAL"); override != "" {
+		log.Debug().Str("A_MEMORY_TOTAL", override).Msg("memory override env detected")
+		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
+			log.Info().Int64("memory_mb", val).Msg("using Memory override from A_MEMORY_TOTAL")
+			return val
+		} else {
+			log.Warn().Str("A_MEMORY_TOTAL", override).Err(err).Msg("failed to parse A_MEMORY_TOTAL")
+		}
+	}
+
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
 		return 8192

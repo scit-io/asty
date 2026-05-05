@@ -51,11 +51,17 @@ interface Allocation {
   restarts: number
 }
 
+interface ServiceResources {
+  CPU: number
+  Memory: number
+}
+
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
   const [node, setNode] = useState<Node | null>(null)
   const [allocations, setAllocations] = useState<Allocation[]>([])
+  const [services, setServices] = useState<Map<string, ServiceResources>>(new Map())
   const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
@@ -89,14 +95,22 @@ export default function NodeDetail() {
         setNode(nodeData)
         setError(null)
 
-        const [allocsRes, metricsRes] = await Promise.all([
+        const [allocsRes, metricsRes, servicesRes] = await Promise.all([
           api.getNodeAllocations(nodeId).catch(() => ({ allocations: [] })),
           api.getNodeMetrics(nodeId).catch(() => ({ cpu: [], memory: [], rps: [], period: '1h' })),
+          api.getServices().catch(() => ({ services: [], count: 0 })),
         ])
         if (!cancelled) {
           setAllocations((allocsRes as { allocations: Allocation[] }).allocations || [])
           setCpuMetrics(metricsRes.cpu || [])
           setMemoryMetrics(metricsRes.memory || [])
+
+          // Build service resources map
+          const svcMap = new Map<string, ServiceResources>()
+          servicesRes.services.forEach(svc => {
+            svcMap.set(svc.Name, { CPU: svc.Resources.CPU, Memory: svc.Resources.Memory })
+          })
+          setServices(svcMap)
           setRpsMetrics(metricsRes.rps || [])
         }
       } catch {
@@ -354,7 +368,7 @@ export default function NodeDetail() {
                           <Badge
                             variant={
                               alloc.status === 'running'
-                                ? 'default'
+                                ? 'success'
                                 : alloc.status === 'failed'
                                 ? 'destructive'
                                 : 'secondary'
@@ -376,8 +390,20 @@ export default function NodeDetail() {
                             {alloc.health_status}
                           </Badge>
                         </TableCell>
-                        <TableCell>{alloc.cpu_usage}%</TableCell>
-                        <TableCell>{alloc.memory_usage} MB</TableCell>
+                        <TableCell>
+                          <div>{alloc.cpu_usage}%</div>
+                          {services.get(alloc.service_name) && (
+                            <div className="text-xs text-muted-foreground">
+                              {Math.round((alloc.cpu_usage / 100) * services.get(alloc.service_name)!.CPU)} / {services.get(alloc.service_name)!.CPU} MHz
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div>{Math.round((alloc.memory_usage / (services.get(alloc.service_name)?.Memory || 100)) * 100)}%</div>
+                          <div className="text-xs text-muted-foreground">
+                            {alloc.memory_usage} / {services.get(alloc.service_name)?.Memory || '?'} MB
+                          </div>
+                        </TableCell>
                         <TableCell>{alloc.restarts}</TableCell>
                       </TableRow>
                     ))}

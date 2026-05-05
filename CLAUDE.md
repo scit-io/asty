@@ -107,6 +107,8 @@ Environment variables with `A_` prefix:
 - `A_MIN_COPIES` — minimum service replicas (default: 3)
 - `A_TARGET_CPU`, `A_TARGET_MEMORY` — autoscaling thresholds (default: 75%)
 - `A_TRAFFIC_RPS_THRESHOLD` — sustained RPS to trigger scale-up (default: 5)
+- `A_CPU_TOTAL` — override total CPU MHz (default: auto-detect from system)
+- `A_MEMORY_TOTAL` — override total Memory MB (default: auto-detect from system)
 
 **Local development with multiple nodes**: Set `A_NODE_IP` and `A_NATS_HOST` to unique loopback IPs (e.g., 127.0.0.2, 127.0.0.3) for each agent.
 

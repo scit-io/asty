@@ -5,12 +5,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Package, Activity } from 'lucide-react'
-import type { ServiceDefinition, AutoscalerServiceStatus } from '@/types'
+import type { ServiceDefinition, AutoscalerServiceStatus, Allocation } from '@/types'
+
+interface ServiceUsage {
+  avgCpuPercent: number
+  avgMemoryPercent: number
+  avgCpuMHz: number
+  avgMemoryMB: number
+}
 
 export default function Services() {
   const navigate = useNavigate()
   const [services, setServices] = useState<ServiceDefinition[]>([])
   const [autoscalerStatus, setAutoscalerStatus] = useState<Record<string, AutoscalerServiceStatus>>({})
+  const [serviceUsage, setServiceUsage] = useState<Record<string, ServiceUsage>>({})
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
@@ -25,6 +33,35 @@ export default function Services() {
         if (cancelled) return
         setServices(svcRes.services || [])
         setAutoscalerStatus(asRes.services || {})
+
+        // Fetch allocations for each service to calculate usage
+        const usageMap: Record<string, ServiceUsage> = {}
+        await Promise.all(
+          (svcRes.services || []).map(async (svc) => {
+            try {
+              const detailRes = await api.getService(svc.Name)
+              const allocations: Allocation[] = detailRes.allocations || []
+              const running = allocations.filter(a => a.status === 'running')
+
+              if (running.length > 0) {
+                const totalCpu = running.reduce((sum, a) => sum + a.cpu_usage, 0)
+                const totalMem = running.reduce((sum, a) => sum + a.memory_usage, 0)
+                const avgCpu = totalCpu / running.length
+                const avgMem = totalMem / running.length
+
+                usageMap[svc.Name] = {
+                  avgCpuPercent: Math.round(avgCpu),
+                  avgMemoryPercent: Math.round((avgMem / svc.Resources.Memory) * 100),
+                  avgCpuMHz: Math.round((avgCpu / 100) * svc.Resources.CPU),
+                  avgMemoryMB: Math.round(avgMem),
+                }
+              }
+            } catch {
+              // skip on error
+            }
+          })
+        )
+        if (!cancelled) setServiceUsage(usageMap)
       } catch {
         // keep current state
       }
@@ -54,8 +91,8 @@ export default function Services() {
                   <TableHead>Service</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Copies</TableHead>
-                  <TableHead>CPU Limit</TableHead>
-                  <TableHead>Memory Limit</TableHead>
+                  <TableHead>CPU (avg)</TableHead>
+                  <TableHead>Memory (avg)</TableHead>
                   <TableHead>Health</TableHead>
                   <TableHead className="text-right">Autoscaler</TableHead>
                 </TableRow>
@@ -83,8 +120,34 @@ export default function Services() {
                       <TableCell>
                         {as ? as.current_copies : '-'}
                       </TableCell>
-                      <TableCell>{svc.Resources.CPU} MHz</TableCell>
-                      <TableCell>{svc.Resources.Memory} MB</TableCell>
+                      <TableCell>
+                        {serviceUsage[svc.Name] ? (
+                          <>
+                            <div>{serviceUsage[svc.Name].avgCpuPercent}%</div>
+                            <div className="text-xs text-muted-foreground">
+                              {serviceUsage[svc.Name].avgCpuMHz} / {svc.Resources.CPU} MHz
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">
+                            {svc.Resources.CPU} MHz
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {serviceUsage[svc.Name] ? (
+                          <>
+                            <div>{serviceUsage[svc.Name].avgMemoryPercent}%</div>
+                            <div className="text-xs text-muted-foreground">
+                              {serviceUsage[svc.Name].avgMemoryMB} / {svc.Resources.Memory} MB
+                            </div>
+                          </>
+                        ) : (
+                          <div className="text-xs text-muted-foreground">
+                            {svc.Resources.Memory} MB
+                          </div>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Badge variant="outline">
                           {svc.Health.Type || 'none'}

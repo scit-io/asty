@@ -203,7 +203,7 @@ export default function ServiceOverview() {
                         <TableCell>
                           <Badge
                             variant={
-                              alloc.status === 'running' ? 'default'
+                              alloc.status === 'running' ? 'success'
                                 : alloc.status === 'failed' ? 'destructive'
                                 : 'secondary'
                             }
@@ -222,8 +222,22 @@ export default function ServiceOverview() {
                             {alloc.health_status}
                           </Badge>
                         </TableCell>
-                        <TableCell>{alloc.cpu_usage}%</TableCell>
-                        <TableCell>{alloc.memory_usage} MB</TableCell>
+                        <TableCell>
+                          <div>{alloc.cpu_usage}%</div>
+                          {service && (
+                            <div className="text-xs text-muted-foreground">
+                              {Math.round((alloc.cpu_usage / 100) * service.Resources.CPU)} / {service.Resources.CPU} MHz
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div>{Math.round((alloc.memory_usage / service.Resources.Memory) * 100)}%</div>
+                          {service && (
+                            <div className="text-xs text-muted-foreground">
+                              {alloc.memory_usage} / {service.Resources.Memory} MB
+                            </div>
+                          )}
+                        </TableCell>
                         <TableCell>{alloc.restarts}</TableCell>
                         <TableCell className="text-sm">
                           {alloc.started_at

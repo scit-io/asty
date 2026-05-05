@@ -231,6 +231,8 @@ start_asty() {
   export A_UI_ADDR="${A_UI_ADDR:-127.0.0.1:4747}"
   export A_WORK_DIR="${A_WORK_DIR:-$DATA_BASE/work}"
   export A_SERVICE_DIR="${A_SERVICE_DIR:-${SCRIPT_DIR}}"
+  export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"     # 1 CPU @ 2.20 GHz
+  export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}" # 466 MiB
 
   # Запускаем 1 server
   local server_log="/tmp/asty-dev-server.log"

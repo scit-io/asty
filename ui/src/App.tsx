@@ -12,15 +12,17 @@ export default function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="astiui-theme">
       <BrowserRouter>
-        <Header />
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/nodes/:nodeId" element={<NodeDetail />} />
-          <Route path="/nodes/:nodeId/alloc/:allocId" element={<ServiceDetail />} />
-          <Route path="/services" element={<Services />} />
-          <Route path="/services/:name" element={<ServiceOverview />} />
-          <Route path="/deploy" element={<Deploy />} />
-        </Routes>
+        <div className="min-h-screen bg-gradient-to-t from-muted to-muted/30">
+          <Header />
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/nodes/:nodeId" element={<NodeDetail />} />
+            <Route path="/nodes/:nodeId/alloc/:allocId" element={<ServiceDetail />} />
+            <Route path="/services" element={<Services />} />
+            <Route path="/services/:name" element={<ServiceOverview />} />
+            <Route path="/deploy" element={<Deploy />} />
+          </Routes>
+        </div>
       </BrowserRouter>
     </ThemeProvider>
   )
