@@ -8,8 +8,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -702,55 +700,6 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 	}
 }
 
-// detectCPUMHz returns total CPU capacity in MHz (cores * MHz per core)
-func detectCPUMHz() int {
-	data, err := os.ReadFile("/proc/cpuinfo")
-	if err != nil {
-		return 4000 // fallback
-	}
-
-	var totalMHz float64
-	var cores int
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "cpu MHz") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
-				mhz, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
-				if err == nil {
-					totalMHz += mhz
-					cores++
-				}
-			}
-		}
-	}
-
-	if cores == 0 {
-		return 4000 // fallback
-	}
-	return int(totalMHz)
-}
-
-// detectMemoryMB returns total system memory in MB
-func detectMemoryMB() int64 {
-	data, err := os.ReadFile("/proc/meminfo")
-	if err != nil {
-		return 8192 // fallback
-	}
-
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "MemTotal:") {
-			fields := strings.Fields(line)
-			if len(fields) >= 2 {
-				kb, err := strconv.ParseInt(fields[1], 10, 64)
-				if err == nil {
-					return kb / 1024
-				}
-			}
-		}
-	}
-
-	return 8192 // fallback
-}
 
 // streamProcessLogs streams process logs to NATS in real-time
 func (a *Agent) streamProcessLogs(serviceName string, proc *Process) {
