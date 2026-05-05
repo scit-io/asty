@@ -275,8 +275,8 @@ func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 	// Check if leader
 	if !api.server.leaderElection.IsLeader() {
-		leader, _ := api.server.leaderElection.GetLeader()
-		api.writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("not leader, current leader: %s", leader), nil)
+		leaderInfo, _ := api.server.leaderElection.GetLeader()
+		api.writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("not leader, current leader: %s", leaderInfo.ID), nil)
 		return
 	}
 
@@ -298,24 +298,27 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodes, _ := api.server.clusterState.ListNodes()
-	leader, _ := api.server.leaderElection.GetLeader()
+	leaderInfo, _ := api.server.leaderElection.GetLeader()
 	isLeader := api.server.leaderElection.IsLeader()
 
 	healthyNodes := 0
-	var leaderIP string
+	var leaderNodeID string
 	for _, node := range nodes {
 		if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
 			healthyNodes++
 		}
-		if node.ID == leader {
-			leaderIP = node.IP
+		if node.IP == leaderInfo.IP {
+			leaderNodeID = node.ID
 		}
+	}
+	if leaderNodeID == "" {
+		leaderNodeID = leaderInfo.ID
 	}
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"cluster": map[string]interface{}{
-			"leader":        leader,
-			"leader_ip":     leaderIP,
+			"leader":        leaderNodeID,
+			"leader_ip":     leaderInfo.IP,
 			"is_leader":     isLeader,
 			"nodes_total":   len(nodes),
 			"nodes_healthy": healthyNodes,
@@ -869,13 +872,22 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Send initial status event
-	leader, _ := api.server.leaderElection.GetLeader()
+	initLeader, _ := api.server.leaderElection.GetLeader()
+	initNodes, _ := api.server.clusterState.ListNodes()
+	initLeaderNode := initLeader.ID
+	for _, node := range initNodes {
+		if node.IP == initLeader.IP {
+			initLeaderNode = node.ID
+			break
+		}
+	}
 	status, _ := json.Marshal(map[string]interface{}{
 		"cluster": map[string]interface{}{
-			"leader":        leader,
+			"leader":        initLeaderNode,
+			"leader_ip":     initLeader.IP,
 			"is_leader":     api.server.leaderElection.IsLeader(),
-			"nodes_total":   0,
-			"nodes_healthy": 0,
+			"nodes_total":   len(initNodes),
+			"nodes_healthy": len(initNodes),
 		},
 		"timestamp": time.Now().Unix(),
 	})
@@ -901,10 +913,18 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			leader, _ := api.server.leaderElection.GetLeader()
+			tickLeader, _ := api.server.leaderElection.GetLeader()
+			leaderNode := tickLeader.ID
+			for _, node := range nodes {
+				if node.IP == tickLeader.IP {
+					leaderNode = node.ID
+					break
+				}
+			}
 			statusData, _ := json.Marshal(map[string]interface{}{
 				"cluster": map[string]interface{}{
-					"leader":        leader,
+					"leader":        leaderNode,
+					"leader_ip":     tickLeader.IP,
 					"is_leader":     api.server.leaderElection.IsLeader(),
 					"nodes_total":   len(nodes),
 					"nodes_healthy": healthyNodes,

@@ -85,7 +85,11 @@ func (s *Server) Start(ctx context.Context) error {
 	s.clusterState = clusterState
 
 	// Initialize leader election
-	leaderElection, err := NewLeaderElection(s.nc, s.nodeID)
+	leaderIP := s.cfg.NodeIP
+	if leaderIP == "" {
+		leaderIP = getNodeIP(s.cfg.NATSHost)
+	}
+	leaderElection, err := NewLeaderElection(s.nc, s.nodeID, leaderIP)
 	if err != nil {
 		return fmt.Errorf("failed to initialize leader election: %w", err)
 	}
@@ -149,14 +153,15 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.leaderElection.CampaignForLeader(ctx)
 
 	// Wait for leader election
-	leader, err := s.leaderElection.WaitForLeader(ctx)
+	leaderInfo, err := s.leaderElection.WaitForLeader(ctx)
 	if err != nil {
 		return fmt.Errorf("leader election failed: %w", err)
 	}
 
 	log.Info().
-		Str("leader", leader).
-		Bool("is_leader", leader == s.nodeID).
+		Str("leader", leaderInfo.ID).
+		Str("leader_ip", leaderInfo.IP).
+		Bool("is_leader", leaderInfo.ID == s.nodeID).
 		Msg("leader elected")
 
 	// Discover cluster nodes

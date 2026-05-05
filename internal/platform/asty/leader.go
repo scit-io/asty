@@ -2,6 +2,7 @@ package asty
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -9,17 +10,24 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// LeaderInfo holds leader identification data stored in KV
+type LeaderInfo struct {
+	ID string `json:"id"`
+	IP string `json:"ip"`
+}
+
 // LeaderElection handles leader election via NATS JetStream KV
 type LeaderElection struct {
 	nc       *nats.Conn
 	js       nats.JetStreamContext
 	bucket   nats.KeyValue
 	nodeID   string
+	nodeIP   string
 	isLeader bool
 }
 
 // NewLeaderElection creates a new leader election instance
-func NewLeaderElection(nc *nats.Conn, nodeID string) (*LeaderElection, error) {
+func NewLeaderElection(nc *nats.Conn, nodeID string, nodeIP string) (*LeaderElection, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
@@ -60,6 +68,7 @@ func NewLeaderElection(nc *nats.Conn, nodeID string) (*LeaderElection, error) {
 		js:       js,
 		bucket:   bucket,
 		nodeID:   nodeID,
+		nodeIP:   nodeIP,
 		isLeader: false,
 	}, nil
 }
@@ -101,10 +110,10 @@ func (le *LeaderElection) tryBecomeLeader() error {
 		return le.claimLeadership()
 	}
 
-	currentLeader := string(entry.Value())
+	currentLeaderID := parseLeaderID(entry.Value())
 
 	// We are already the leader - refresh lease
-	if currentLeader == le.nodeID {
+	if currentLeaderID == le.nodeID {
 		return le.refreshLeadership()
 	}
 
@@ -117,19 +126,28 @@ func (le *LeaderElection) tryBecomeLeader() error {
 	// We lost leadership
 	log.Warn().
 		Str("old_leader", le.nodeID).
-		Str("new_leader", currentLeader).
+		Str("new_leader", currentLeaderID).
 		Msg("lost leadership")
 
 	le.isLeader = false
 	return nil
 }
 
+// parseLeaderID extracts leader ID from KV value (supports both JSON and plain string)
+func parseLeaderID(data []byte) string {
+	var info LeaderInfo
+	if err := json.Unmarshal(data, &info); err == nil {
+		return info.ID
+	}
+	return string(data)
+}
+
 // claimLeadership attempts to claim leadership
 func (le *LeaderElection) claimLeadership() error {
 	leaderKey := "current-leader"
 
-	// Try to create the key (will fail if it already exists)
-	_, err := le.bucket.Create(leaderKey, []byte(le.nodeID))
+	data, _ := json.Marshal(LeaderInfo{ID: le.nodeID, IP: le.nodeIP})
+	_, err := le.bucket.Create(leaderKey, data)
 	if err != nil {
 		return fmt.Errorf("failed to claim leadership: %w", err)
 	}
@@ -147,8 +165,8 @@ func (le *LeaderElection) claimLeadership() error {
 func (le *LeaderElection) refreshLeadership() error {
 	leaderKey := "current-leader"
 
-	// Update the key to refresh TTL
-	_, err := le.bucket.Put(leaderKey, []byte(le.nodeID))
+	data, _ := json.Marshal(LeaderInfo{ID: le.nodeID, IP: le.nodeIP})
+	_, err := le.bucket.Put(leaderKey, data)
 	if err != nil {
 		le.isLeader = false
 		return fmt.Errorf("failed to refresh leadership: %w", err)
@@ -175,7 +193,7 @@ func (le *LeaderElection) stepDown() error {
 		return fmt.Errorf("failed to get leader key: %w", err)
 	}
 
-	if string(entry.Value()) != le.nodeID {
+	if parseLeaderID(entry.Value()) != le.nodeID {
 		// Someone else is leader now
 		le.isLeader = false
 		return nil
@@ -200,30 +218,35 @@ func (le *LeaderElection) IsLeader() bool {
 	return le.isLeader
 }
 
-// GetLeader returns the current leader node ID
-func (le *LeaderElection) GetLeader() (string, error) {
+// GetLeader returns the current leader info
+func (le *LeaderElection) GetLeader() (LeaderInfo, error) {
 	leaderKey := "current-leader"
 
 	entry, err := le.bucket.Get(leaderKey)
 	if err != nil {
 		if err == nats.ErrKeyNotFound {
-			return "", fmt.Errorf("no leader elected")
+			return LeaderInfo{}, fmt.Errorf("no leader elected")
 		}
-		return "", fmt.Errorf("failed to get leader: %w", err)
+		return LeaderInfo{}, fmt.Errorf("failed to get leader: %w", err)
 	}
 
-	return string(entry.Value()), nil
+	var info LeaderInfo
+	if err := json.Unmarshal(entry.Value(), &info); err != nil {
+		// Backwards compat: plain string
+		return LeaderInfo{ID: string(entry.Value())}, nil
+	}
+	return info, nil
 }
 
 // WaitForLeader waits until a leader is elected
-func (le *LeaderElection) WaitForLeader(ctx context.Context) (string, error) {
+func (le *LeaderElection) WaitForLeader(ctx context.Context) (LeaderInfo, error) {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return LeaderInfo{}, ctx.Err()
 
 		case <-ticker.C:
 			leader, err := le.GetLeader()
