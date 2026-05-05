@@ -25,19 +25,34 @@ func NewLeaderElection(nc *nats.Conn, nodeID string) (*LeaderElection, error) {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	// Create or get KV bucket for leader election
-	bucket, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:      "asty-leader",
-		Description: "Asty leader election",
-		TTL:         10 * time.Second, // Leader must refresh within 10 seconds
-		History:     5,
-	})
-	if err != nil {
-		// Try to get existing bucket
-		bucket, err = js.KeyValue("asty-leader")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create/get leader KV bucket: %w", err)
+	// Retry KV bucket creation — JetStream meta-group may still be electing leader
+	var bucket nats.KeyValue
+	for attempt := 0; attempt < 30; attempt++ {
+		bucket, err = js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:      "asty-leader",
+			Description: "Asty leader election",
+			TTL:         10 * time.Second,
+			History:     5,
+		})
+		if err == nil {
+			break
 		}
+		bucket, err = js.KeyValue("asty-leader")
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/get leader KV bucket after retries: %w", err)
+	}
+
+	// Wait until bucket is operational
+	for attempt := 0; attempt < 30; attempt++ {
+		if _, err := bucket.Keys(); err == nats.ErrNoKeysFound || err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 
 	return &LeaderElection{

@@ -65,18 +65,35 @@ func NewClusterState(nc *nats.Conn) (*ClusterState, error) {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	// Create or get KV bucket for cluster state
-	bucket, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket:      "asty-cluster",
-		Description: "Asty cluster state",
-		History:     10,
-	})
-	if err != nil {
-		// Try to get existing bucket
-		bucket, err = js.KeyValue("asty-cluster")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create/get KV bucket: %w", err)
+	// Retry KV bucket creation — JetStream meta-group may still be electing leader
+	var bucket nats.KeyValue
+	for attempt := 0; attempt < 30; attempt++ {
+		bucket, err = js.CreateKeyValue(&nats.KeyValueConfig{
+			Bucket:      "asty-cluster",
+			Description: "Asty cluster state",
+			History:     10,
+		})
+		if err == nil {
+			break
 		}
+		bucket, err = js.KeyValue("asty-cluster")
+		if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/get KV bucket after retries: %w", err)
+	}
+
+	// Wait until bucket is operational (stream raft-group has leader)
+	for attempt := 0; attempt < 30; attempt++ {
+		if _, err := bucket.Keys(); err == nats.ErrNoKeysFound {
+			break
+		} else if err == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
 	}
 
 	log.Info().Msg("cluster state initialized")
