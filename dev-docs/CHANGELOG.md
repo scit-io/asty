@@ -1,5 +1,55 @@
 # Changelog
 
+## 2026-05-06 - Controller-runtime рефакторинг
+
+### Архитектура
+
+Заменён трёх-тикер leader (runScheduler/30s + watchAllocations/15s + Autoscaler.Run/10s) на один control-plane по образу `k8s.io/client-go/util/workqueue`. См. `controller-architecture.md` для деталей.
+
+### Added
+
+- `internal/platform/asty/workqueue.go` — типизированный workqueue с дедупом, processing-tracking, AddAfter (heap-based delayed scheduler), AddRateLimited (exponential backoff), Forget, ShutDown
+- `internal/platform/asty/workqueue_test.go` — тесты инвариантов (FIFO, dedup, Add-during-processing, AddAfter, backoff doubling, Forget, shutdown unblocks Get)
+- `internal/platform/asty/controller.go` — `ServiceController` с alloc/node KV watchers, периодическим resync, N parallel workers
+- `state.go`: `MutateAllocation` (CAS-guarded read-modify-write), `WatchAllocations`, `ServiceCooldown` + `MarkScaleUp/MarkScaleDown` (cooldown в KV переживает leader flip)
+- `A_CONTROLLER_WORKERS` env (default 2)
+
+### Changed
+
+- Все обновления allocations переведены на `MutateAllocation` — agent (StartService, publishProcessMetrics, checkAndRestartFailedProcesses), server (dispatchPending), deployer (canary, rolling update). Никаких last-write-wins гонок между leader/agent/deployer.
+- Cooldown autoscaler'а перенесён из in-memory map в KV (`service.<name>.cooldown`)
+- `Scheduler.ReconcileService` идемпотентен: top-up до MinCopies, не удаляет copies сверх. Стабильный tiebreak в `pickCandidates` (DC count, free memory, node ID) убрал ложные рестарты при одинаковых нодах.
+- `Autoscaler.evaluateScaleDown` использует реальные `alloc.CPUUsage/MemoryUsage` (CAS-safe источник) с гистерезисом `Target/2`. Раньше `allBelowTarget := true` был хардкод-стаб.
+- `Autoscaler.evaluateScaleUp` при overload теперь place'ит на **другой** свободный узел (через `Scheduler.pickCandidates`), не overwrite'ит существующую аллокацию на перегруженном узле.
+- `pruneFailed` читает порог из `svc.Restart.GetAttempts()` (раньше — хардкод `>= 3`)
+- `subscribeGatewayMetrics` пишет только в `node.<id>.rps`. Кластерный rollup делает `MetricsStore.collectMetrics` (сумма последних значений per-node).
+- `dispatchPending`: pending → starting CAS-guarded **до** отправки команды. На ошибке dispatch — rollback CAS + `AddRateLimited` для backoff. Stuck-`starting` (>90s) flip в pending.
+- Leader lifecycle: `startLeaderWork` стартует controller под sub-context. На `lose-leadership` cancel → controller дрейнит workers, watchers выходят, нет утечек goroutine'ов.
+
+### Removed
+
+- `runLeaderLoop`, `watchAllocsForKick`, `watchNodesForKick`, `dispatchPending`, `pruneFailed`, `autoscaleOnce` из server.go (переехали в controller)
+- `Autoscaler.lastScaleUp/lastScaleDown` in-memory мапы
+- Старая `scheduleSystemService/scheduleRegularService/ScheduleService` в scheduler.go
+- `Autoscaler.Run` метод (контроллер сам вызывает `EvaluateService`)
+- Двойной push в `cluster.rps` из gateway-subscribe
+
+### Fixed
+
+- Гонка между leader (writes "starting" после ACK) и agent (writes "running" с PID) — leader перезатирал агента, alloc залипал в `starting`/`pid:0`. CAS + reorder.
+- Бесконечная пинг-понг между scheduler и autoscaler из-за разного clamp'а MinCopies (scheduler: min=1, autoscaler: min=3).
+- Leader flap утечка scheduler/autoscaler goroutine'ов (старый `ctx` не отменялся, новый запускал второй scheduler).
+- Cluster.rps содержал per-gateway точки вместо cluster-total — UI показывал лужу значений.
+
+### Latency improvements
+
+| Action | Before | After |
+|---|---|---|
+| alloc create → start command | до 30s | ~ms |
+| node join → gateway placement | до 30s | ~ms |
+| reconcile error → retry | 15-30s (next tick) | 500ms (exponential backoff) |
+| leader flap → cooldown | reset (in-memory) | preserved (KV) |
+
 ## 2026-05-04 - Initial setup
 
 ### Created
