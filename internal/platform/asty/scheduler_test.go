@@ -5,243 +5,194 @@ import (
 	"time"
 )
 
-func TestSchedulerSystemService(t *testing.T) {
-	// Create mock nodes
-	nodes := []*NodeInfo{
-		{
-			ID:              "node1",
-			Datacenter:      "dc1",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-		{
-			ID:              "node2",
-			Datacenter:      "dc1",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-		{
-			ID:              "node3",
-			Datacenter:      "dc2",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
+func newReadyNode(id, dc string) *NodeInfo {
+	return &NodeInfo{
+		ID:              id,
+		Datacenter:      dc,
+		Status:          "ready",
+		LastSeen:        time.Now(),
+		CPUAvailable:    1000,
+		MemoryAvailable: 1024,
 	}
+}
 
-	cfg := &Config{
-		MinCopies:      3,
-		ReservedCPU:    100,
-		ReservedMemory: 250,
-	}
-
+// reconcileSystem should add a placement on every healthy node that lacks one.
+func TestReconcileSystemAddsToAllNodes(t *testing.T) {
+	cfg := &Config{MinCopies: 3, ReservedCPU: 100, ReservedMemory: 250}
 	scheduler := &Scheduler{cfg: cfg}
 
-	// Test system service - should place on all nodes
+	nodes := []*NodeInfo{
+		newReadyNode("node1", "dc1"),
+		newReadyNode("node2", "dc1"),
+		newReadyNode("node3", "dc2"),
+	}
 	svc := &ServiceDefinition{
-		Name: "gateway",
-		Type: ServiceTypeSystem,
-		Resources: Resources{
-			CPU:    200,
-			Memory: 64,
-		},
+		Name:      "gateway",
+		Type:      ServiceTypeSystem,
+		Resources: Resources{CPU: 200, Memory: 64},
 	}
 
-	placements, err := scheduler.scheduleSystemService(svc, nodes)
-	if err != nil {
-		t.Fatalf("failed to schedule system service: %v", err)
+	// No occupied nodes — picker should yield all three.
+	picked := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{}, len(nodes))
+	if len(picked) != 3 {
+		t.Fatalf("expected 3 candidates, got %d", len(picked))
 	}
-
-	if len(placements) != 3 {
-		t.Errorf("expected 3 placements, got %d", len(placements))
+	seen := map[string]bool{}
+	for _, n := range picked {
+		seen[n.ID] = true
 	}
-
-	// Verify all nodes are used
-	nodeMap := make(map[string]bool)
-	for _, p := range placements {
-		nodeMap[p.NodeID] = true
-	}
-
-	for _, node := range nodes {
-		if !nodeMap[node.ID] {
-			t.Errorf("node %s not used in placements", node.ID)
+	for _, n := range nodes {
+		if !seen[n.ID] {
+			t.Errorf("node %s missing from picks", n.ID)
 		}
 	}
 }
 
-func TestSchedulerRegularService(t *testing.T) {
-	nodes := []*NodeInfo{
-		{
-			ID:              "node1",
-			Datacenter:      "dc1",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-		{
-			ID:              "node2",
-			Datacenter:      "dc1",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-		{
-			ID:              "node3",
-			Datacenter:      "dc2",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-		{
-			ID:              "node4",
-			Datacenter:      "dc3",
-			Status:          "ready",
-			LastSeen:        time.Now(),
-			CPUAvailable:    1000,
-			MemoryAvailable: 1024,
-		},
-	}
-
-	cfg := &Config{
-		MinCopies:      3,
-		ReservedCPU:    100,
-		ReservedMemory: 250,
-	}
-
+// pickCandidates must produce a stable ordering when nodes are otherwise
+// equal. This guards against the bug where sort.Slice on identical memory
+// values shuffled placements between cycles and triggered rescheduling churn.
+func TestPickCandidatesStableTiebreak(t *testing.T) {
+	cfg := &Config{MinCopies: 2, ReservedCPU: 100, ReservedMemory: 250}
 	scheduler := &Scheduler{cfg: cfg}
 
+	nodes := []*NodeInfo{
+		newReadyNode("nodeA", "dc1"),
+		newReadyNode("nodeB", "dc1"),
+		newReadyNode("nodeC", "dc1"),
+	}
 	svc := &ServiceDefinition{
-		Name: "xauth",
-		Type: ServiceTypeService,
-		Resources: Resources{
-			CPU:    100,
-			Memory: 32,
-		},
+		Name:      "xauth",
+		Type:      ServiceTypeService,
+		Resources: Resources{CPU: 100, Memory: 32},
 	}
 
-	placements, err := scheduler.scheduleRegularService(svc, nodes)
-	if err != nil {
-		t.Fatalf("failed to schedule service: %v", err)
-	}
-
-	if len(placements) != 3 {
-		t.Errorf("expected 3 placements, got %d", len(placements))
-	}
-
-	// Verify geo-diversity: different datacenters
-	dcMap := make(map[string]bool)
-	for _, p := range placements {
-		for _, node := range nodes {
-			if node.ID == p.NodeID {
-				dcMap[node.Datacenter] = true
-				break
+	first := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, 2)
+	for i := 0; i < 5; i++ {
+		again := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, 2)
+		if len(again) != len(first) {
+			t.Fatalf("candidate count changed between calls: %d vs %d", len(first), len(again))
+		}
+		for j := range first {
+			if first[j].ID != again[j].ID {
+				t.Fatalf("candidate order unstable at index %d: %s vs %s",
+					j, first[j].ID, again[j].ID)
 			}
 		}
 	}
+}
 
-	if len(dcMap) < 2 {
-		t.Errorf("expected placements in at least 2 datacenters, got %d", len(dcMap))
+// scheduleRegularService used to ignore datacenters when sortDatacentersByCapacity
+// only iterated `minCopies` of them. The new picker biases toward DCs with
+// fewer existing copies, so 3 picks across 3 DCs land in 3 distinct DCs.
+func TestPickCandidatesGeoSpread(t *testing.T) {
+	cfg := &Config{MinCopies: 3, ReservedCPU: 100, ReservedMemory: 250}
+	scheduler := &Scheduler{cfg: cfg}
+
+	nodes := []*NodeInfo{
+		newReadyNode("a1", "dc1"),
+		newReadyNode("a2", "dc1"),
+		newReadyNode("b1", "dc2"),
+		newReadyNode("c1", "dc3"),
+	}
+	svc := &ServiceDefinition{
+		Name:      "xauth",
+		Type:      ServiceTypeService,
+		Resources: Resources{CPU: 100, Memory: 32},
+	}
+
+	picks := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0, "dc2": 0, "dc3": 0}, 3)
+	if len(picks) != 3 {
+		t.Fatalf("expected 3 picks, got %d", len(picks))
+	}
+	dcs := map[string]bool{}
+	for _, n := range picks {
+		dcs[n.Datacenter] = true
+	}
+	if len(dcs) < 3 {
+		t.Errorf("expected picks across 3 DCs, got %v", dcs)
+	}
+}
+
+// targetCopies clamps MinCopies down to the number of healthy nodes so
+// reconcileRegular doesn't loop forever trying to place the 3rd copy in a
+// 2-node dev cluster.
+func TestTargetCopiesClampedByNodeCount(t *testing.T) {
+	scheduler := &Scheduler{cfg: &Config{MinCopies: 3}}
+	if got := scheduler.targetCopies(2); got != 2 {
+		t.Errorf("expected 2 (clamped), got %d", got)
+	}
+	if got := scheduler.targetCopies(5); got != 3 {
+		t.Errorf("expected 3 (target), got %d", got)
+	}
+	if got := scheduler.targetCopies(0); got != 0 {
+		t.Errorf("expected 0 with no nodes, got %d", got)
+	}
+}
+
+// liveAllocations should treat pending/starting/running as live and exclude
+// stopped/failed. Reconcile relies on this to count what's already in flight.
+func TestLiveAllocations(t *testing.T) {
+	allocs := []*ServiceAllocation{
+		{NodeID: "n1", Status: "pending"},
+		{NodeID: "n2", Status: "starting"},
+		{NodeID: "n3", Status: "running"},
+		{NodeID: "n4", Status: "stopped"},
+		{NodeID: "n5", Status: "failed"},
+	}
+	got := liveAllocations(allocs)
+	if len(got) != 3 {
+		t.Fatalf("expected 3 live allocs, got %d", len(got))
+	}
+	wantIDs := map[string]bool{"n1": true, "n2": true, "n3": true}
+	for _, a := range got {
+		if !wantIDs[a.NodeID] {
+			t.Errorf("unexpected live alloc on %s (%s)", a.NodeID, a.Status)
+		}
 	}
 }
 
 func TestSchedulerFilterHealthyNodes(t *testing.T) {
-	cfg := &Config{}
-	scheduler := &Scheduler{cfg: cfg}
+	scheduler := &Scheduler{cfg: &Config{}}
 
 	nodes := []*NodeInfo{
-		{
-			ID:       "node1",
-			Status:   "ready",
-			LastSeen: time.Now(),
-		},
-		{
-			ID:       "node2",
-			Status:   "draining",
-			LastSeen: time.Now(),
-		},
-		{
-			ID:       "node3",
-			Status:   "ready",
-			LastSeen: time.Now().Add(-20 * time.Minute), // Stale
-		},
-		{
-			ID:       "node4",
-			Status:   "ready",
-			LastSeen: time.Now(),
-		},
+		{ID: "n1", Status: "ready", LastSeen: time.Now()},
+		{ID: "n2", Status: "draining", LastSeen: time.Now()},
+		{ID: "n3", Status: "ready", LastSeen: time.Now().Add(-20 * time.Minute)},
+		{ID: "n4", Status: "ready", LastSeen: time.Now()},
 	}
-
 	healthy := scheduler.filterHealthyNodes(nodes)
-
 	if len(healthy) != 2 {
 		t.Errorf("expected 2 healthy nodes, got %d", len(healthy))
 	}
-
-	for _, node := range healthy {
-		if node.Status != "ready" {
-			t.Errorf("unhealthy node in result: %s (status=%s)", node.ID, node.Status)
+	for _, n := range healthy {
+		if n.Status != "ready" {
+			t.Errorf("non-ready node leaked through: %s (%s)", n.ID, n.Status)
 		}
-		if time.Since(node.LastSeen) > 10*time.Minute {
-			t.Errorf("stale node in result: %s", node.ID)
+		if time.Since(n.LastSeen) > nodeStaleAfter {
+			t.Errorf("stale node leaked through: %s", n.ID)
 		}
 	}
 }
 
-func TestSchedulerResourceCheck(t *testing.T) {
-	cfg := &Config{
-		ReservedCPU:    100,
-		ReservedMemory: 250,
-	}
+func TestSchedulerHasResources(t *testing.T) {
+	cfg := &Config{ReservedCPU: 100, ReservedMemory: 250}
 	scheduler := &Scheduler{cfg: cfg}
+	node := &NodeInfo{CPUAvailable: 500, MemoryAvailable: 512}
 
-	node := &NodeInfo{
-		CPUAvailable:    500,
-		MemoryAvailable: 512,
-	}
-
-	tests := []struct {
-		name     string
-		required Resources
-		want     bool
+	cases := []struct {
+		name string
+		req  Resources
+		want bool
 	}{
-		{
-			name:     "sufficient resources",
-			required: Resources{CPU: 200, Memory: 128},
-			want:     true,
-		},
-		{
-			name:     "insufficient CPU",
-			required: Resources{CPU: 500, Memory: 128},
-			want:     false,
-		},
-		{
-			name:     "insufficient memory",
-			required: Resources{CPU: 200, Memory: 512},
-			want:     false,
-		},
-		{
-			name:     "exact fit after reservation",
-			required: Resources{CPU: 400, Memory: 262},
-			want:     true,
-		},
+		{"sufficient", Resources{CPU: 200, Memory: 128}, true},
+		{"cpu starved", Resources{CPU: 500, Memory: 128}, false},
+		{"mem starved", Resources{CPU: 200, Memory: 512}, false},
+		{"exact fit after reservation", Resources{CPU: 400, Memory: 262}, true},
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := scheduler.hasResources(node, tt.required)
-			if got != tt.want {
-				t.Errorf("hasResources() = %v, want %v (CPU: %d/%d, Mem: %d/%d)",
-					got, tt.want,
-					tt.required.CPU, node.CPUAvailable-cfg.ReservedCPU,
-					tt.required.Memory, node.MemoryAvailable-int64(cfg.ReservedMemory))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := scheduler.hasResources(node, tc.req); got != tc.want {
+				t.Errorf("hasResources(%+v)=%v want %v", tc.req, got, tc.want)
 			}
 		})
 	}

@@ -39,6 +39,14 @@ Asty (коммерческое название) и platform.go (рабочее 
 - **NATS JetStream KV** как state store вместо Raft (один бакет `asty-cluster`, без TTL — stale ноды фильтруются по `LastSeen` в scheduler). При старте retry до 30с пока JetStream stream raft-group выберет leader (актуально для кластеров с чётным числом нод)
 - **Leader election через NATS** вместо Raft (бакет `asty-leader`, TTL=10s)
 
+## Deployment Architecture
+
+**Every node runs both:**
+- `asty -mode server` — participates in leader election
+- `asty -mode agent` — executes local tasks
+
+Leader election via NATS KV ensures only one server is active leader at any time. When leader dies, another server is elected automatically within seconds. All agents continue working and connect to new leader seamlessly.
+
 ## Коммуникация
 
 Nomad: Serf gossip (4648) + RPC (4647) + Raft.

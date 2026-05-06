@@ -258,3 +258,44 @@ func (le *LeaderElection) WaitForLeader(ctx context.Context) (LeaderInfo, error)
 		}
 	}
 }
+
+// WatchLeadership watches for leadership changes via NATS KV watcher (event-driven, zero CPU).
+// Calls onBecomeLeader when this node becomes leader, onLoseLeadership when it loses leadership.
+func (le *LeaderElection) WatchLeadership(ctx context.Context, onBecomeLeader func(), onLoseLeadership func()) error {
+	watcher, err := le.bucket.Watch("current-leader", nats.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to watch leader key: %w", err)
+	}
+	defer watcher.Stop()
+
+	wasLeader := le.isLeader
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
+			if entry == nil {
+				continue
+			}
+
+			var isLeader bool
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				isLeader = false
+			} else {
+				isLeader = parseLeaderID(entry.Value()) == le.nodeID
+			}
+
+			if isLeader && !wasLeader {
+				onBecomeLeader()
+			}
+			if !isLeader && wasLeader {
+				onLoseLeadership()
+			}
+			wasLeader = isLeader
+		}
+	}
+}

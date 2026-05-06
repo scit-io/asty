@@ -3,24 +3,37 @@ package asty
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
 
-// Autoscaler handles automatic scaling decisions
+// Autoscaler grows services above MinCopies in response to traffic and
+// resource pressure, and shrinks back to MinCopies when load subsides. It
+// never moves services around — only adds and removes copies.
 type Autoscaler struct {
 	clusterState *ClusterState
 	scheduler    *Scheduler
 	cfg          *Config
 	metricsStore *MetricsStore
 
-	// Cooldown tracking
-	lastScaleUp   map[string]time.Time // key: service name
+	// Per-service cooldown tracking. Both maps are kept so the UI can show
+	// "last scale-up" and "last scale-down" independently; inCooldown reads
+	// the max of the two so an up event still gates a down (and vice versa).
+	lastScaleUp   map[string]time.Time
 	lastScaleDown map[string]time.Time
 }
 
-// NewAutoscaler creates a new autoscaler
+// ScalingDecision describes what the autoscaler intends to do next.
+type ScalingDecision struct {
+	ServiceName string
+	Action      string // scale_up | scale_down | none
+	Reason      string
+	TargetNode  string // for scale_up
+	RemoveNode  string // for scale_down
+}
+
 func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config, metricsStore *MetricsStore) *Autoscaler {
 	return &Autoscaler{
 		clusterState:  clusterState,
@@ -32,350 +45,260 @@ func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config
 	}
 }
 
-// ScalingDecision represents an autoscaling decision
-type ScalingDecision struct {
-	ServiceName string
-	Action      string // scale_up, scale_down, none
-	Reason      string
-	TargetNode  string // for scale_up
+func (as *Autoscaler) lastActionAt(service string) (time.Time, bool) {
+	up, hasUp := as.lastScaleUp[service]
+	down, hasDown := as.lastScaleDown[service]
+	switch {
+	case hasUp && hasDown:
+		if up.After(down) {
+			return up, true
+		}
+		return down, true
+	case hasUp:
+		return up, true
+	case hasDown:
+		return down, true
+	}
+	return time.Time{}, false
 }
 
-// EvaluateService evaluates if a service needs scaling
+// EvaluateService decides whether svc should grow, shrink, or stay put.
 func (as *Autoscaler) EvaluateService(ctx context.Context, svc *ServiceDefinition) (*ScalingDecision, error) {
-	// Get current allocations
 	allocs, err := as.clusterState.ListAllocations(svc.Name)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list allocations: %w", err)
 	}
-
-	runningAllocs := as.filterRunningAllocations(allocs)
-	currentCount := len(runningAllocs)
-
-	// Get all nodes
 	nodes, err := as.clusterState.ListNodes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	// Check for scale up conditions
-	decision := as.evaluateScaleUp(svc, runningAllocs, nodes)
-	if decision != nil {
-		return decision, nil
+	live := liveAllocations(allocs)
+
+	if as.inCooldown(svc.Name) {
+		return noop(svc.Name, "cooldown active"), nil
 	}
 
-	// Check for scale down conditions
-	decision = as.evaluateScaleDown(svc, runningAllocs, currentCount)
-	if decision != nil {
-		return decision, nil
+	if d := as.evaluateScaleUp(svc, live, nodes); d != nil {
+		return d, nil
 	}
-
-	return &ScalingDecision{
-		ServiceName: svc.Name,
-		Action:      "none",
-		Reason:      "within target thresholds",
-	}, nil
+	if d := as.evaluateScaleDown(svc, live); d != nil {
+		return d, nil
+	}
+	return noop(svc.Name, "within target thresholds"), nil
 }
 
-// evaluateScaleUp checks if service needs to scale up
-func (as *Autoscaler) evaluateScaleUp(svc *ServiceDefinition, allocs []*ServiceAllocation, nodes []*NodeInfo) *ScalingDecision {
-	// Check cooldown
-	if lastUp, exists := as.lastScaleUp[svc.Name]; exists {
-		if time.Since(lastUp) < as.cfg.CooldownUp {
-			return nil
-		}
-	}
+func noop(name, reason string) *ScalingDecision {
+	return &ScalingDecision{ServiceName: name, Action: "none", Reason: reason}
+}
 
-	// 1. Check for Gateway traffic on nodes without service
-	nodeWithTraffic := as.findNodeWithTrafficWithoutService(nodes, allocs)
-	if nodeWithTraffic != nil {
+func (as *Autoscaler) inCooldown(service string) bool {
+	last, ok := as.lastActionAt(service)
+	if !ok {
+		return false
+	}
+	// Use the more conservative of the two cooldowns so a recent scale-down
+	// also gates a scale-up (and vice versa).
+	cd := as.cfg.CooldownDown
+	if as.cfg.CooldownUp > cd {
+		cd = as.cfg.CooldownUp
+	}
+	return time.Since(last) < cd
+}
+
+// evaluateScaleUp checks for traffic on a node without a service copy, or
+// resource overload on existing copies. Both signals depend on metrics that
+// are wired through MetricsStore — until both arms return concrete data the
+// autoscaler stays a no-op for growth.
+func (as *Autoscaler) evaluateScaleUp(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *ScalingDecision {
+	if node := as.findNodeWithTrafficWithoutService(nodes, live); node != nil {
 		return &ScalingDecision{
 			ServiceName: svc.Name,
 			Action:      "scale_up",
-			Reason:      fmt.Sprintf("gateway traffic on node %s without service", nodeWithTraffic.ID),
-			TargetNode:  nodeWithTraffic.ID,
+			Reason:      fmt.Sprintf("gateway traffic on node %s without %s", node.ID, svc.Name),
+			TargetNode:  node.ID,
 		}
 	}
-
-	// 2. Check for process overload (CPU/Memory >75%)
-	overloadedNode := as.findOverloadedNode(allocs, nodes)
-	if overloadedNode != nil {
+	if node := as.findOverloadedNode(svc, live, nodes); node != nil {
 		return &ScalingDecision{
 			ServiceName: svc.Name,
 			Action:      "scale_up",
-			Reason:      fmt.Sprintf("process overloaded on node %s", overloadedNode.ID),
-			TargetNode:  overloadedNode.ID,
+			Reason:      fmt.Sprintf("process on %s exceeded resource targets", node.ID),
+			TargetNode:  node.ID,
 		}
 	}
-
 	return nil
 }
 
-// evaluateScaleDown checks if service needs to scale down
-func (as *Autoscaler) evaluateScaleDown(svc *ServiceDefinition, allocs []*ServiceAllocation, currentCount int) *ScalingDecision {
-	minCopies := as.cfg.MinCopies
-	if minCopies < 3 {
-		minCopies = 3
-	}
-
-	// Don't scale below minimum
-	if currentCount <= minCopies {
+// evaluateScaleDown shrinks toward MinCopies when copies are clearly
+// underused. Until process metrics are aggregated reliably this returns nil —
+// previously a placeholder loop set allBelowTarget=true unconditionally and
+// removed copies as soon as currentCount > MinCopies, which caused random
+// churn. Hard-disable until the metrics path is real.
+func (as *Autoscaler) evaluateScaleDown(svc *ServiceDefinition, live []*ServiceAllocation) *ScalingDecision {
+	target := as.scheduler.targetCopies(len(live))
+	if len(live) <= target {
 		return nil
 	}
-
-	// Check cooldown
-	if lastDown, exists := as.lastScaleDown[svc.Name]; exists {
-		if time.Since(lastDown) < as.cfg.CooldownDown {
-			return nil
-		}
-	}
-
-	// Check if all processes are below target
-	allBelowTarget := true
-	for _, alloc := range allocs {
-		// TODO: get actual metrics from collector
-		// For now, assume below target
-		_ = alloc
-	}
-
-	if allBelowTarget {
-		return &ScalingDecision{
-			ServiceName: svc.Name,
-			Action:      "scale_down",
-			Reason:      "all processes below target thresholds",
-		}
-	}
-
+	// TODO: aggregate per-allocation CPU/Memory from MetricsStore and only
+	// shrink when the average across `live` is below TargetCPU/TargetMemory.
+	// Until that's wired, refuse to shrink rather than guessing.
 	return nil
 }
 
-// findNodeWithTrafficWithoutService finds a node with Gateway traffic but no service instance
-func (as *Autoscaler) findNodeWithTrafficWithoutService(nodes []*NodeInfo, allocs []*ServiceAllocation) *NodeInfo {
-	// Build map of nodes with service
-	nodesWithService := make(map[string]bool)
-	for _, alloc := range allocs {
-		nodesWithService[alloc.NodeID] = true
-	}
-
-	// Check each node for traffic
+// findNodeWithTrafficWithoutService returns a node that handles authenticated
+// gateway traffic above the threshold but has no live copy of svc.
+func (as *Autoscaler) findNodeWithTrafficWithoutService(nodes []*NodeInfo, live []*ServiceAllocation) *NodeInfo {
+	hasService := nodeIDsOf(live)
 	for _, node := range nodes {
 		if node.Status != "ready" {
 			continue
 		}
-
-		// Already has service
-		if nodesWithService[node.ID] {
+		if hasService[node.ID] {
 			continue
 		}
-
-		// Check if node has Gateway traffic
-		// TODO: implement actual traffic metrics check
-		// For now, use placeholder logic
-		hasTraffic := as.hasGatewayTraffic(node)
-		if hasTraffic {
-			return node
+		if !as.hasGatewayTraffic(node) {
+			continue
 		}
+		return node
 	}
-
 	return nil
 }
 
-// hasGatewayTraffic checks if a node has Gateway traffic above threshold
+// hasGatewayTraffic returns true when validated RPS sustained on `node`
+// exceeds the configured threshold. Averages the last 60s of samples
+// reported by gateway via asty.v1.metrics.gateway.*. With no samples (cold
+// start), returns false — safer than speculative scale-up.
 func (as *Autoscaler) hasGatewayTraffic(node *NodeInfo) bool {
-	// TODO: implement actual traffic metrics
-	// Should check:
-	// 1. Gateway valid_rps > A_TRAFFIC_RPS_THRESHOLD
-	// 2. Over sliding window A_TRAFFIC_WINDOW
-	// 3. Filtered by authenticated traffic only
-
-	// Placeholder: check if Gateway process exists
-	for _, process := range node.Processes {
-		if process == "gateway" {
-			// TODO: query actual traffic metrics
-			return false
-		}
+	if as.metricsStore == nil {
+		return false
 	}
-
-	return false
+	points := as.metricsStore.Get("node."+node.ID+".rps", time.Now().Add(-60*time.Second))
+	if len(points) == 0 {
+		return false
+	}
+	var sum float64
+	for _, p := range points {
+		sum += p.Value
+	}
+	return sum/float64(len(points)) >= float64(as.cfg.TrafficRPSThreshold)
 }
 
-// findOverloadedNode finds a node where process is overloaded
-func (as *Autoscaler) findOverloadedNode(allocs []*ServiceAllocation, nodes []*NodeInfo) *NodeInfo {
-	// TODO: integrate with metrics collector
-	// Check if any process has:
-	// - CPU > A_TARGET_CPU (75%)
-	// - Memory > A_TARGET_MEMORY (75%)
-
-	// Placeholder
-	return nil
-}
-
-// filterRunningAllocations returns only running allocations
-func (as *Autoscaler) filterRunningAllocations(allocs []*ServiceAllocation) []*ServiceAllocation {
-	running := make([]*ServiceAllocation, 0)
-	for _, alloc := range allocs {
-		if alloc.Status == "running" {
-			running = append(running, alloc)
-		}
-	}
-	return running
-}
-
-// ExecuteScalingDecision executes a scaling decision
-func (as *Autoscaler) ExecuteScalingDecision(ctx context.Context, decision *ScalingDecision, svc *ServiceDefinition) error {
-	switch decision.Action {
-	case "scale_up":
-		return as.executeScaleUp(ctx, decision, svc)
-	case "scale_down":
-		return as.executeScaleDown(ctx, decision, svc)
-	case "none":
-		return nil
-	default:
-		return fmt.Errorf("unknown action: %s", decision.Action)
-	}
-}
-
-// executeScaleUp adds a service instance
-func (as *Autoscaler) executeScaleUp(ctx context.Context, decision *ScalingDecision, svc *ServiceDefinition) error {
-	log.Info().
-		Str("service", svc.Name).
-		Str("reason", decision.Reason).
-		Str("target_node", decision.TargetNode).
-		Msg("scaling up")
-
-	// Create allocation
-	alloc := &ServiceAllocation{
-		ServiceName: svc.Name,
-		NodeID:      decision.TargetNode,
-		Status:      "pending",
-		Version:     "latest", // TODO: version management
-	}
-
-	if err := as.clusterState.CreateAllocation(alloc); err != nil {
-		return fmt.Errorf("failed to create allocation: %w", err)
-	}
-
-	// Update cooldown
-	as.lastScaleUp[svc.Name] = time.Now()
-
-	// Record event
-	allocs, _ := as.clusterState.ListAllocations(svc.Name)
-	as.metricsStore.AddEvent(ScalingEvent{
-		Service:   svc.Name,
-		Action:    "scale_up",
-		Reason:    decision.Reason,
-		FromCount: len(allocs) - 1,
-		ToCount:   len(allocs),
-		NodeID:    decision.TargetNode,
-	})
-
-	return nil
-}
-
-// executeScaleDown removes a service instance
-func (as *Autoscaler) executeScaleDown(ctx context.Context, decision *ScalingDecision, svc *ServiceDefinition) error {
-	log.Info().
-		Str("service", svc.Name).
-		Str("reason", decision.Reason).
-		Msg("scaling down")
-
-	// Get current allocations
-	allocs, err := as.clusterState.ListAllocations(svc.Name)
-	if err != nil {
-		return fmt.Errorf("failed to list allocations: %w", err)
-	}
-
-	runningAllocs := as.filterRunningAllocations(allocs)
-
-	// Find least loaded node to remove
-	targetAlloc := as.selectAllocationToRemove(runningAllocs)
-	if targetAlloc == nil {
-		return fmt.Errorf("no allocation to remove")
-	}
-
-	fromCount := len(runningAllocs)
-
-	// Delete allocation
-	if err := as.clusterState.DeleteAllocation(svc.Name, targetAlloc.NodeID); err != nil {
-		return fmt.Errorf("failed to delete allocation: %w", err)
-	}
-
-	// Update cooldown
-	as.lastScaleDown[svc.Name] = time.Now()
-
-	// Record event
-	as.metricsStore.AddEvent(ScalingEvent{
-		Service:   svc.Name,
-		Action:    "scale_down",
-		Reason:    decision.Reason,
-		FromCount: fromCount,
-		ToCount:   fromCount - 1,
-		NodeID:    targetAlloc.NodeID,
-	})
-
-	log.Info().
-		Str("service", svc.Name).
-		Str("node_id", targetAlloc.NodeID).
-		Msg("scaled down")
-
-	return nil
-}
-
-// selectAllocationToRemove selects the allocation to remove (least loaded)
-func (as *Autoscaler) selectAllocationToRemove(allocs []*ServiceAllocation) *ServiceAllocation {
-	if len(allocs) == 0 {
+// findOverloadedNode returns the node hosting the hottest live copy when
+// CPU or memory is above the configured target. Falls back to nil when no
+// metrics are available yet — caller treats nil as "no decision".
+func (as *Autoscaler) findOverloadedNode(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *NodeInfo {
+	if as.metricsStore == nil {
 		return nil
 	}
-
-	// TODO: select based on actual load metrics
-	// For now, just pick the first one
-	// Should preserve geo-diversity
-
-	return allocs[0]
-}
-
-// Run starts the autoscaler evaluation loop
-func (as *Autoscaler) Run(ctx context.Context, services []*ServiceDefinition) {
-	ticker := time.NewTicker(as.cfg.EvalInterval)
-	defer ticker.Stop()
-
-	log.Info().
-		Dur("interval", as.cfg.EvalInterval).
-		Msg("autoscaler started")
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			as.evaluateAllServices(ctx, services)
-		}
+	byID := make(map[string]*NodeInfo, len(nodes))
+	for _, n := range nodes {
+		byID[n.ID] = n
 	}
-}
-
-// evaluateAllServices evaluates all services for scaling
-func (as *Autoscaler) evaluateAllServices(ctx context.Context, services []*ServiceDefinition) {
-	for _, svc := range services {
-		// Skip system services (not autoscaled)
-		if svc.Type == ServiceTypeSystem {
-			continue
-		}
-
-		decision, err := as.EvaluateService(ctx, svc)
-		if err != nil {
-			log.Error().Err(err).Str("service", svc.Name).Msg("failed to evaluate service")
-			continue
-		}
-
-		if decision.Action != "none" {
-			log.Info().
-				Str("service", svc.Name).
-				Str("action", decision.Action).
-				Str("reason", decision.Reason).
-				Msg("autoscaling decision")
-
-			if err := as.ExecuteScalingDecision(ctx, decision, svc); err != nil {
-				log.Error().Err(err).Str("service", svc.Name).Msg("failed to execute scaling decision")
+	for _, alloc := range live {
+		if alloc.CPUUsage > as.cfg.TargetCPU || alloc.MemoryUsage > as.cfg.TargetMemory {
+			if n, ok := byID[alloc.NodeID]; ok {
+				return n
 			}
 		}
 	}
+	return nil
+}
+
+// ExecuteScalingDecision applies a decision returned by EvaluateService.
+func (as *Autoscaler) ExecuteScalingDecision(ctx context.Context, d *ScalingDecision, svc *ServiceDefinition) error {
+	switch d.Action {
+	case "scale_up":
+		return as.executeScaleUp(d, svc)
+	case "scale_down":
+		return as.executeScaleDown(d, svc)
+	case "none":
+		return nil
+	}
+	return fmt.Errorf("unknown action: %s", d.Action)
+}
+
+func (as *Autoscaler) executeScaleUp(d *ScalingDecision, svc *ServiceDefinition) error {
+	log.Info().
+		Str("service", svc.Name).
+		Str("target_node", d.TargetNode).
+		Str("reason", d.Reason).
+		Msg("scaling up")
+
+	alloc := &ServiceAllocation{
+		ServiceName: svc.Name,
+		NodeID:      d.TargetNode,
+		Status:      "pending",
+		Version:     "latest",
+	}
+	if err := as.clusterState.CreateAllocation(alloc); err != nil {
+		return fmt.Errorf("failed to create allocation: %w", err)
+	}
+	as.lastScaleUp[svc.Name] = time.Now()
+
+	allocs, _ := as.clusterState.ListAllocations(svc.Name)
+	count := len(liveAllocations(allocs))
+	as.metricsStore.AddEvent(ScalingEvent{
+		Service:   svc.Name,
+		Action:    "scale_up",
+		Reason:    d.Reason,
+		FromCount: count - 1,
+		ToCount:   count,
+		NodeID:    d.TargetNode,
+	})
+	return nil
+}
+
+func (as *Autoscaler) executeScaleDown(d *ScalingDecision, svc *ServiceDefinition) error {
+	if d.RemoveNode == "" {
+		return fmt.Errorf("scale_down decision missing RemoveNode")
+	}
+	log.Info().
+		Str("service", svc.Name).
+		Str("remove_node", d.RemoveNode).
+		Str("reason", d.Reason).
+		Msg("scaling down")
+
+	if err := as.clusterState.DeleteAllocation(svc.Name, d.RemoveNode); err != nil {
+		return fmt.Errorf("failed to delete allocation: %w", err)
+	}
+	as.lastScaleDown[svc.Name] = time.Now()
+
+	allocs, _ := as.clusterState.ListAllocations(svc.Name)
+	count := len(liveAllocations(allocs))
+	as.metricsStore.AddEvent(ScalingEvent{
+		Service:   svc.Name,
+		Action:    "scale_down",
+		Reason:    d.Reason,
+		FromCount: count + 1,
+		ToCount:   count,
+		NodeID:    d.RemoveNode,
+	})
+	return nil
+}
+
+// pickAllocationToRemove chooses which copy to drop on scale-down. Preserves
+// geo-diversity by removing from the most-represented DC first; ties broken
+// by node ID for determinism.
+func (as *Autoscaler) pickAllocationToRemove(live []*ServiceAllocation, nodes []*NodeInfo) *ServiceAllocation {
+	if len(live) == 0 {
+		return nil
+	}
+	nodeDC := make(map[string]string, len(nodes))
+	for _, n := range nodes {
+		nodeDC[n.ID] = datacenterOf(n)
+	}
+	dcCount := make(map[string]int)
+	for _, a := range live {
+		dcCount[nodeDC[a.NodeID]]++
+	}
+	sorted := append([]*ServiceAllocation(nil), live...)
+	sort.Slice(sorted, func(i, j int) bool {
+		di, dj := nodeDC[sorted[i].NodeID], nodeDC[sorted[j].NodeID]
+		if dcCount[di] != dcCount[dj] {
+			return dcCount[di] > dcCount[dj]
+		}
+		return sorted[i].NodeID < sorted[j].NodeID
+	})
+	return sorted[0]
 }

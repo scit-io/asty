@@ -4,8 +4,8 @@
 # Запуск и остановка dev-окружения Asty.
 #
 # Использование:
-#   ./start.sh          — 1 нода (Asty server + agent)
-#   ./start.sh 3        — 3 ноды (1 server + 3 agents)
+#   ./start.sh          — 1 нода (server + agent)
+#   ./start.sh 3        — 3 ноды (server + agent на каждой, leader election)
 #   ./start.sh stop     — остановить всё
 
 set -euo pipefail
@@ -192,11 +192,11 @@ teardown_loopback_aliases() {
 }
 
 # =============================================================================
-# Asty: 1 server + N agents
+# Asty: N nodes (each runs server + agent)
 # =============================================================================
 start_asty() {
   local nodes=$1
-  log "Запуск Asty: 1 server + $nodes agents..."
+  log "Запуск Asty: $nodes нод (server + agent на каждой)..."
 
   # Загружаем dev.vars и экспортируем все переменные
   while IFS='=' read -r key value; do
@@ -209,15 +209,17 @@ start_asty() {
     export "$key=$value"
   done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
 
-  # Определяем host-порт NATS
+  # Все ноды Asty подключаются к одному NATS endpoint — host-порту dev-nats-1.
+  # При --scale nats>1 OrbStack выдаёт непоследовательные host-порты в диапазоне
+  # 4222-4322 (4228, 4229, ...), формула base+i-1 ломается. NATS-кластер сам
+  # реплицирует JetStream, одной точки входа достаточно.
   local nats_host_port
-  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '{print $NF; exit}')
+  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
   [[ -n "$nats_host_port" ]] || die "не удалось определить host-порт NATS"
   info "NATS host-порт: $nats_host_port"
 
-  # Экспортируем переменные для Asty
+  # Экспортируем общие переменные для Asty
   export A_NATS_HOST="127.0.0.1"
-  export A_NATS_PORT="$nats_host_port"
   export A_NATS_USER="${A_NATS_USER:-}"
   export A_NATS_PASSWORD="${A_NATS_PASSWORD:-}"
   export A_DOMAIN="${A_DOMAIN:-dev.local}"
@@ -228,34 +230,32 @@ start_asty() {
   export A_TARGET_CPU="${A_TARGET_CPU:-75}"
   export A_TARGET_MEMORY="${A_TARGET_MEMORY:-75}"
   export A_TRAFFIC_RPS_THRESHOLD="${A_TRAFFIC_RPS_THRESHOLD:-5}"
-  export A_UI_ADDR="${A_UI_ADDR:-127.0.0.1:4747}"
   export A_WORK_DIR="${A_WORK_DIR:-$DATA_BASE/work}"
   export A_SERVICE_DIR="${A_SERVICE_DIR:-${SCRIPT_DIR}}"
   export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"     # 1 CPU @ 2.20 GHz
   export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}" # 466 MiB
 
-  # Запускаем 1 server
-  local server_log="/tmp/asty-dev-server.log"
-  mkdir -p "$DATA_BASE/server"
-
-  export A_NODE_ID="server-1"
-  "$BIN_DIR/asty" -mode server >> "$server_log" 2>&1 &
-  local server_pid=$!
-  echo "$server_pid" >> "$PID_FILE"
-  info "Server: PID=$server_pid | Логи: $server_log"
-
-  # Запускаем N agents (каждый с уникальным node ID и IP)
+  # Каждая нода запускает server + agent, все цепляются к одному NATS endpoint.
   # sudo нужен для bind на порт 80 (gateway)
   for ((i=1; i<=nodes; i++)); do
-    local agent_log="/tmp/asty-dev-node-$i.log"
     local addr="127.0.0.$i"
+    local server_log="/tmp/asty-dev-server-$i.log"
+    local agent_log="/tmp/asty-dev-agent-$i.log"
+    local ui_port=$((4747 + i - 1))
     mkdir -p "$DATA_BASE/node$i"
 
-    sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+    A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" A_UI_ADDR="$addr:$ui_port" \
+      "$BIN_DIR/asty" -mode server >> "$server_log" 2>&1 &
+    local server_pid=$!
+    echo "$server_pid" >> "$PID_FILE"
+
+    sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
       "$BIN_DIR/asty" -mode agent >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"
-    info "Node $i: id=dev-node-$i | ip=$addr | PID=$agent_pid | Логи: $agent_log"
+
+    info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | server PID=$server_pid | agent PID=$agent_pid"
+    info "  Логи: $server_log | $agent_log"
   done
 }
 
@@ -301,12 +301,12 @@ print_status() {
   echo -e "${GREEN}  Asty dev-окружение запущено${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Asty UI:    http://localhost:4747"
+  info "Asty UI:    http://localhost:4747 (нода 1)"
   info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"
   info ""
-  info "Логи сервера: tail -f /tmp/asty-dev-server.log"
-  info "Логи ноды 1:  tail -f /tmp/asty-dev-node-1.log"
+  info "Логи сервера 1: tail -f /tmp/asty-dev-server-1.log"
+  info "Логи агента 1:  tail -f /tmp/asty-dev-agent-1.log"
   echo ""
   info "Остановить: $SCRIPT_DIR/start.sh stop"
 }

@@ -48,11 +48,13 @@ go test -race ./...
 
 ## Architecture
 
-### Two-Mode Binary
+### Architecture
 
-Asty runs as a single binary with two modes:
-- **Agent mode** (`-mode agent`) — runs on every node, manages local processes
-- **Server mode** (`-mode server`) — one per cluster (leader election), handles scheduling and autoscaling
+**Each node runs two processes:**
+- `asty -mode server` — participates in leader election, active leader handles scheduling and autoscaling
+- `asty -mode agent` — manages local processes, executes commands from server
+
+**Leader election:** All servers participate in election via NATS KV. Only one server is active (leader) at any time. When leader fails, remaining servers automatically elect a new leader. This provides high availability with no single point of failure.
 
 Communication between agents and server happens over NATS subjects (`asty.v1.*`). State is stored in NATS JetStream KV.
 

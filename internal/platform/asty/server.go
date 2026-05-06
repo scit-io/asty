@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -17,39 +18,23 @@ type Server struct {
 	nc     *nats.Conn
 	nodeID string
 
-	// Cluster state
-	clusterState *ClusterState
-
-	// Leader election
+	clusterState   *ClusterState
 	leaderElection *LeaderElection
-
-	// Node discovery
-	nodeDiscovery *NodeDiscovery
-
-	// Scheduler
-	scheduler *Scheduler
-
-	// Autoscaler
-	autoscaler *Autoscaler
-
-	// Proximity matrix
+	nodeDiscovery  *NodeDiscovery
+	scheduler      *Scheduler
+	autoscaler     *Autoscaler
 	proximityMatrix *ProximityMatrix
+	deployer       *Deployer
+	serviceLoader  *ServiceLoader
+	services       []*ServiceDefinition
+	api            *API
+	metricsStore   *MetricsStore
 
-	// Deployer
-	deployer *Deployer
-
-	// Service loader
-	serviceLoader *ServiceLoader
-
-	// Loaded services
-	services []*ServiceDefinition
-
-	// API server
-	api *API
-
-	// Metrics storage
-	metricsStore *MetricsStore
-
+	// Leadership-scoped goroutines (scheduler/autoscaler) run under leaderCtx,
+	// which is cancelled on loss of leadership. mu guards swaps when leadership
+	// flips.
+	mu           sync.Mutex
+	leaderCancel context.CancelFunc
 }
 
 // NewServer creates a new Asty server
@@ -189,126 +174,166 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	// If we're the leader, start scheduling and autoscaling
+	// Single source of truth for leader-scoped work — start it once, watcher
+	// re-arms it on flips.
 	if s.leaderElection.IsLeader() {
-		log.Info().Msg("starting scheduler and autoscaler (leader mode)")
-		go s.runScheduler(ctx)
-		go s.runAutoscaler(ctx)
+		s.startLeaderWork(ctx)
 	}
-
-	// Watch for leadership changes
 	go s.watchLeadership(ctx)
 
 	log.Info().Msg("server ready")
 
 	<-ctx.Done()
+	s.stopLeaderWork()
 	return nil
 }
 
-// runAutoscaler runs the autoscaler loop (only on leader)
-func (s *Server) runAutoscaler(ctx context.Context) {
-	log.Info().Msg("autoscaler running")
-
-	s.autoscaler.Run(ctx, s.services)
+// startLeaderWork spawns the leader loop under a sub-context derived from the
+// server context. Cancellation of that sub-context (on loss of leadership)
+// stops the loop without bringing down the server. Idempotent: a second call
+// while already running is a no-op.
+func (s *Server) startLeaderWork(parent context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.leaderCancel != nil {
+		return
+	}
+	leaderCtx, cancel := context.WithCancel(parent)
+	s.leaderCancel = cancel
+	go s.runLeaderLoop(leaderCtx)
 }
 
-// runScheduler runs the scheduling loop (only on leader)
-func (s *Server) runScheduler(ctx context.Context) {
-	log.Info().Msg("scheduler running")
+func (s *Server) stopLeaderWork() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.leaderCancel != nil {
+		s.leaderCancel()
+		s.leaderCancel = nil
+	}
+}
 
-	// Watch for allocation changes and sync to agents
-	go s.watchAllocations(ctx)
+// runLeaderLoop is the only goroutine that mutates allocations on the leader.
+// One ticker, ordered phases per service: reconcile baseline, dispatch pending
+// commands to agents, prune permanently-failed allocations, then autoscale.
+// Replaces three independent loops (runScheduler / watchAllocations /
+// autoscaler.Run) that previously raced and double-issued start commands.
+func (s *Server) runLeaderLoop(ctx context.Context) {
+	interval := s.cfg.EvalInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	log.Info().Dur("interval", interval).Msg("leader loop running")
 
-	// Periodic reconciliation
-	ticker := time.NewTicker(30 * time.Second)
+	tick := func() {
+		for _, svc := range s.services {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			if err := s.scheduler.ReconcileService(ctx, svc); err != nil {
+				log.Error().Err(err).Str("service", svc.Name).Msg("reconcile failed")
+			}
+			s.dispatchPending(ctx, svc)
+			s.pruneFailed(svc)
+			if svc.Type == ServiceTypeService {
+				s.autoscaleOnce(ctx, svc)
+			}
+		}
+	}
+
+	tick() // run immediately so the first reconcile doesn't wait `interval`
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
+			log.Info().Msg("leader loop stopped")
 			return
 		case <-ticker.C:
-			// Reconcile all services
-			for _, svc := range s.services {
-				if err := s.scheduler.ReconcileService(ctx, svc); err != nil {
-					log.Error().Err(err).Str("service", svc.Name).Msg("failed to reconcile service")
-				}
-			}
+			tick()
 		}
 	}
 }
 
-// watchAllocations watches for allocation changes and sends commands to agents
-func (s *Server) watchAllocations(ctx context.Context) {
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			// Get all services and their allocations
-			for _, svc := range s.services {
-				allocs, err := s.clusterState.ListAllocations(svc.Name)
-				if err != nil {
-					log.Error().Err(err).Str("service", svc.Name).Msg("failed to list allocations")
-					continue
-				}
-
-				// Send start commands for pending allocations
-				for _, alloc := range allocs {
-					if alloc.Status == "pending" {
-						log.Info().
-							Str("service", svc.Name).
-							Str("node_id", alloc.NodeID).
-							Msg("sending start command to agent")
-
-						if err := s.sendStartCommand(alloc.NodeID, svc); err != nil {
-							log.Error().
-								Err(err).
-								Str("service", svc.Name).
-								Str("node_id", alloc.NodeID).
-								Msg("failed to send start command")
-						} else {
-							alloc.Status = "running"
-							alloc.UpdatedAt = time.Now()
-							if err := s.clusterState.UpdateAllocation(alloc); err != nil {
-								log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation status")
-							}
-							log.Info().
-								Str("service", svc.Name).
-								Str("node_id", alloc.NodeID).
-								Msg("service started on node")
-						}
-					}
-				}
-
-				// Check for failed allocations that exceeded restart limit
-				// These need to be rescheduled to different nodes
-				for _, alloc := range allocs {
-					if alloc.Status == "failed" && alloc.ConsecutiveFailures >= 3 {
-						log.Warn().
-							Str("service", svc.Name).
-							Str("node_id", alloc.NodeID).
-							Int("restarts", alloc.Restarts).
-							Msg("allocation failed permanently, will reschedule")
-
-						// Remove failed allocation
-						if err := s.clusterState.DeleteAllocation(svc.Name, alloc.NodeID); err != nil {
-							log.Error().Err(err).Msg("failed to delete failed allocation")
-						}
-
-						// Trigger reconciliation to create new allocation on another node
-						go func(svc *ServiceDefinition) {
-							if err := s.scheduler.ReconcileService(ctx, svc); err != nil {
-								log.Error().Err(err).Str("service", svc.Name).Msg("failed to reschedule after failure")
-							}
-						}(svc)
-					}
-				}
-			}
+// dispatchPending sends start commands for any allocation in `pending`. The
+// transition pending → starting is committed BEFORE the request goes out,
+// not after the ACK. Otherwise the agent — which writes Status=running,PID=X
+// as soon as the process is up — would be clobbered by the leader's later
+// "starting" write (no CAS in NATS KV, last write wins).
+func (s *Server) dispatchPending(ctx context.Context, svc *ServiceDefinition) {
+	allocs, err := s.clusterState.ListAllocations(svc.Name)
+	if err != nil {
+		log.Error().Err(err).Str("service", svc.Name).Msg("list allocations failed")
+		return
+	}
+	for _, alloc := range allocs {
+		if alloc.Status != "pending" {
+			continue
 		}
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		alloc.Status = "starting"
+		alloc.UpdatedAt = time.Now()
+		if err := s.clusterState.UpdateAllocation(alloc); err != nil {
+			log.Error().Err(err).Str("service", svc.Name).Msg("update allocation failed")
+			continue
+		}
+		log.Info().
+			Str("service", svc.Name).
+			Str("node_id", alloc.NodeID).
+			Msg("sending start command to agent")
+		if err := s.sendStartCommand(alloc.NodeID, svc); err != nil {
+			log.Error().Err(err).
+				Str("service", svc.Name).
+				Str("node_id", alloc.NodeID).
+				Msg("start command failed")
+			// Leave alloc in "starting"; next tick won't redispatch (filter is
+			// "pending"-only). If the process never comes up the agent's
+			// failure path will flip it back to "pending" or "failed".
+		}
+	}
+}
+
+// pruneFailed removes allocations the agent gave up on (ConsecutiveFailures
+// past the threshold). The next reconcile cycle will place a fresh allocation
+// on a different node.
+func (s *Server) pruneFailed(svc *ServiceDefinition) {
+	allocs, err := s.clusterState.ListAllocations(svc.Name)
+	if err != nil {
+		return
+	}
+	for _, alloc := range allocs {
+		if alloc.Status != "failed" || alloc.ConsecutiveFailures < 3 {
+			continue
+		}
+		log.Warn().
+			Str("service", svc.Name).
+			Str("node_id", alloc.NodeID).
+			Int("restarts", alloc.Restarts).
+			Msg("pruning permanently failed allocation")
+		if err := s.clusterState.DeleteAllocation(svc.Name, alloc.NodeID); err != nil {
+			log.Error().Err(err).Msg("delete failed allocation")
+		}
+	}
+}
+
+func (s *Server) autoscaleOnce(ctx context.Context, svc *ServiceDefinition) {
+	d, err := s.autoscaler.EvaluateService(ctx, svc)
+	if err != nil {
+		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler evaluate failed")
+		return
+	}
+	if d.Action == "none" {
+		return
+	}
+	log.Info().
+		Str("service", svc.Name).
+		Str("action", d.Action).
+		Str("reason", d.Reason).
+		Msg("autoscaling decision")
+	if err := s.autoscaler.ExecuteScalingDecision(ctx, d, svc); err != nil {
+		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler execute failed")
 	}
 }
 
@@ -396,32 +421,23 @@ func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	return nil
 }
 
-// watchLeadership watches for leadership changes
+// watchLeadership re-arms the leader loop on flips. The sub-context returned
+// by startLeaderWork is cancelled on loss, so a re-elected leader gets a
+// clean run instead of the previous behavior where stale goroutines kept
+// running with the parent context still alive.
 func (s *Server) watchLeadership(ctx context.Context) {
-	wasLeader := s.leaderElection.IsLeader()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			isLeader := s.leaderElection.IsLeader()
-
-			// Became leader
-			if isLeader && !wasLeader {
-				log.Info().Msg("became leader, starting scheduler and autoscaler")
-				go s.runScheduler(ctx)
-				go s.runAutoscaler(ctx)
-			}
-
-			// Lost leadership
-			if !isLeader && wasLeader {
-				log.Info().Msg("lost leadership, stopping scheduler and autoscaler")
-				// Scheduler and autoscaler will stop when ctx is cancelled
-			}
-
-			wasLeader = isLeader
-		}
+	err := s.leaderElection.WatchLeadership(ctx,
+		func() {
+			log.Info().Msg("became leader")
+			s.startLeaderWork(ctx)
+		},
+		func() {
+			log.Info().Msg("lost leadership")
+			s.stopLeaderWork()
+		},
+	)
+	if err != nil {
+		log.Error().Err(err).Msg("leadership watcher failed")
 	}
 }
 
