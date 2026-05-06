@@ -110,13 +110,13 @@ func main() {
 	// Сначала гасим /healthz (Nomad снимает с балансировки), потом
 	// дренируем NATS: in-flight обработчики завершают работу,
 	// новые сообщения не принимаются — новые DB-запросы не стартуют.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("health shutdown")
 	}
 	cancel()
 
-	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 2*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

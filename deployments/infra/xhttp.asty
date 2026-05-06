@@ -11,7 +11,7 @@ artifact:
 
 command: ./xhttp
 user: asty
-kill_timeout: 30s
+kill_timeout: 10s
 
 env:
   A_NATS_HOST: "127.0.0.1"

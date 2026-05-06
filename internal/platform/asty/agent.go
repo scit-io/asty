@@ -210,29 +210,43 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 	return nil
 }
 
-// StopService stops a service process
+// StopService stops a service process. The expensive part — proc.Stop() with
+// kill_timeout — runs OUTSIDE a.mu so concurrent commands and metric
+// collection aren't serialized behind a slow shutdown. On completion the
+// allocation is marked stopped in KV so the drain manager can confirm.
 func (a *Agent) StopService(serviceName string) error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	proc, exists := a.processes[serviceName]
 	if !exists {
+		a.mu.Unlock()
+		// Reconcile KV in case the alloc still says running — drain waits on this.
+		_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+			if alloc.Status == "stopped" {
+				return false
+			}
+			alloc.Status = "stopped"
+			alloc.PID = 0
+			return true
+		})
 		return fmt.Errorf("service %s not running", serviceName)
 	}
+	delete(a.processes, serviceName)
+	a.mu.Unlock()
 
-	// Stop process
-	if err := proc.Stop(); err != nil {
-		return fmt.Errorf("failed to stop process: %w", err)
-	}
-
-	// Unregister health check
 	a.healthChecker.Unregister(serviceName)
-
-	// Unregister metrics collection
 	a.metricsCollector.Unregister(proc.PID())
 
-	// Remove from processes map
-	delete(a.processes, serviceName)
+	if err := proc.Stop(); err != nil {
+		log.Error().Err(err).Str("service", serviceName).Msg("process stop failed")
+	}
+
+	if err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+		alloc.Status = "stopped"
+		alloc.PID = 0
+		return true
+	}); err != nil {
+		log.Warn().Err(err).Str("service", serviceName).Msg("failed to mark allocation stopped")
+	}
 
 	log.Info().
 		Str("service", serviceName).
@@ -343,7 +357,11 @@ func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
 	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
 }
 
-// handleStopCommand handles stop service command
+// handleStopCommand acknowledges the stop command immediately and runs the
+// real shutdown asynchronously. The NATS request timeout would otherwise need
+// to exceed kill_timeout — making the two equal creates a race where the
+// caller times out while the agent is still doing graceful shutdown. Drain
+// confirmation now happens via KV state (alloc.Status="stopped").
 func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 	stopCmd, err := ParseStopCommand(data)
 	if err != nil {
@@ -356,13 +374,13 @@ func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 		Str("service", stopCmd.ServiceName).
 		Msg("stopping service")
 
-	if err := a.StopService(stopCmd.ServiceName); err != nil {
-		log.Error().Err(err).Str("service", stopCmd.ServiceName).Msg("failed to stop service")
-		msg.Respond(MarshalResponse(false, "", err))
-		return
-	}
+	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s stop initiated", stopCmd.ServiceName), nil))
 
-	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s stopped", stopCmd.ServiceName), nil))
+	go func() {
+		if err := a.StopService(stopCmd.ServiceName); err != nil {
+			log.Warn().Err(err).Str("service", stopCmd.ServiceName).Msg("background stop reported")
+		}
+	}()
 }
 
 // handleLogsCommand handles get logs command
@@ -467,11 +485,22 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 		memAvail = 0
 	}
 
+	// Preserve drain status set by the server — heartbeat must not overwrite
+	// "draining" or "drained" back to "ready", otherwise the scheduler would
+	// re-place allocations on a node that is being vacated.
+	status := "ready"
+	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
+		switch existing.Status {
+		case "draining", "drained":
+			status = existing.Status
+		}
+	}
+
 	return &NodeInfo{
 		ID:              a.nodeID,
 		Datacenter:      a.cfg.Datacenter,
 		IP:              nodeIP,
-		Status:          "ready",
+		Status:          status,
 		LastSeen:        time.Now(),
 		CPUTotal:        cpuTotal,
 		CPUAvailable:    cpuAvail,

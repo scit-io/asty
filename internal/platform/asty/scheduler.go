@@ -70,10 +70,34 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *ServiceDefinition
 	case ServiceTypeSystem:
 		return s.reconcileSystem(svc, healthy, occupied)
 	case ServiceTypeService:
-		return s.reconcileRegular(svc, healthy, live, occupied)
+		// Packing pressure: count live allocations on each node across ALL
+		// services. pickCandidates uses this to concentrate new placements on
+		// nodes that already host other services — at bootstrap, all services
+		// land on the same MinCopies nodes (one per DC) instead of spreading
+		// across the whole cluster.
+		nodeAllocCounts := s.computeNodeAllocCounts()
+		return s.reconcileRegular(svc, healthy, live, occupied, nodeAllocCounts)
 	default:
 		return fmt.Errorf("unknown service type: %s", svc.Type)
 	}
+}
+
+// computeNodeAllocCounts returns per-node count of live allocations across
+// every service. Errors are swallowed because the count is an advisory tiebreak
+// — placement still works correctly if the count is zero everywhere.
+func (s *Scheduler) computeNodeAllocCounts() map[string]int {
+	out := make(map[string]int)
+	all, err := s.clusterState.ListAllAllocations()
+	if err != nil {
+		return out
+	}
+	for _, a := range all {
+		switch a.Status {
+		case "pending", "starting", "running":
+			out[a.NodeID]++
+		}
+	}
+	return out
 }
 
 // reconcileSystem: one allocation per healthy node, idempotent.
@@ -110,7 +134,7 @@ func (s *Scheduler) reconcileSystem(svc *ServiceDefinition, healthy []*NodeInfo,
 }
 
 // reconcileRegular: top up to targetCopies, never shrink.
-func (s *Scheduler) reconcileRegular(svc *ServiceDefinition, healthy []*NodeInfo, live []*ServiceAllocation, occupied map[string]bool) error {
+func (s *Scheduler) reconcileRegular(svc *ServiceDefinition, healthy []*NodeInfo, live []*ServiceAllocation, occupied map[string]bool, nodeAllocCounts map[string]int) error {
 	target := s.targetCopies(len(healthy))
 	if len(live) >= target {
 		return nil
@@ -118,7 +142,7 @@ func (s *Scheduler) reconcileRegular(svc *ServiceDefinition, healthy []*NodeInfo
 	needed := target - len(live)
 
 	dcCounts := datacenterCountsByOccupied(healthy, occupied)
-	candidates := s.pickCandidates(svc, healthy, occupied, dcCounts, needed)
+	candidates := s.pickCandidates(svc, healthy, occupied, dcCounts, nodeAllocCounts, needed)
 	if len(candidates) == 0 {
 		log.Warn().
 			Str("service", svc.Name).
@@ -160,11 +184,19 @@ func (s *Scheduler) targetCopies(healthyNodes int) int {
 	return target
 }
 
-// pickCandidates selects up to `needed` nodes that don't already host svc,
-// preferring datacenters with the fewest live copies (geo-spread). Ties are
-// broken by node ID for stability — eliminates rescheduling churn between
-// reconciliation cycles when nodes report identical free memory.
-func (s *Scheduler) pickCandidates(svc *ServiceDefinition, healthy []*NodeInfo, occupied map[string]bool, dcCounts map[string]int, needed int) []*NodeInfo {
+// pickCandidates selects up to `needed` nodes that don't already host svc.
+// Sort priority:
+//  1. Geo-spread: prefer DCs with fewest live copies of THIS service
+//  2. Packing: within DC, prefer nodes that already host other services
+//     (concentrates the bootstrap on a minimal set; idle nodes stay free
+//     for autoscale-on-demand)
+//  3. Free memory (more = better) — capacity-aware tiebreak
+//  4. Node ID — stable tiebreak; eliminates churn between reconciliation
+//     cycles when nodes are otherwise identical
+//
+// nodeAllocCounts is the global per-node live-allocation count across all
+// services; passing nil disables the packing tiebreak.
+func (s *Scheduler) pickCandidates(svc *ServiceDefinition, healthy []*NodeInfo, occupied map[string]bool, dcCounts map[string]int, nodeAllocCounts map[string]int, needed int) []*NodeInfo {
 	free := make([]*NodeInfo, 0, len(healthy))
 	for _, n := range healthy {
 		if occupied[n.ID] {
@@ -179,11 +211,17 @@ func (s *Scheduler) pickCandidates(svc *ServiceDefinition, healthy []*NodeInfo, 
 		return nil
 	}
 
-	// Working copy of DC counts — incremented as we pick, so each subsequent
-	// selection drifts toward under-represented DCs.
+	// Working copies — both DC counts and per-node alloc counts are
+	// incremented as we pick. Each subsequent selection drifts toward
+	// under-represented DCs while still preferring already-used nodes
+	// within the chosen DC.
 	working := make(map[string]int, len(dcCounts))
 	for dc, c := range dcCounts {
 		working[dc] = c
+	}
+	packing := make(map[string]int, len(nodeAllocCounts))
+	for n, c := range nodeAllocCounts {
+		packing[n] = c
 	}
 
 	picked := make([]*NodeInfo, 0, needed)
@@ -193,6 +231,9 @@ func (s *Scheduler) pickCandidates(svc *ServiceDefinition, healthy []*NodeInfo, 
 			if working[dci] != working[dcj] {
 				return working[dci] < working[dcj]
 			}
+			if packing[free[i].ID] != packing[free[j].ID] {
+				return packing[free[i].ID] > packing[free[j].ID]
+			}
 			if free[i].MemoryAvailable != free[j].MemoryAvailable {
 				return free[i].MemoryAvailable > free[j].MemoryAvailable
 			}
@@ -201,6 +242,7 @@ func (s *Scheduler) pickCandidates(svc *ServiceDefinition, healthy []*NodeInfo, 
 		pick := free[0]
 		picked = append(picked, pick)
 		working[datacenterOf(pick)]++
+		packing[pick.ID]++
 		free = free[1:]
 	}
 	return picked
@@ -273,7 +315,10 @@ func (s *Scheduler) SelectNearestForReplacement(sourceNodeID string, svc *Servic
 
 // SelectNodeForTrafficBasedPlacement picks a node closest to sourceDatacenter
 // that has free resources and is not already in usedNodes. Used by the
-// autoscaler to place an extra copy near hot traffic.
+// autoscaler to place an extra copy near hot traffic, and by the drain manager
+// to place a replacement near the drained node. Within the closest DC,
+// prefers nodes that already host other services (packing) so new placements
+// don't fan out across the cluster.
 func (s *Scheduler) SelectNodeForTrafficBasedPlacement(sourceDatacenter string, nodes []*NodeInfo, required Resources, usedNodes map[string]bool) *NodeInfo {
 	candidates := make([]*NodeInfo, 0, len(nodes))
 	for _, n := range nodes {
@@ -296,9 +341,14 @@ func (s *Scheduler) SelectNodeForTrafficBasedPlacement(sourceDatacenter string, 
 	}
 	sortedDCs := s.proximityMatrix.SortDatacentersByProximity(sourceDatacenter, dcs)
 
+	packing := s.computeNodeAllocCounts()
+
 	for _, dc := range sortedDCs {
 		group := dcNodes[dc]
 		sort.Slice(group, func(i, j int) bool {
+			if packing[group[i].ID] != packing[group[j].ID] {
+				return packing[group[i].ID] > packing[group[j].ID]
+			}
 			if group[i].MemoryAvailable != group[j].MemoryAvailable {
 				return group[i].MemoryAvailable > group[j].MemoryAvailable
 			}

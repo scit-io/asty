@@ -109,14 +109,14 @@ func main() {
 	// Сначала Nomad снимает аллокацию с балансировки через /healthz 503,
 	// затем закрываем WS-сессии (отписка + Control: CLOSE клиентам),
 	// затем дренируем оставшиеся бизнес-подписки.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("health shutdown")
 	}
 	cancel()
 
 	mgr.CloseAll()
-	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 15*time.Second)
+	drainTimeout := utils.GetEnv(log, "NATS_DRAIN_TIMEOUT", 2*time.Second)
 	if err := natsClient.Drain(drainTimeout); err != nil {
 		log.Error().Err(err).Msg("NATS drain")
 	}

@@ -283,6 +283,40 @@ func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocatio
 	return allocs, nil
 }
 
+// ListAllAllocations returns every allocation record in the bucket regardless
+// of service. Used by the scheduler to compute per-node "packing" pressure —
+// concentrating new placements on nodes that already host other services
+// instead of spreading every service across the whole cluster.
+func (cs *ClusterState) ListAllAllocations() ([]*ServiceAllocation, error) {
+	keys, err := cs.bucket.Keys()
+	if err != nil {
+		if err == nats.ErrNoKeysFound {
+			return []*ServiceAllocation{}, nil
+		}
+		return nil, fmt.Errorf("failed to list keys: %w", err)
+	}
+
+	const prefix = "alloc."
+	allocs := make([]*ServiceAllocation, 0, len(keys))
+	for _, key := range keys {
+		if len(key) < len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		entry, err := cs.bucket.Get(key)
+		if err != nil {
+			log.Warn().Err(err).Str("key", key).Msg("failed to get allocation entry")
+			continue
+		}
+		var alloc ServiceAllocation
+		if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal allocation")
+			continue
+		}
+		allocs = append(allocs, &alloc)
+	}
+	return allocs, nil
+}
+
 // UpdateAllocation overwrites the allocation record. Last write wins — use
 // MutateAllocation when concurrent writers (leader and agent) might be
 // touching the same record, which is essentially everywhere.
@@ -442,6 +476,47 @@ func (cs *ClusterState) WatchAllocations(ctx context.Context, onChange func(*Ser
 				continue
 			}
 			onChange(&alloc)
+		}
+	}
+}
+
+// WatchAllocation watches a single allocation key and calls fn on every KV
+// update. fn receives nil when the key is deleted or purged. fn returning true
+// signals "done" — the watcher stops and WatchAllocation returns nil.
+// Returns when ctx is cancelled, the channel closes, or fn returns true.
+func (cs *ClusterState) WatchAllocation(ctx context.Context, serviceName, nodeID string, fn func(*ServiceAllocation) bool) error {
+	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
+	watcher, err := cs.bucket.Watch(key, nats.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("watch allocation: %w", err)
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
+			if entry == nil {
+				// End of initial-values snapshot — continue to live updates.
+				continue
+			}
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				if fn(nil) {
+					return nil
+				}
+				continue
+			}
+			var alloc ServiceAllocation
+			if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+				continue
+			}
+			if fn(&alloc) {
+				return nil
+			}
 		}
 	}
 }

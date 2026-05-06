@@ -12,20 +12,20 @@ import (
 
 // DrainStatus tracks the progress of a node drain operation.
 type DrainStatus struct {
-	NodeID             string   `json:"node_id"`
-	Status             string   `json:"status"` // draining, drained, error
-	TotalAllocations   int      `json:"total_allocations"`
-	Migrated           int      `json:"migrated"`
-	Remaining          int      `json:"remaining"`
-	CurrentAllocation  string   `json:"current_allocation"`
-	Errors             []string `json:"errors"`
+	NodeID            string   `json:"node_id"`
+	Status            string   `json:"status"` // draining, drained, error
+	TotalAllocations  int      `json:"total_allocations"`
+	Migrated          int      `json:"migrated"`
+	Remaining         int      `json:"remaining"`
+	CurrentAllocation string   `json:"current_allocation"`
+	Errors            []string `json:"errors"`
 }
 
 // DrainManager tracks active drain operations.
 type DrainManager struct {
-	mu       sync.Mutex
-	drains   map[string]*drainOp
-	server   *Server
+	mu     sync.Mutex
+	drains map[string]*drainOp
+	server *Server
 }
 
 type drainOp struct {
@@ -159,13 +159,7 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 		dm.mu.Unlock()
 	}()
 
-	// Phase 1: dismantle every system service in parallel — they have no
-	// replacement (one-per-node), so no need to wait between them. Gateway,
-	// xauth-edge, etc. all stop concurrently. This shaves seconds when several
-	// system services live on the node.
-	var systemWG sync.WaitGroup
-	systemAllocs := []allocOnNode{}
-	regularAllocs := []allocOnNode{}
+	var systemAllocs, regularAllocs []allocOnNode
 	for _, a := range allocs {
 		if a.svc.Type == ServiceTypeSystem {
 			systemAllocs = append(systemAllocs, a)
@@ -174,37 +168,27 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 		}
 	}
 
+	total := len(allocs)
+	var stopWG sync.WaitGroup
+
+	// Phase 1: dismantle every system service in parallel. With async stop on
+	// the agent side, this is true parallelism — no serialization on a.mu and
+	// no NATS RPC blocked on kill_timeout.
 	for _, a := range systemAllocs {
-		systemWG.Add(1)
+		stopWG.Add(1)
 		go func(a allocOnNode) {
-			defer systemWG.Done()
-			if err := dm.dismantleSystem(nodeID, a); err != nil {
-				dm.mu.Lock()
-				op.status.Errors = append(op.status.Errors, fmt.Sprintf("%s: %s", a.svc.Name, err.Error()))
-				dm.mu.Unlock()
-				log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain dismantle failed")
-				return
-			}
-			dm.mu.Lock()
-			op.status.Migrated++
-			op.status.Remaining = len(allocs) - op.status.Migrated
-			snapshot := op.status
-			dm.mu.Unlock()
-			dm.publishDrainEvent(snapshot)
+			defer stopWG.Done()
+			dm.dismantleAndConfirm(ctx, nodeID, a, op, total)
 		}(a)
 	}
-	systemWG.Wait()
 
-	if ctx.Err() != nil {
-		return
-	}
-
-	// Phase 2: regular services migrate sequentially with explicit nearest
-	// placement. Sequential because each migration briefly runs N+1 copies and
-	// we don't want to multiply that by every regular service at once.
+	// Phase 2: place replacements one at a time per service to keep N+1
+	// invariant, but fire stops asynchronously so the next placement doesn't
+	// wait for the previous shutdown. Replacement is already healthy and
+	// serving traffic — the old process exiting is bookkeeping.
 	for _, a := range regularAllocs {
 		if ctx.Err() != nil {
-			return
+			break
 		}
 
 		dm.mu.Lock()
@@ -212,23 +196,29 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 		dm.mu.Unlock()
 		dm.publishDrainEvent(op.statusCopy())
 
-		if err := dm.migrateRegular(ctx, nodeID, a); err != nil {
+		fellBack, err := dm.placeReplacement(ctx, nodeID, a)
+		if err != nil {
 			dm.mu.Lock()
 			op.status.Errors = append(op.status.Errors, fmt.Sprintf("%s: %s", a.svc.Name, err.Error()))
 			dm.mu.Unlock()
-			log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain migration failed")
+			log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain replacement failed")
 			continue
 		}
 
-		dm.mu.Lock()
-		op.status.Migrated++
-		op.status.Remaining = len(allocs) - op.status.Migrated
-		dm.mu.Unlock()
+		stopWG.Add(1)
+		go func(a allocOnNode, oldAllocAlreadyDeleted bool) {
+			defer stopWG.Done()
+			dm.finalizeMigration(ctx, nodeID, a, oldAllocAlreadyDeleted, op, total)
+		}(a, fellBack)
 	}
 
-	// Mark node as drained
-	node, err := dm.server.clusterState.GetNode(nodeID)
-	if err == nil && node.Status == "draining" {
+	stopWG.Wait()
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	if node, err := dm.server.clusterState.GetNode(nodeID); err == nil && node.Status == "draining" {
 		node.Status = "drained"
 		_ = dm.server.clusterState.UpdateNode(node)
 	}
@@ -250,119 +240,168 @@ func (op *drainOp) statusCopy() DrainStatus {
 	return op.status
 }
 
-// dismantleSystem stops a system service on the drained node and removes its
-// allocation. System services are one-per-node (Gateway, etc.) — no
-// replacement on other nodes, just clean removal.
-func (dm *DrainManager) dismantleSystem(nodeID string, a allocOnNode) error {
-	svc := a.svc
-	if err := dm.server.StopServiceOnNode(nodeID, svc.Name); err != nil {
-		// Best effort: still try to delete alloc so a re-elected leader doesn't
-		// believe it's still running. Status update happens via agent normally.
-		_ = dm.server.clusterState.DeleteAllocation(svc.Name, nodeID)
-		return fmt.Errorf("stop failed: %w", err)
+// dismantleAndConfirm stops a system service, waits for the agent to confirm
+// it's down via KV, then deletes the allocation. System services have no
+// replacement (one-per-node), so the only thing the drained node owes the
+// cluster is a clean removal record.
+func (dm *DrainManager) dismantleAndConfirm(ctx context.Context, nodeID string, a allocOnNode, op *drainOp, total int) {
+	if err := dm.server.StopServiceOnNode(nodeID, a.svc.Name); err != nil {
+		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop dispatch failed")
 	}
-	if err := dm.server.clusterState.DeleteAllocation(svc.Name, nodeID); err != nil {
-		return fmt.Errorf("delete alloc failed: %w", err)
+
+	if err := dm.waitForStopped(ctx, nodeID, a.svc); err != nil {
+		dm.mu.Lock()
+		op.status.Errors = append(op.status.Errors, fmt.Sprintf("%s: %s", a.svc.Name, err.Error()))
+		dm.mu.Unlock()
+		log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop confirmation failed")
 	}
-	log.Info().Str("service", svc.Name).Str("node_id", nodeID).Msg("system service dismantled")
-	return nil
+
+	if err := dm.server.clusterState.DeleteAllocation(a.svc.Name, nodeID); err != nil {
+		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: delete allocation failed")
+	}
+
+	dm.bumpMigrated(op, total)
+	log.Info().Str("service", a.svc.Name).Str("node_id", nodeID).Msg("system service dismantled")
 }
 
-// migrateRegular places a replacement on the nearest healthy node (by DC
-// proximity), waits for it to become healthy, then stops the old process.
-// Order matters: replacement-first means service availability is never zero.
-func (dm *DrainManager) migrateRegular(ctx context.Context, nodeID string, a allocOnNode) error {
-	svc := a.svc
-
-	target := dm.server.scheduler.SelectNearestForReplacement(nodeID, svc)
+// placeReplacement creates a replacement allocation on the nearest healthy
+// node and waits for it to become healthy. Returns true if the fallback path
+// (controller-driven placement) was taken — in that case the old allocation
+// has already been deleted, so finalizeMigration must skip the KV-poll step.
+func (dm *DrainManager) placeReplacement(ctx context.Context, nodeID string, a allocOnNode) (fellBack bool, err error) {
+	target := dm.server.scheduler.SelectNearestForReplacement(nodeID, a.svc)
 	if target == nil {
-		// No locality-aware target available — fall back to legacy behavior:
-		// delete alloc and let the controller's reconcile pick a node by the
-		// global geo-spread heuristic. Better than failing the migration.
 		log.Warn().
-			Str("service", svc.Name).
+			Str("service", a.svc.Name).
 			Str("node_id", nodeID).
 			Msg("drain: no nearest replacement available, falling back to controller placement")
-		if err := dm.server.clusterState.DeleteAllocation(svc.Name, nodeID); err != nil {
-			return fmt.Errorf("delete allocation failed: %w", err)
+		if err := dm.server.clusterState.DeleteAllocation(a.svc.Name, nodeID); err != nil {
+			return true, fmt.Errorf("delete allocation failed: %w", err)
 		}
-		return dm.waitForHealthyReplacement(ctx, nodeID, svc)
+		if err := dm.waitForHealthyReplacement(ctx, nodeID, a.svc); err != nil {
+			return true, err
+		}
+		return true, nil
 	}
 
-	// Create the replacement on the chosen nearby node. Controller's
-	// dispatchPending will see the pending alloc and send the start command.
 	if err := dm.server.clusterState.CreateAllocation(&ServiceAllocation{
-		ServiceName: svc.Name,
+		ServiceName: a.svc.Name,
 		NodeID:      target.ID,
 		Status:      "pending",
 		Version:     a.alloc.Version,
 	}); err != nil {
-		return fmt.Errorf("create replacement allocation failed: %w", err)
+		return false, fmt.Errorf("create replacement allocation failed: %w", err)
 	}
 
 	log.Info().
-		Str("service", svc.Name).
+		Str("service", a.svc.Name).
 		Str("from_node", nodeID).
 		Str("to_node", target.ID).
-		Str("from_dc", a.alloc.NodeID).
 		Str("to_dc", datacenterOf(target)).
 		Msg("drain: replacement placed on nearest node")
 
-	if err := dm.waitForHealthyOnNode(ctx, target.ID, svc); err != nil {
-		// Replacement didn't come up — leave it for the controller to retry,
-		// but still stop the old process so the drain can complete.
-		_ = dm.server.StopServiceOnNode(nodeID, svc.Name)
-		_ = dm.server.clusterState.DeleteAllocation(svc.Name, nodeID)
-		return err
+	if err := dm.waitForHealthyOnNode(ctx, target.ID, a.svc); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+// finalizeMigration runs after the replacement is healthy. It dispatches the
+// stop on the drained node, waits for KV confirmation (unless the old alloc
+// is already gone via the fallback path), and deletes the allocation. Runs
+// in its own goroutine so multiple migrations can finalize in parallel.
+func (dm *DrainManager) finalizeMigration(ctx context.Context, nodeID string, a allocOnNode, oldAllocAlreadyDeleted bool, op *drainOp, total int) {
+	if err := dm.server.StopServiceOnNode(nodeID, a.svc.Name); err != nil {
+		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop dispatch failed")
 	}
 
-	if err := dm.server.StopServiceOnNode(nodeID, svc.Name); err != nil {
-		log.Warn().Err(err).Str("service", svc.Name).Str("node_id", nodeID).Msg("drain: stop old process failed")
+	// Bump the visible counter as soon as the stop is dispatched. The
+	// replacement is already serving — to a user, the migration is done.
+	dm.bumpMigrated(op, total)
+
+	if oldAllocAlreadyDeleted {
+		return
 	}
-	if err := dm.server.clusterState.DeleteAllocation(svc.Name, nodeID); err != nil {
-		return fmt.Errorf("delete old allocation failed: %w", err)
+
+	if err := dm.waitForStopped(ctx, nodeID, a.svc); err != nil {
+		dm.mu.Lock()
+		op.status.Errors = append(op.status.Errors, fmt.Sprintf("%s: %s", a.svc.Name, err.Error()))
+		dm.mu.Unlock()
+		log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop confirmation failed")
 	}
-	return nil
+
+	if err := dm.server.clusterState.DeleteAllocation(a.svc.Name, nodeID); err != nil {
+		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: delete allocation failed")
+	}
+}
+
+func (dm *DrainManager) bumpMigrated(op *drainOp, total int) {
+	dm.mu.Lock()
+	op.status.Migrated++
+	op.status.Remaining = total - op.status.Migrated
+	snapshot := op.status
+	dm.mu.Unlock()
+	dm.publishDrainEvent(snapshot)
 }
 
 const (
 	drainHealthDeadline = 2 * time.Minute
-	drainHealthPoll     = 2 * time.Second
+	drainHealthPoll     = 200 * time.Millisecond
+	drainStopMinSlack   = 10 * time.Second
 )
 
-// waitForHealthyOnNode blocks until the named service has a running+healthy
-// allocation on targetNode, or the deadline expires.
-func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode string, svc *ServiceDefinition) error {
-	deadline := time.After(drainHealthDeadline)
-	ticker := time.NewTicker(drainHealthPoll)
-	defer ticker.Stop()
+// waitForStopped blocks until the alloc on nodeID is marked stopped/failed or
+// deleted from KV. Uses a JetStream KV watcher so reaction time is the KV
+// propagation latency (single-digit ms) rather than a poll interval.
+// Hard deadline = kill_timeout + drainStopMinSlack so a stuck process can't
+// block drain forever.
+func (dm *DrainManager) waitForStopped(ctx context.Context, nodeID string, svc *ServiceDefinition) error {
+	dctx, cancel := context.WithTimeout(ctx, svc.GetKillTimeout()+drainStopMinSlack)
+	defer cancel()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
-			return fmt.Errorf("timeout waiting for healthy replacement on %s", targetNode)
-		case <-ticker.C:
-			allocs, err := dm.server.clusterState.ListAllocations(svc.Name)
-			if err != nil {
-				continue
-			}
-			for _, alloc := range allocs {
-				if alloc.NodeID != targetNode {
-					continue
-				}
-				if alloc.Status == "running" && alloc.HealthStatus == "healthy" {
-					return nil
-				}
-			}
+	err := dm.server.clusterState.WatchAllocation(dctx, svc.Name, nodeID, func(alloc *ServiceAllocation) bool {
+		if alloc == nil { // deleted
+			return true
 		}
+		return alloc.Status == "stopped" || alloc.Status == "failed"
+	})
+	if err != nil {
+		return err
 	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if dctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("timeout waiting for %s to stop on %s", svc.Name, nodeID)
+	}
+	return nil
+}
+
+// waitForHealthyOnNode blocks until the named service has a running allocation
+// on targetNode. Uses a KV watcher for instant reaction; falls back to a short
+// poll if the watcher setup fails.
+func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode string, svc *ServiceDefinition) error {
+	dctx, cancel := context.WithTimeout(ctx, drainHealthDeadline)
+	defer cancel()
+
+	err := dm.server.clusterState.WatchAllocation(dctx, svc.Name, targetNode, func(alloc *ServiceAllocation) bool {
+		return alloc != nil && alloc.Status == "running"
+	})
+	if err != nil {
+		return err
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if dctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("timeout waiting for healthy replacement on %s", targetNode)
+	}
+	return nil
 }
 
 // waitForHealthyReplacement blocks until ANY allocation other than the one on
-// drainedNode is healthy. Used in the fallback path where the placement
-// decision was deferred to the controller.
+// drainedNode is running. Used in the fallback path where placement was
+// deferred to the controller.
 func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNode string, svc *ServiceDefinition) error {
 	deadline := time.After(drainHealthDeadline)
 	ticker := time.NewTicker(drainHealthPoll)
@@ -373,7 +412,6 @@ func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNo
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
-			_ = dm.server.StopServiceOnNode(drainedNode, svc.Name)
 			return fmt.Errorf("timeout waiting for healthy replacement")
 		case <-ticker.C:
 			allocs, err := dm.server.clusterState.ListAllocations(svc.Name)
@@ -384,8 +422,7 @@ func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNo
 				if alloc.NodeID == drainedNode {
 					continue
 				}
-				if alloc.Status == "running" && alloc.HealthStatus == "healthy" {
-					_ = dm.server.StopServiceOnNode(drainedNode, svc.Name)
+				if alloc.Status == "running" {
 					return nil
 				}
 			}

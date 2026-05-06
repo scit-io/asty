@@ -315,14 +315,18 @@ func (s *Server) StartServiceOnNode(nodeID string, svc *ServiceDefinition) error
 	return nil
 }
 
-// StopServiceOnNode stops a service on a specific node
+// StopServiceOnNode dispatches a stop command to a node's agent. The agent
+// acknowledges immediately and performs the actual shutdown asynchronously, so
+// this call is short — only enough for NATS round-trip to the ack. Confirmation
+// that the process has stopped comes from KV state (alloc.Status="stopped"),
+// which the drain manager polls.
 func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	cmd, err := MarshalStopCommand(serviceName)
 	if err != nil {
 		return fmt.Errorf("failed to marshal command: %w", err)
 	}
 
-	resp, err := s.SendCommandToAgent(nodeID, cmd, 30*time.Second)
+	resp, err := s.SendCommandToAgent(nodeID, cmd, 5*time.Second)
 	if err != nil {
 		return err
 	}
@@ -334,7 +338,7 @@ func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	log.Info().
 		Str("service", serviceName).
 		Str("node_id", nodeID).
-		Msg("service stopped on node")
+		Msg("stop command dispatched")
 
 	return nil
 }

@@ -33,7 +33,7 @@ func TestReconcileSystemAddsToAllNodes(t *testing.T) {
 	}
 
 	// No occupied nodes — picker should yield all three.
-	picked := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{}, len(nodes))
+	picked := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{}, nil, len(nodes))
 	if len(picked) != 3 {
 		t.Fatalf("expected 3 candidates, got %d", len(picked))
 	}
@@ -66,9 +66,9 @@ func TestPickCandidatesStableTiebreak(t *testing.T) {
 		Resources: Resources{CPU: 100, Memory: 32},
 	}
 
-	first := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, 2)
+	first := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, nil, 2)
 	for i := 0; i < 5; i++ {
-		again := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, 2)
+		again := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, nil, 2)
 		if len(again) != len(first) {
 			t.Fatalf("candidate count changed between calls: %d vs %d", len(first), len(again))
 		}
@@ -100,7 +100,7 @@ func TestPickCandidatesGeoSpread(t *testing.T) {
 		Resources: Resources{CPU: 100, Memory: 32},
 	}
 
-	picks := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0, "dc2": 0, "dc3": 0}, 3)
+	picks := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0, "dc2": 0, "dc3": 0}, nil, 3)
 	if len(picks) != 3 {
 		t.Fatalf("expected 3 picks, got %d", len(picks))
 	}
@@ -110,6 +110,40 @@ func TestPickCandidatesGeoSpread(t *testing.T) {
 	}
 	if len(dcs) < 3 {
 		t.Errorf("expected picks across 3 DCs, got %v", dcs)
+	}
+}
+
+// pickCandidates with packing pressure should prefer nodes that already
+// host other services. Bootstrap of multiple services lands them on the same
+// minimal set of nodes per DC instead of fanning out to every idle node.
+func TestPickCandidatesPacking(t *testing.T) {
+	cfg := &Config{MinCopies: 1, ReservedCPU: 100, ReservedMemory: 250}
+	scheduler := &Scheduler{cfg: cfg}
+
+	nodes := []*NodeInfo{
+		newReadyNode("a1", "dc1"),
+		newReadyNode("a2", "dc1"),
+		newReadyNode("a3", "dc1"),
+	}
+	svc := &ServiceDefinition{
+		Name:      "xhttp",
+		Type:      ServiceTypeService,
+		Resources: Resources{CPU: 100, Memory: 32},
+	}
+
+	// a2 already hosts 2 other services, a3 hosts 1, a1 hosts 0.
+	// Picker should choose a2 first (most packed), then a3, then a1.
+	nodeAllocCounts := map[string]int{"a1": 0, "a2": 2, "a3": 1}
+
+	picks := scheduler.pickCandidates(svc, nodes, map[string]bool{}, map[string]int{"dc1": 0}, nodeAllocCounts, 3)
+	if len(picks) != 3 {
+		t.Fatalf("expected 3 picks, got %d", len(picks))
+	}
+	want := []string{"a2", "a3", "a1"}
+	for i, n := range picks {
+		if n.ID != want[i] {
+			t.Errorf("pick #%d: got %s, want %s", i, n.ID, want[i])
+		}
 	}
 }
 

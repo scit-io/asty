@@ -252,13 +252,14 @@ func (as *Autoscaler) findOverloadedAlloc(live []*ServiceAllocation) *ServiceAll
 }
 
 // pickFreeNode returns a healthy node that doesn't yet host this service and
-// has free resources. Delegates to the scheduler so geo-spread and the same
-// stable tiebreak rules used during baseline reconcile are honored.
+// has free resources. Delegates to the scheduler so geo-spread, packing, and
+// the same stable tiebreak rules used during baseline reconcile are honored.
 func (as *Autoscaler) pickFreeNode(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *NodeInfo {
 	healthy := as.scheduler.filterHealthyNodes(nodes)
 	occupied := nodeIDsOf(live)
 	dcCounts := datacenterCountsByOccupied(healthy, occupied)
-	picks := as.scheduler.pickCandidates(svc, healthy, occupied, dcCounts, 1)
+	nodeAllocCounts := as.scheduler.computeNodeAllocCounts()
+	picks := as.scheduler.pickCandidates(svc, healthy, occupied, dcCounts, nodeAllocCounts, 1)
 	if len(picks) == 0 {
 		return nil
 	}
