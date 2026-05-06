@@ -815,21 +815,21 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 		var lastAction string
 		var lastActionAt int64
 
-		if api.server.autoscaler != nil {
-			if t, ok := api.server.autoscaler.lastScaleUp[svc.Name]; ok {
-				if time.Since(t) < api.server.cfg.CooldownUp {
+		if cd, err := api.server.clusterState.GetServiceCooldown(svc.Name); err == nil {
+			if !cd.LastScaleUp.IsZero() {
+				if time.Since(cd.LastScaleUp) < api.server.cfg.CooldownUp {
 					cooldownUp = true
 				}
 				lastAction = "scale_up"
-				lastActionAt = t.Unix()
+				lastActionAt = cd.LastScaleUp.Unix()
 			}
-			if t, ok := api.server.autoscaler.lastScaleDown[svc.Name]; ok {
-				if time.Since(t) < api.server.cfg.CooldownDown {
+			if !cd.LastScaleDown.IsZero() {
+				if time.Since(cd.LastScaleDown) < api.server.cfg.CooldownDown {
 					cooldownDown = true
 				}
-				if t.Unix() > lastActionAt {
+				if cd.LastScaleDown.Unix() > lastActionAt {
 					lastAction = "scale_down"
-					lastActionAt = t.Unix()
+					lastActionAt = cd.LastScaleDown.Unix()
 				}
 			}
 		}

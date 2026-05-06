@@ -133,17 +133,19 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	// Already running — update allocation state and return
+	// Already running — sync the allocation state and return. Mutation is
+	// CAS-guarded so we don't clobber metric updates that may have raced in.
 	if proc, exists := a.processes[svc.Name]; exists {
-		if alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID); err == nil {
-			if alloc.PID != proc.PID() || alloc.Status != "running" {
-				alloc.PID = proc.PID()
-				alloc.Status = "running"
-				alloc.StartedAt = time.Now()
-				alloc.ConsecutiveFailures = 0
-				_ = a.clusterState.UpdateAllocation(alloc)
+		_ = a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *ServiceAllocation) bool {
+			if alloc.PID == proc.PID() && alloc.Status == "running" {
+				return false
 			}
-		}
+			alloc.PID = proc.PID()
+			alloc.Status = "running"
+			alloc.StartedAt = time.Now()
+			alloc.ConsecutiveFailures = 0
+			return true
+		})
 		return nil
 	}
 
@@ -189,20 +191,20 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		Int("pid", proc.PID()).
 		Msg("service started")
 
-	// Update allocation in cluster state with PID
-	alloc, err := a.clusterState.GetAllocation(svc.Name, a.nodeID)
-	if err != nil {
-		log.Error().Err(err).Str("service", svc.Name).Msg("failed to get allocation for PID update")
-	} else {
-		alloc.PID = proc.PID()
+	// Mark the allocation running. CAS-guarded — no risk of the leader's
+	// dispatch write (status=starting) landing after this and resurrecting
+	// the stale view, even if their requests cross.
+	pid := proc.PID()
+	if err := a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *ServiceAllocation) bool {
+		alloc.PID = pid
 		alloc.Status = "running"
 		alloc.StartedAt = time.Now()
 		alloc.ConsecutiveFailures = 0
-		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
-			log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation with PID")
-		} else {
-			log.Info().Str("service", svc.Name).Int("pid", proc.PID()).Msg("updated allocation with PID")
-		}
+		return true
+	}); err != nil {
+		log.Error().Err(err).Str("service", svc.Name).Msg("failed to update allocation with PID")
+	} else {
+		log.Info().Str("service", svc.Name).Int("pid", pid).Msg("updated allocation with PID")
 	}
 
 	return nil
@@ -573,15 +575,14 @@ func (a *Agent) publishProcessMetrics(ctx context.Context) {
 				if !ok {
 					continue
 				}
-
-				alloc, err := a.clusterState.GetAllocation(serviceName, a.nodeID)
+				cpu := int(metrics.CPUPercent)
+				mem := int(metrics.MemoryMB)
+				err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+					alloc.CPUUsage = cpu
+					alloc.MemoryUsage = mem
+					return true
+				})
 				if err != nil {
-					continue
-				}
-
-				alloc.CPUUsage = int(metrics.CPUPercent)
-				alloc.MemoryUsage = int(metrics.MemoryMB)
-				if err := a.clusterState.UpdateAllocation(alloc); err != nil {
 					log.Error().Err(err).Str("service", serviceName).Msg("failed to update allocation metrics")
 				}
 			}
@@ -621,81 +622,80 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 			Int("pid", proc.PID()).
 			Msg("detected failed process, attempting restart")
 
-		// Get service definition for restart policy
 		svc := proc.ServiceDefinition()
+		maxAttempts := svc.Restart.GetAttempts()
 
-		// Get allocation from cluster state to check restart policy
-		alloc, err := a.clusterState.GetAllocation(serviceName, a.nodeID)
+		// Decide and bump counters atomically. Returns the post-mutation
+		// snapshot so we can branch on it without re-reading.
+		var (
+			giveUp        bool
+			restarts      int
+			consecutive   int
+		)
+		err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+			if alloc.ConsecutiveFailures >= maxAttempts {
+				alloc.Status = "failed"
+				giveUp = true
+			} else {
+				alloc.Restarts++
+				alloc.ConsecutiveFailures++
+				restarts = alloc.Restarts
+				consecutive = alloc.ConsecutiveFailures
+			}
+			return true
+		})
 		if err != nil {
-			log.Error().Err(err).Str("service", serviceName).Msg("failed to get allocation for restart")
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to mutate allocation on failure")
 			continue
 		}
 
-		// Check restart attempts limit from service definition
-		maxAttempts := svc.Restart.GetAttempts()
-		if alloc.ConsecutiveFailures >= maxAttempts {
+		if giveUp {
 			log.Error().
 				Str("service", serviceName).
-				Int("consecutive_failures", alloc.ConsecutiveFailures).
 				Int("max_attempts", maxAttempts).
 				Msg("restart attempts exhausted, giving up")
-
-			// Update allocation status to failed
-			alloc.Status = "failed"
-			if err := a.clusterState.UpdateAllocation(alloc); err != nil {
-				log.Error().Err(err).Str("service", serviceName).Msg("failed to update allocation status")
-			}
-
-			// Remove from processes map
 			a.mu.Lock()
 			delete(a.processes, serviceName)
 			a.mu.Unlock()
-
 			continue
 		}
 
-		// Increment restart counters
-		alloc.Restarts++
-		alloc.ConsecutiveFailures++
-		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
-			log.Error().Err(err).Str("service", serviceName).Msg("failed to update restart counter")
-		}
-
-		// Kill the failed process tree to release ports
+		// Kill the failed process tree to release ports.
 		if pid := proc.PID(); pid > 0 {
 			syscall.Kill(-pid, syscall.SIGKILL)
 			syscall.Kill(pid, syscall.SIGKILL)
 		}
-
 		a.mu.Lock()
 		delete(a.processes, serviceName)
 		a.mu.Unlock()
-
-		// Unregister health check and metrics
 		a.healthChecker.Unregister(serviceName)
 		a.metricsCollector.Unregister(proc.PID())
 
 		log.Warn().
 			Str("service", serviceName).
-			Int("restarts", alloc.Restarts).
+			Int("restarts", restarts).
+			Int("consecutive_failures", consecutive).
 			Int("old_pid", proc.PID()).
 			Msg("restarting failed service")
 
-		// Wait before restart using configured delay
-		restartDelay := svc.Restart.GetDelay()
-		time.Sleep(restartDelay)
+		time.Sleep(svc.Restart.GetDelay())
 
-		// Mark allocation as pending so server re-schedules it
-		alloc.Status = "pending"
-		alloc.PID = 0
-		if err := a.clusterState.UpdateAllocation(alloc); err != nil {
-			log.Error().Err(err).Str("service", serviceName).Msg("failed to mark allocation as pending")
+		// Flip to pending so the leader's next reconcile cycle dispatches a
+		// fresh start command. CAS-guarded — leader's metrics writes during
+		// the sleep don't block this transition.
+		err = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+			alloc.Status = "pending"
+			alloc.PID = 0
+			return true
+		})
+		if err != nil {
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to mark allocation pending")
 			continue
 		}
 
 		log.Info().
 			Str("service", serviceName).
-			Int("attempt", alloc.Restarts).
+			Int("attempt", restarts).
 			Msg("marked allocation for restart, waiting for server command")
 	}
 }

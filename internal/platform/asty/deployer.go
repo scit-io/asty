@@ -171,16 +171,18 @@ func (d *Deployer) deployCanary(ctx context.Context, plan *DeploymentPlan, statu
 	// Pick canary allocation(s)
 	canaryAllocs := plan.Allocations[:min(plan.Canary, len(plan.Allocations))]
 
-	// Update canary allocations to new version
+	// Update canary allocations to new version. CAS-guarded so an agent's
+	// concurrent metric write doesn't lose our version bump.
 	for _, alloc := range canaryAllocs {
-		alloc.Version = plan.TargetVersion
-		alloc.Status = "pending"
-
-		if err := d.clusterState.UpdateAllocation(alloc); err != nil {
+		version := plan.TargetVersion
+		if err := d.clusterState.MutateAllocation(plan.ServiceName, alloc.NodeID, func(a *ServiceAllocation) bool {
+			a.Version = version
+			a.Status = "pending"
+			return true
+		}); err != nil {
 			return false, fmt.Errorf("failed to update canary allocation: %w", err)
 		}
 
-		// Send update command to agent
 		if err := d.sendUpdateCommand(alloc.NodeID, plan.ServiceName, plan.TargetVersion); err != nil {
 			return false, fmt.Errorf("failed to send update command: %w", err)
 		}
@@ -256,12 +258,15 @@ func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, stat
 			Int("total", status.Total).
 			Msg("updating batch")
 
-		// Update batch
+		// Update batch — CAS guard preserves the new version against
+		// concurrent agent metric writes.
 		for _, alloc := range batch {
-			alloc.Version = plan.TargetVersion
-			alloc.Status = "pending"
-
-			if err := d.clusterState.UpdateAllocation(alloc); err != nil {
+			version := plan.TargetVersion
+			if err := d.clusterState.MutateAllocation(plan.ServiceName, alloc.NodeID, func(a *ServiceAllocation) bool {
+				a.Version = version
+				a.Status = "pending"
+				return true
+			}); err != nil {
 				return fmt.Errorf("failed to update allocation: %w", err)
 			}
 

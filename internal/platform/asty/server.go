@@ -188,10 +188,11 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// startLeaderWork spawns the leader loop under a sub-context derived from the
-// server context. Cancellation of that sub-context (on loss of leadership)
-// stops the loop without bringing down the server. Idempotent: a second call
-// while already running is a no-op.
+// startLeaderWork spawns the controller under a sub-context derived from
+// the server context. Cancellation of that sub-context (on loss of
+// leadership) stops the controller — workers drain, watchers exit, the
+// workqueue shuts down. Idempotent: a second call while already running is
+// a no-op.
 func (s *Server) startLeaderWork(parent context.Context) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -200,7 +201,30 @@ func (s *Server) startLeaderWork(parent context.Context) {
 	}
 	leaderCtx, cancel := context.WithCancel(parent)
 	s.leaderCancel = cancel
-	go s.runLeaderLoop(leaderCtx)
+
+	workers := s.cfg.ControllerWorkers
+	resync := s.cfg.EvalInterval
+	if resync <= 0 {
+		resync = 60 * time.Second
+	} else {
+		// Resync at 6× EvalInterval (so EvalInterval=10s → resync=60s).
+		// Watchers handle the reactive path; the safety-net resync only
+		// catches drift and drives metric-driven autoscale.
+		resync = resync * 6
+		if resync > 5*time.Minute {
+			resync = 5 * time.Minute
+		}
+	}
+	controller := NewServiceController(
+		s.clusterState,
+		s.scheduler,
+		s.autoscaler,
+		s.services,
+		serverDispatcher{s},
+		workers,
+		resync,
+	)
+	go controller.Run(leaderCtx)
 }
 
 func (s *Server) stopLeaderWork() {
@@ -212,129 +236,14 @@ func (s *Server) stopLeaderWork() {
 	}
 }
 
-// runLeaderLoop is the only goroutine that mutates allocations on the leader.
-// One ticker, ordered phases per service: reconcile baseline, dispatch pending
-// commands to agents, prune permanently-failed allocations, then autoscale.
-// Replaces three independent loops (runScheduler / watchAllocations /
-// autoscaler.Run) that previously raced and double-issued start commands.
-func (s *Server) runLeaderLoop(ctx context.Context) {
-	interval := s.cfg.EvalInterval
-	if interval <= 0 {
-		interval = 10 * time.Second
-	}
-	log.Info().Dur("interval", interval).Msg("leader loop running")
+// serverDispatcher is the CommandDispatcher adapter that lets the controller
+// reach into Server's NATS request/reply path without taking a *Server
+// reference (would create a circular dependency between controller logic
+// and Server lifecycle).
+type serverDispatcher struct{ s *Server }
 
-	tick := func() {
-		for _, svc := range s.services {
-			if err := ctx.Err(); err != nil {
-				return
-			}
-			if err := s.scheduler.ReconcileService(ctx, svc); err != nil {
-				log.Error().Err(err).Str("service", svc.Name).Msg("reconcile failed")
-			}
-			s.dispatchPending(ctx, svc)
-			s.pruneFailed(svc)
-			if svc.Type == ServiceTypeService {
-				s.autoscaleOnce(ctx, svc)
-			}
-		}
-	}
-
-	tick() // run immediately so the first reconcile doesn't wait `interval`
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			log.Info().Msg("leader loop stopped")
-			return
-		case <-ticker.C:
-			tick()
-		}
-	}
-}
-
-// dispatchPending sends start commands for any allocation in `pending`. The
-// transition pending → starting is committed BEFORE the request goes out,
-// not after the ACK. Otherwise the agent — which writes Status=running,PID=X
-// as soon as the process is up — would be clobbered by the leader's later
-// "starting" write (no CAS in NATS KV, last write wins).
-func (s *Server) dispatchPending(ctx context.Context, svc *ServiceDefinition) {
-	allocs, err := s.clusterState.ListAllocations(svc.Name)
-	if err != nil {
-		log.Error().Err(err).Str("service", svc.Name).Msg("list allocations failed")
-		return
-	}
-	for _, alloc := range allocs {
-		if alloc.Status != "pending" {
-			continue
-		}
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		alloc.Status = "starting"
-		alloc.UpdatedAt = time.Now()
-		if err := s.clusterState.UpdateAllocation(alloc); err != nil {
-			log.Error().Err(err).Str("service", svc.Name).Msg("update allocation failed")
-			continue
-		}
-		log.Info().
-			Str("service", svc.Name).
-			Str("node_id", alloc.NodeID).
-			Msg("sending start command to agent")
-		if err := s.sendStartCommand(alloc.NodeID, svc); err != nil {
-			log.Error().Err(err).
-				Str("service", svc.Name).
-				Str("node_id", alloc.NodeID).
-				Msg("start command failed")
-			// Leave alloc in "starting"; next tick won't redispatch (filter is
-			// "pending"-only). If the process never comes up the agent's
-			// failure path will flip it back to "pending" or "failed".
-		}
-	}
-}
-
-// pruneFailed removes allocations the agent gave up on (ConsecutiveFailures
-// past the threshold). The next reconcile cycle will place a fresh allocation
-// on a different node.
-func (s *Server) pruneFailed(svc *ServiceDefinition) {
-	allocs, err := s.clusterState.ListAllocations(svc.Name)
-	if err != nil {
-		return
-	}
-	for _, alloc := range allocs {
-		if alloc.Status != "failed" || alloc.ConsecutiveFailures < 3 {
-			continue
-		}
-		log.Warn().
-			Str("service", svc.Name).
-			Str("node_id", alloc.NodeID).
-			Int("restarts", alloc.Restarts).
-			Msg("pruning permanently failed allocation")
-		if err := s.clusterState.DeleteAllocation(svc.Name, alloc.NodeID); err != nil {
-			log.Error().Err(err).Msg("delete failed allocation")
-		}
-	}
-}
-
-func (s *Server) autoscaleOnce(ctx context.Context, svc *ServiceDefinition) {
-	d, err := s.autoscaler.EvaluateService(ctx, svc)
-	if err != nil {
-		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler evaluate failed")
-		return
-	}
-	if d.Action == "none" {
-		return
-	}
-	log.Info().
-		Str("service", svc.Name).
-		Str("action", d.Action).
-		Str("reason", d.Reason).
-		Msg("autoscaling decision")
-	if err := s.autoscaler.ExecuteScalingDecision(ctx, d, svc); err != nil {
-		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler execute failed")
-	}
+func (d serverDispatcher) SendStartCommand(nodeID string, svc *ServiceDefinition) error {
+	return d.s.sendStartCommand(nodeID, svc)
 }
 
 // sendStartCommand sends a start command to an agent
@@ -512,7 +421,10 @@ func parseUpdateDuration(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
-// subscribeGatewayMetrics subscribes to Gateway RPS reports from agents
+// subscribeGatewayMetrics ingests per-gateway valid-RPS reports into
+// node.<id>.rps. Cluster aggregation is computed periodically by
+// MetricsStore.collectMetrics (sum of the most-recent per-node sample) —
+// doing it here would corrupt cluster.rps with one point per gateway report.
 func (s *Server) subscribeGatewayMetrics() {
 	subject := "asty.v1.metrics.gateway.*"
 	_, err := s.nc.Subscribe(subject, func(msg *nats.Msg) {
@@ -523,12 +435,7 @@ func (s *Server) subscribeGatewayMetrics() {
 		if err := json.Unmarshal(msg.Data, &report); err != nil {
 			return
 		}
-
 		s.metricsStore.Add("node."+report.NodeID+".rps", report.ValidRPS)
-
-		// Aggregate cluster RPS (sum across all nodes would be done at query time;
-		// for simplicity store each report — UI will sum recent points)
-		s.metricsStore.Add("cluster.rps", report.ValidRPS)
 	})
 	if err != nil {
 		log.Error().Err(err).Str("subject", subject).Msg("failed to subscribe to gateway metrics")

@@ -3,6 +3,7 @@ package asty
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -282,7 +283,9 @@ func (cs *ClusterState) ListAllocations(serviceName string) ([]*ServiceAllocatio
 	return allocs, nil
 }
 
-// UpdateAllocation updates an allocation status
+// UpdateAllocation overwrites the allocation record. Last write wins — use
+// MutateAllocation when concurrent writers (leader and agent) might be
+// touching the same record, which is essentially everywhere.
 func (cs *ClusterState) UpdateAllocation(alloc *ServiceAllocation) error {
 	alloc.UpdatedAt = time.Now()
 
@@ -299,6 +302,66 @@ func (cs *ClusterState) UpdateAllocation(alloc *ServiceAllocation) error {
 	return nil
 }
 
+// allocationMutateMaxRetries caps optimistic-concurrency retries before
+// giving up on a mutation. Eight attempts gives ~10ms of competing writers
+// time to settle in practice.
+const allocationMutateMaxRetries = 8
+
+// MutateAllocation atomically applies fn to the allocation for (serviceName,
+// nodeID) and commits the result. Uses NATS KV's revision-based Update so
+// concurrent writers cannot overwrite each other's changes — on conflict the
+// newest stored value is re-read and fn re-applied. fn must be idempotent.
+//
+// fn returns the revised alloc (or modifies in place; the same pointer is
+// committed) and a boolean indicating whether the change is still relevant.
+// Returning false skips the write and reports nil — useful for predicate-
+// guarded mutations like "transition only if status == pending".
+func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*ServiceAllocation) bool) error {
+	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
+	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {
+		entry, err := cs.bucket.Get(key)
+		if err != nil {
+			if err == nats.ErrKeyNotFound {
+				return fmt.Errorf("allocation not found: %s/%s", serviceName, nodeID)
+			}
+			return fmt.Errorf("failed to get allocation: %w", err)
+		}
+
+		var alloc ServiceAllocation
+		if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+			return fmt.Errorf("failed to unmarshal allocation: %w", err)
+		}
+		if !fn(&alloc) {
+			return nil
+		}
+		alloc.UpdatedAt = time.Now()
+
+		data, err := json.Marshal(&alloc)
+		if err != nil {
+			return fmt.Errorf("failed to marshal allocation: %w", err)
+		}
+		if _, err := cs.bucket.Update(key, data, entry.Revision()); err != nil {
+			if isCASConflict(err) {
+				continue
+			}
+			return fmt.Errorf("failed to update allocation: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("update conflict after %d retries: %s/%s", allocationMutateMaxRetries, serviceName, nodeID)
+}
+
+// isCASConflict reports whether err came from a revision mismatch on a CAS
+// Update. NATS encodes this as JSErrCodeStreamWrongLastSequence — the same
+// code used for "key already exists" on Create.
+func isCASConflict(err error) bool {
+	var apiErr *nats.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.ErrorCode == nats.JSErrCodeStreamWrongLastSequence
+	}
+	return false
+}
+
 // DeleteAllocation removes an allocation
 func (cs *ClusterState) DeleteAllocation(serviceName, nodeID string) error {
 	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
@@ -309,9 +372,12 @@ func (cs *ClusterState) DeleteAllocation(serviceName, nodeID string) error {
 	return nil
 }
 
-// WatchNodes watches for node changes
+// WatchNodes invokes onChange once per node KV update or delete (delete is
+// signalled with a non-nil NodeInfo whose Status is "deleted"). Replays the
+// existing key-set on subscribe — callers should treat that as a baseline
+// reconciliation cue, not as live updates. Blocks until ctx is cancelled.
 func (cs *ClusterState) WatchNodes(ctx context.Context, onChange func(*NodeInfo)) error {
-	watcher, err := cs.bucket.Watch("node.*")
+	watcher, err := cs.bucket.Watch("node.*", nats.Context(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to create watcher: %w", err)
 	}
@@ -321,25 +387,164 @@ func (cs *ClusterState) WatchNodes(ctx context.Context, onChange func(*NodeInfo)
 		select {
 		case <-ctx.Done():
 			return nil
-		case entry := <-watcher.Updates():
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
 			if entry == nil {
+				// End-of-history marker from JetStream; not an error.
 				continue
 			}
-
-			// Handle delete
-			if entry.Operation() == nats.KeyValueDelete {
-				log.Info().Str("key", entry.Key()).Msg("node deleted")
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				// Surface deletes too — caller decides whether to reconcile.
+				onChange(&NodeInfo{ID: keySuffix(entry.Key(), "node."), Status: "deleted"})
 				continue
 			}
-
-			// Parse node info
 			var node NodeInfo
 			if err := json.Unmarshal(entry.Value(), &node); err != nil {
 				log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal node")
 				continue
 			}
-
 			onChange(&node)
 		}
 	}
+}
+
+// WatchAllocations invokes onChange once per allocation KV update or delete.
+// Mirrors WatchNodes: deletes arrive as ServiceAllocation with Status=deleted
+// so callers can react without a separate channel. Blocks until ctx is done.
+func (cs *ClusterState) WatchAllocations(ctx context.Context, onChange func(*ServiceAllocation)) error {
+	watcher, err := cs.bucket.Watch("alloc.*", nats.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to create alloc watcher: %w", err)
+	}
+	defer watcher.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
+			if entry == nil {
+				continue
+			}
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				svc, node := splitAllocKey(entry.Key())
+				onChange(&ServiceAllocation{ServiceName: svc, NodeID: node, Status: "deleted"})
+				continue
+			}
+			var alloc ServiceAllocation
+			if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+				log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal allocation")
+				continue
+			}
+			onChange(&alloc)
+		}
+	}
+}
+
+// keySuffix returns the part of key after prefix, or empty if key doesn't
+// start with prefix.
+func keySuffix(key, prefix string) string {
+	if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+		return ""
+	}
+	return key[len(prefix):]
+}
+
+// splitAllocKey decomposes "alloc.<service>.<node>" into (service, node).
+// Service names may not contain dots; node IDs may.
+func splitAllocKey(key string) (string, string) {
+	const prefix = "alloc."
+	rest := keySuffix(key, prefix)
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == '.' {
+			return rest[:i], rest[i+1:]
+		}
+	}
+	return rest, ""
+}
+
+// ServiceCooldown captures the timestamps of the most recent autoscaler
+// actions for a service. Stored in KV so leader flips don't reset the
+// cooldown window — a freshly elected leader sees the same history.
+type ServiceCooldown struct {
+	LastScaleUp   time.Time `json:"last_scale_up,omitempty"`
+	LastScaleDown time.Time `json:"last_scale_down,omitempty"`
+}
+
+const serviceCooldownKey = "service.%s.cooldown"
+
+// GetServiceCooldown returns the cooldown record for a service, or a zero
+// value (and no error) when none has been recorded yet.
+func (cs *ClusterState) GetServiceCooldown(service string) (ServiceCooldown, error) {
+	key := fmt.Sprintf(serviceCooldownKey, service)
+	entry, err := cs.bucket.Get(key)
+	if err != nil {
+		if err == nats.ErrKeyNotFound {
+			return ServiceCooldown{}, nil
+		}
+		return ServiceCooldown{}, fmt.Errorf("failed to get cooldown: %w", err)
+	}
+	var c ServiceCooldown
+	if err := json.Unmarshal(entry.Value(), &c); err != nil {
+		return ServiceCooldown{}, fmt.Errorf("failed to unmarshal cooldown: %w", err)
+	}
+	return c, nil
+}
+
+// MarkScaleUp persists "scale-up just happened" so the cooldown window
+// covers leader transitions. Read-modify-write under CAS to coexist with
+// MarkScaleDown writes from a different code path.
+func (cs *ClusterState) MarkScaleUp(service string, when time.Time) error {
+	return cs.mutateCooldown(service, func(c *ServiceCooldown) { c.LastScaleUp = when })
+}
+
+// MarkScaleDown is the symmetric write for shrink events.
+func (cs *ClusterState) MarkScaleDown(service string, when time.Time) error {
+	return cs.mutateCooldown(service, func(c *ServiceCooldown) { c.LastScaleDown = when })
+}
+
+func (cs *ClusterState) mutateCooldown(service string, fn func(*ServiceCooldown)) error {
+	key := fmt.Sprintf(serviceCooldownKey, service)
+	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {
+		entry, err := cs.bucket.Get(key)
+		var (
+			rev uint64
+			c   ServiceCooldown
+		)
+		if err == nil {
+			rev = entry.Revision()
+			if err := json.Unmarshal(entry.Value(), &c); err != nil {
+				return fmt.Errorf("unmarshal cooldown: %w", err)
+			}
+		} else if err != nats.ErrKeyNotFound {
+			return fmt.Errorf("get cooldown: %w", err)
+		}
+		fn(&c)
+		data, err := json.Marshal(&c)
+		if err != nil {
+			return fmt.Errorf("marshal cooldown: %w", err)
+		}
+		if rev == 0 {
+			if _, err := cs.bucket.Create(key, data); err != nil {
+				if isCASConflict(err) {
+					continue
+				}
+				return fmt.Errorf("create cooldown: %w", err)
+			}
+		} else {
+			if _, err := cs.bucket.Update(key, data, rev); err != nil {
+				if isCASConflict(err) {
+					continue
+				}
+				return fmt.Errorf("update cooldown: %w", err)
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("cooldown update conflict after %d retries", allocationMutateMaxRetries)
 }

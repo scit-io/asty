@@ -39,6 +39,12 @@ type Config struct {
 	EvalInterval         time.Duration
 	DCLatency            string
 
+	// Controller — number of parallel workers that pull keys from the
+	// reconciliation workqueue. Per-service work is independent (CAS-guarded
+	// state, disjoint alloc keys), so >1 worker scales linearly until
+	// metric/network IO saturates.
+	ControllerWorkers int
+
 	// Node resources
 	ReservedCPU    int
 	ReservedMemory int
@@ -84,6 +90,7 @@ func LoadConfig() (*Config, error) {
 		CooldownDown:        getEnvDuration("A_COOLDOWN_DOWN", 5*time.Minute),
 		EvalInterval:        getEnvDuration("A_EVAL_INTERVAL", 10*time.Second),
 		DCLatency:           getEnv("A_DC_LATENCY", ""),
+		ControllerWorkers:   getEnvInt("A_CONTROLLER_WORKERS", 2),
 
 		// Node resources
 		ReservedCPU:    getEnvInt("A_RESERVED_CPU", 100),

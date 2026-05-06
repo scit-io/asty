@@ -12,17 +12,15 @@ import (
 // Autoscaler grows services above MinCopies in response to traffic and
 // resource pressure, and shrinks back to MinCopies when load subsides. It
 // never moves services around — only adds and removes copies.
+//
+// Cooldown lives in cluster state KV (ServiceCooldown), not in memory: a
+// leader flip in the middle of a scale event used to drop the cooldown
+// window and let the new leader scale again immediately.
 type Autoscaler struct {
 	clusterState *ClusterState
 	scheduler    *Scheduler
 	cfg          *Config
 	metricsStore *MetricsStore
-
-	// Per-service cooldown tracking. Both maps are kept so the UI can show
-	// "last scale-up" and "last scale-down" independently; inCooldown reads
-	// the max of the two so an up event still gates a down (and vice versa).
-	lastScaleUp   map[string]time.Time
-	lastScaleDown map[string]time.Time
 }
 
 // ScalingDecision describes what the autoscaler intends to do next.
@@ -36,28 +34,31 @@ type ScalingDecision struct {
 
 func NewAutoscaler(clusterState *ClusterState, scheduler *Scheduler, cfg *Config, metricsStore *MetricsStore) *Autoscaler {
 	return &Autoscaler{
-		clusterState:  clusterState,
-		scheduler:     scheduler,
-		cfg:           cfg,
-		metricsStore:  metricsStore,
-		lastScaleUp:   make(map[string]time.Time),
-		lastScaleDown: make(map[string]time.Time),
+		clusterState: clusterState,
+		scheduler:    scheduler,
+		cfg:          cfg,
+		metricsStore: metricsStore,
 	}
 }
 
+// lastActionAt returns the more recent of LastScaleUp/LastScaleDown for the
+// service, or (zero, false) when nothing has been recorded.
 func (as *Autoscaler) lastActionAt(service string) (time.Time, bool) {
-	up, hasUp := as.lastScaleUp[service]
-	down, hasDown := as.lastScaleDown[service]
+	c, err := as.clusterState.GetServiceCooldown(service)
+	if err != nil {
+		log.Warn().Err(err).Str("service", service).Msg("failed to read cooldown; treating as not in cooldown")
+		return time.Time{}, false
+	}
 	switch {
-	case hasUp && hasDown:
-		if up.After(down) {
-			return up, true
+	case !c.LastScaleUp.IsZero() && !c.LastScaleDown.IsZero():
+		if c.LastScaleUp.After(c.LastScaleDown) {
+			return c.LastScaleUp, true
 		}
-		return down, true
-	case hasUp:
-		return up, true
-	case hasDown:
-		return down, true
+		return c.LastScaleDown, true
+	case !c.LastScaleUp.IsZero():
+		return c.LastScaleUp, true
+	case !c.LastScaleDown.IsZero():
+		return c.LastScaleDown, true
 	}
 	return time.Time{}, false
 }
@@ -106,10 +107,13 @@ func (as *Autoscaler) inCooldown(service string) bool {
 	return time.Since(last) < cd
 }
 
-// evaluateScaleUp checks for traffic on a node without a service copy, or
-// resource overload on existing copies. Both signals depend on metrics that
-// are wired through MetricsStore — until both arms return concrete data the
-// autoscaler stays a no-op for growth.
+// evaluateScaleUp checks for two scale-up signals: gateway traffic on a node
+// that doesn't yet host the service (locality-aware placement), or any live
+// copy of the service exceeding CPU/Memory targets. The traffic case is
+// self-targeted — we want a copy ON the busy node. The overload case is the
+// opposite: we add a copy on a *free* node so the existing hot copy can
+// shed load. Targeting the overloaded node itself would just overwrite its
+// allocation (KV key is alloc.<svc>.<node>).
 func (as *Autoscaler) evaluateScaleUp(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *ScalingDecision {
 	if node := as.findNodeWithTrafficWithoutService(nodes, live); node != nil {
 		return &ScalingDecision{
@@ -119,31 +123,78 @@ func (as *Autoscaler) evaluateScaleUp(svc *ServiceDefinition, live []*ServiceAll
 			TargetNode:  node.ID,
 		}
 	}
-	if node := as.findOverloadedNode(svc, live, nodes); node != nil {
+	if hot := as.findOverloadedAlloc(live); hot != nil {
+		target := as.pickFreeNode(svc, live, nodes)
+		if target == nil {
+			return nil
+		}
 		return &ScalingDecision{
 			ServiceName: svc.Name,
 			Action:      "scale_up",
-			Reason:      fmt.Sprintf("process on %s exceeded resource targets", node.ID),
-			TargetNode:  node.ID,
+			Reason:      fmt.Sprintf("copy on %s exceeded targets (cpu=%d%%, mem=%dMB) — adding copy on %s", hot.NodeID, hot.CPUUsage, hot.MemoryUsage, target.ID),
+			TargetNode:  target.ID,
 		}
 	}
 	return nil
 }
 
 // evaluateScaleDown shrinks toward MinCopies when copies are clearly
-// underused. Until process metrics are aggregated reliably this returns nil —
-// previously a placeholder loop set allBelowTarget=true unconditionally and
-// removed copies as soon as currentCount > MinCopies, which caused random
-// churn. Hard-disable until the metrics path is real.
+// underused. Uses CAS-safe alloc.CPUUsage / MemoryUsage that the agent
+// publishes from MetricsCollector. Threshold is half the scale-up target
+// (e.g. TargetCPU=75 → shrink at <=37) to give hysteresis — without the
+// gap, a service oscillates between scale-up and scale-down on each tick.
+//
+// Only running allocations count: a starting/pending copy has no metrics
+// yet and shouldn't sway the average.
 func (as *Autoscaler) evaluateScaleDown(svc *ServiceDefinition, live []*ServiceAllocation) *ScalingDecision {
-	target := as.scheduler.targetCopies(len(live))
-	if len(live) <= target {
+	floor := as.cfg.MinCopies
+	if floor < 1 {
+		floor = 1
+	}
+	if len(live) <= floor {
 		return nil
 	}
-	// TODO: aggregate per-allocation CPU/Memory from MetricsStore and only
-	// shrink when the average across `live` is below TargetCPU/TargetMemory.
-	// Until that's wired, refuse to shrink rather than guessing.
-	return nil
+
+	running := make([]*ServiceAllocation, 0, len(live))
+	for _, a := range live {
+		if a.Status == "running" && a.PID > 0 {
+			running = append(running, a)
+		}
+	}
+	// Wait until enough copies are stable-running to give meaningful averages
+	// — a starting copy reports no metrics and would skew the floor check low.
+	if len(running) <= floor {
+		return nil
+	}
+
+	var cpuSum, memSum int
+	for _, a := range running {
+		cpuSum += a.CPUUsage
+		memSum += a.MemoryUsage
+	}
+	avgCPU := cpuSum / len(running)
+	avgMem := memSum / len(running)
+
+	cpuFloor := as.cfg.TargetCPU / 2
+	memFloor := as.cfg.TargetMemory / 2
+	if avgCPU > cpuFloor || avgMem > memFloor {
+		return nil
+	}
+
+	nodes, err := as.clusterState.ListNodes()
+	if err != nil {
+		return nil
+	}
+	victim := as.pickAllocationToRemove(running, nodes)
+	if victim == nil {
+		return nil
+	}
+	return &ScalingDecision{
+		ServiceName: svc.Name,
+		Action:      "scale_down",
+		Reason:      fmt.Sprintf("avg cpu=%d%% mem=%dMB across %d copies, floor cpu=%d mem=%d", avgCPU, avgMem, len(running), cpuFloor, memFloor),
+		RemoveNode:  victim.NodeID,
+	}
 }
 
 // findNodeWithTrafficWithoutService returns a node that handles authenticated
@@ -184,25 +235,34 @@ func (as *Autoscaler) hasGatewayTraffic(node *NodeInfo) bool {
 	return sum/float64(len(points)) >= float64(as.cfg.TrafficRPSThreshold)
 }
 
-// findOverloadedNode returns the node hosting the hottest live copy when
-// CPU or memory is above the configured target. Falls back to nil when no
-// metrics are available yet — caller treats nil as "no decision".
-func (as *Autoscaler) findOverloadedNode(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *NodeInfo {
-	if as.metricsStore == nil {
-		return nil
-	}
-	byID := make(map[string]*NodeInfo, len(nodes))
-	for _, n := range nodes {
-		byID[n.ID] = n
-	}
+// findOverloadedAlloc returns the first live allocation whose CPU or memory
+// usage exceeds the configured targets. Returns nil when no metrics are
+// available yet — caller treats nil as "no decision". Only running copies
+// with a real PID count: a starting copy reports nothing.
+func (as *Autoscaler) findOverloadedAlloc(live []*ServiceAllocation) *ServiceAllocation {
 	for _, alloc := range live {
+		if alloc.Status != "running" || alloc.PID == 0 {
+			continue
+		}
 		if alloc.CPUUsage > as.cfg.TargetCPU || alloc.MemoryUsage > as.cfg.TargetMemory {
-			if n, ok := byID[alloc.NodeID]; ok {
-				return n
-			}
+			return alloc
 		}
 	}
 	return nil
+}
+
+// pickFreeNode returns a healthy node that doesn't yet host this service and
+// has free resources. Delegates to the scheduler so geo-spread and the same
+// stable tiebreak rules used during baseline reconcile are honored.
+func (as *Autoscaler) pickFreeNode(svc *ServiceDefinition, live []*ServiceAllocation, nodes []*NodeInfo) *NodeInfo {
+	healthy := as.scheduler.filterHealthyNodes(nodes)
+	occupied := nodeIDsOf(live)
+	dcCounts := datacenterCountsByOccupied(healthy, occupied)
+	picks := as.scheduler.pickCandidates(svc, healthy, occupied, dcCounts, 1)
+	if len(picks) == 0 {
+		return nil
+	}
+	return picks[0]
 }
 
 // ExecuteScalingDecision applies a decision returned by EvaluateService.
@@ -234,7 +294,9 @@ func (as *Autoscaler) executeScaleUp(d *ScalingDecision, svc *ServiceDefinition)
 	if err := as.clusterState.CreateAllocation(alloc); err != nil {
 		return fmt.Errorf("failed to create allocation: %w", err)
 	}
-	as.lastScaleUp[svc.Name] = time.Now()
+	if err := as.clusterState.MarkScaleUp(svc.Name, time.Now()); err != nil {
+		log.Warn().Err(err).Str("service", svc.Name).Msg("failed to persist scale-up cooldown")
+	}
 
 	allocs, _ := as.clusterState.ListAllocations(svc.Name)
 	count := len(liveAllocations(allocs))
@@ -262,7 +324,9 @@ func (as *Autoscaler) executeScaleDown(d *ScalingDecision, svc *ServiceDefinitio
 	if err := as.clusterState.DeleteAllocation(svc.Name, d.RemoveNode); err != nil {
 		return fmt.Errorf("failed to delete allocation: %w", err)
 	}
-	as.lastScaleDown[svc.Name] = time.Now()
+	if err := as.clusterState.MarkScaleDown(svc.Name, time.Now()); err != nil {
+		log.Warn().Err(err).Str("service", svc.Name).Msg("failed to persist scale-down cooldown")
+	}
 
 	allocs, _ := as.clusterState.ListAllocations(svc.Name)
 	count := len(liveAllocations(allocs))

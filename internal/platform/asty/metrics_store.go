@@ -188,6 +188,25 @@ func (ms *MetricsStore) collectMetrics(state *ClusterState, services []*ServiceD
 	ms.Add("cluster.cpu", clusterCPU)
 	ms.Add("cluster.memory", clusterMem)
 
+	// cluster.rps is the sum of the most recent per-node valid_rps reported
+	// by gateways. Each gateway publishes to node.<id>.rps independently;
+	// summing them at collection time produces a coherent cluster-total time
+	// series instead of the previous behavior, which appended every per-node
+	// report into cluster.rps and produced an unrelated value cloud.
+	cutoff := time.Now().Add(-30 * time.Second)
+	var clusterRPS float64
+	for _, node := range nodes {
+		if node.Status != "ready" {
+			continue
+		}
+		points := ms.Get("node."+node.ID+".rps", cutoff)
+		if len(points) == 0 {
+			continue
+		}
+		clusterRPS += points[len(points)-1].Value
+	}
+	ms.Add("cluster.rps", clusterRPS)
+
 	// Per-service aggregate metrics
 	for _, svc := range services {
 		allocs, err := state.ListAllocations(svc.Name)
