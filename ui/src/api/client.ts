@@ -13,6 +13,7 @@ import type {
   AutoscalerEventsResponse,
   ServiceDetailResponse,
   DeploymentsResponse,
+  DrainStatus,
 } from '../types'
 
 const API_BASE = '/api/v1'
@@ -83,8 +84,14 @@ export const api = {
     fetchJSON<DeploymentsResponse>(`${API_BASE}/deployments`),
 
   // Actions
-  drainNode: (id: string) =>
-    fetchJSON(`${API_BASE}/nodes/${id}/drain`, { method: 'POST' }),
+  drainNode: (id: string, enable: boolean) =>
+    fetchJSON(`${API_BASE}/nodes/${id}/drain`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enable }),
+    }),
+  getDrainStatus: (id: string) =>
+    fetchJSON<DrainStatus>(`${API_BASE}/nodes/${id}/drain/status`),
   pauseNode: (id: string) =>
     fetchJSON(`${API_BASE}/nodes/${id}/pause`, { method: 'POST' }),
   restartAllocation: (id: string) =>

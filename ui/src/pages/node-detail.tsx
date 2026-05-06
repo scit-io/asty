@@ -5,8 +5,19 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -22,8 +33,9 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { MetricsChart } from '@/components/metrics-chart'
-import { Cpu, MemoryStick, Clock, Activity, PlayCircle, StopCircle, Settings } from 'lucide-react'
+import { Cpu, MemoryStick, Clock, Activity, HelpCircle, Wrench, FileText } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
+import { toast } from 'sonner'
 import type { MetricPoint } from '@/types'
 
 interface Node {
@@ -66,6 +78,7 @@ export default function NodeDetail() {
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [showDrainDialog, setShowDrainDialog] = useState(false)
   const [logLines, setLogLines] = useState<string[]>([])
   const isStreamingRef = useRef(false)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -105,7 +118,6 @@ export default function NodeDetail() {
           setCpuMetrics(metricsRes.cpu || [])
           setMemoryMetrics(metricsRes.memory || [])
 
-          // Build service resources map
           const svcMap = new Map<string, ServiceResources>()
           servicesRes.services.forEach(svc => {
             svcMap.set(svc.Name, { CPU: svc.Resources.CPU, Memory: svc.Resources.Memory })
@@ -123,6 +135,34 @@ export default function NodeDetail() {
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [nodeId])
 
+  // SSE for drain progress
+  useEffect(() => {
+    if (!nodeId) return
+    const eventSource = new EventSource('/api/v1/stream')
+    eventSource.addEventListener('drain_progress', (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.node_id !== nodeId) return
+
+        if (data.status === 'draining') {
+          toast.loading('Draining node...', {
+            id: `drain-${nodeId}`,
+            description: `Migrated ${data.migrated}/${data.total_allocations} allocations`,
+          })
+          setNode(prev => prev ? { ...prev, status: 'draining' } : prev)
+        } else if (data.status === 'drained') {
+          toast.success('Node drained', {
+            id: `drain-${nodeId}`,
+            description: 'All allocations migrated successfully',
+          })
+          setNode(prev => prev ? { ...prev, status: 'drained' } : prev)
+        }
+      } catch { /* ignore */ }
+    })
+    return () => eventSource.close()
+  }, [nodeId])
+
+  // Log streaming
   useEffect(() => {
     if (!nodeId) return
     let retryCount = 0
@@ -138,9 +178,7 @@ export default function NodeDetail() {
           const data = JSON.parse(event.data)
           setLogLines((prev) => [...prev, data.line])
           setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-        } catch {
-          // ignore
-        }
+        } catch { /* ignore */ }
       }
 
       eventSource.onerror = () => {
@@ -167,6 +205,42 @@ export default function NodeDetail() {
       eventSourceRef.current = null
     }
   }, [nodeId])
+
+  const handleDrainToggle = async (enable: boolean) => {
+    if (!nodeId) return
+    try {
+      const result = await api.drainNode(nodeId, enable) as { status: string; total_allocations?: number }
+      if (enable) {
+        setNode(prev => prev ? { ...prev, status: 'draining' } : prev)
+        toast.loading('Draining node...', {
+          id: `drain-${nodeId}`,
+          description: `Migrating ${result.total_allocations || 0} allocations`,
+        })
+      } else {
+        setNode(prev => prev ? { ...prev, status: 'ready' } : prev)
+        toast.dismiss(`drain-${nodeId}`)
+        toast.success('Node resumed', { description: 'Node is ready for allocations' })
+      }
+    } catch (err) {
+      toast.error('Drain failed', {
+        id: `drain-${nodeId}`,
+        description: err instanceof Error ? err.message : 'Unknown error',
+      })
+    }
+  }
+
+  const handleSwitchChange = (checked: boolean) => {
+    if (checked) {
+      setShowDrainDialog(true)
+    } else {
+      handleDrainToggle(false)
+    }
+  }
+
+  const confirmDrain = () => {
+    setShowDrainDialog(false)
+    handleDrainToggle(true)
+  }
 
   if (error) {
     return (
@@ -200,7 +274,7 @@ export default function NodeDetail() {
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink to="/">Dashboard</BreadcrumbLink>
+              <BreadcrumbLink to="/">Cluster</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>
@@ -218,6 +292,10 @@ export default function NodeDetail() {
                     className={`w-3 h-3 rounded-full ${
                       node.status === 'ready'
                         ? 'bg-green-500'
+                        : node.status === 'draining'
+                        ? 'bg-yellow-500 animate-pulse'
+                        : node.status === 'drained'
+                        ? 'bg-yellow-500'
                         : node.status === 'down'
                         ? 'bg-red-500'
                         : 'bg-gray-400'
@@ -297,26 +375,32 @@ export default function NodeDetail() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Actions</CardTitle>
-            <Settings className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Maintenance</CardTitle>
+            <Wrench className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => api.pauseNode(nodeId!)}
-            >
-              <StopCircle className="h-4 w-4 mr-2" />
-              Pause
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => api.drainNode(nodeId!)}
-            >
-              <PlayCircle className="h-4 w-4 mr-2" />
-              Drain
-            </Button>
+          <CardContent>
+            <div className="flex items-center gap-2 mt-1 mb-2">
+              <div className="text-sm font-bold">Drain</div>
+              <Switch
+                checked={node.status === 'draining' || node.status === 'drained'}
+                onCheckedChange={handleSwitchChange}
+                disabled={node.status === 'draining'}
+              />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Gracefully migrate all services to other nodes.</p>
+                    <p>Node remains in cluster but won't receive new allocations.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {node.status === 'ready' ? 'Normal' : node.status === 'draining' ? 'Migrating...' : node.status === 'drained' ? 'Drained' : node.status}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -329,8 +413,14 @@ export default function NodeDetail() {
 
       <Tabs defaultValue="services" className="space-y-4">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="services">Services</TabsTrigger>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="services">
+            <Activity className="h-4 w-4 mr-2" />
+            Node Services
+          </TabsTrigger>
+          <TabsTrigger value="logs">
+            <FileText className="h-4 w-4 mr-2" />
+            Node Logs
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="services" className="space-y-4">
@@ -454,6 +544,25 @@ export default function NodeDetail() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <AlertDialog open={showDrainDialog} onOpenChange={setShowDrainDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Drain Node</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will gracefully migrate all running services from{' '}
+              <code className="font-mono">{node.id}</code> to other nodes.
+              The node will remain in the cluster but won't receive new allocations.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDrain}>
+              Start Drain
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }

@@ -1,7 +1,8 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Header } from '@/components/header'
-import Dashboard from '@/pages/dashboard'
+import { Toaster } from 'sonner'
+import Cluster from '@/pages/cluster'
 import NodeDetail from '@/pages/node-detail'
 import ServiceDetail from '@/pages/service-detail'
 import Services from '@/pages/services'
@@ -15,7 +16,7 @@ export default function App() {
         <div className="min-h-screen bg-gradient-to-t from-muted to-muted/30">
           <Header />
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Cluster />} />
             <Route path="/nodes/:nodeId" element={<NodeDetail />} />
             <Route path="/nodes/:nodeId/alloc/:allocId" element={<ServiceDetail />} />
             <Route path="/services" element={<Services />} />
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/deploy" element={<Deploy />} />
           </Routes>
         </div>
+        <Toaster position="top-right" />
       </BrowserRouter>
     </ThemeProvider>
   )

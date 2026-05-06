@@ -169,3 +169,13 @@ export interface DeploymentsResponse {
   deployments: DeploymentRecord[]
   count: number
 }
+
+export interface DrainStatus {
+  node_id: string
+  status: string // draining, drained, ready, error
+  total_allocations: number
+  migrated: number
+  remaining: number
+  current_allocation: string
+  errors: string[]
+}

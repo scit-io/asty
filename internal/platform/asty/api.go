@@ -382,23 +382,28 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		nodeID = path
 	}
 
-	// Handle actions (POST only)
+	// Handle actions
 	if action != "" {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
 		switch action {
 		case "drain":
-			// TODO: implement actual drain logic
-			api.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"node_id": nodeID,
-				"action":  "drain",
-				"message": "drain initiated (not yet fully implemented)",
-			})
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			api.handleNodeDrain(w, r, nodeID)
+			return
+		case "drain/status":
+			if r.Method != http.MethodGet {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			api.handleNodeDrainStatus(w, r, nodeID)
 			return
 		case "pause":
+			if r.Method != http.MethodPost {
+				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
 			// TODO: implement actual pause logic
 			api.writeJSON(w, http.StatusOK, map[string]interface{}{
 				"node_id": nodeID,
@@ -895,6 +900,18 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "event: status\ndata: %s\n\n", status)
 	flusher.Flush()
 
+	// Subscribe to drain progress events via NATS
+	drainCh := make(chan []byte, 16)
+	drainSub, err := api.server.nc.Subscribe("asty.v1.drain.progress", func(msg *nats.Msg) {
+		select {
+		case drainCh <- msg.Data:
+		default:
+		}
+	})
+	if err == nil {
+		defer drainSub.Unsubscribe()
+	}
+
 	// Keep connection open and send updates every 5 seconds
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -904,6 +921,9 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
+		case data := <-drainCh:
+			fmt.Fprintf(w, "event: drain_progress\ndata: %s\n\n", data)
+			flusher.Flush()
 		case <-ticker.C:
 			nodes, _ := api.server.clusterState.ListNodes()
 			healthyNodes := 0
@@ -1324,5 +1344,67 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 	<-r.Context().Done()
 
 	log.Info().Msg("cluster log stream closed")
+}
+
+// handleNodeDrain handles POST /api/v1/nodes/:id/drain
+// Request body: {"enable": true} to start drain, {"enable": false} to resume
+func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
+	var req struct {
+		Enable bool `json:"enable"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		// Default to enable=true if no body
+		req.Enable = true
+	}
+
+	if !req.Enable {
+		if err := api.server.drainManager.Resume(nodeID); err != nil {
+			api.writeError(w, http.StatusBadRequest, "resume failed", err)
+			return
+		}
+		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+			"node_id": nodeID,
+			"status":  "ready",
+			"message": "drain cancelled, node resumed",
+		})
+		return
+	}
+
+	status, err := api.server.drainManager.Start(nodeID)
+	if err != nil {
+		code := http.StatusBadRequest
+		if status != nil {
+			// Already draining — return current status
+			api.writeJSON(w, http.StatusOK, status)
+			return
+		}
+		api.writeError(w, code, "drain failed", err)
+		return
+	}
+
+	api.writeJSON(w, http.StatusOK, status)
+}
+
+// handleNodeDrainStatus handles GET /api/v1/nodes/:id/drain/status
+func (api *API) handleNodeDrainStatus(w http.ResponseWriter, _ *http.Request, nodeID string) {
+	status := api.server.drainManager.GetStatus(nodeID)
+	if status == nil {
+		// Check if node is drained but operation already completed
+		node, err := api.server.clusterState.GetNode(nodeID)
+		if err != nil {
+			api.writeError(w, http.StatusNotFound, "node not found", err)
+			return
+		}
+		api.writeJSON(w, http.StatusOK, &DrainStatus{
+			NodeID:           nodeID,
+			Status:           node.Status,
+			TotalAllocations: 0,
+			Migrated:         0,
+			Remaining:        0,
+			Errors:           []string{},
+		})
+		return
+	}
+	api.writeJSON(w, http.StatusOK, status)
 }
 

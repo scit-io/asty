@@ -143,7 +143,7 @@ export default function ServiceOverview() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-sm font-bold mt-1">{service.Health.Type || 'none'}</div>
+            <div className="text-2xl font-bold">{service.Health.Type || 'none'}</div>
             {service.Health.Path && (
               <p className="text-xs text-muted-foreground font-mono">{service.Health.Path}</p>
             )}

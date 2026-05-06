@@ -29,6 +29,7 @@ type Server struct {
 	services       []*ServiceDefinition
 	api            *API
 	metricsStore   *MetricsStore
+	drainManager   *DrainManager
 
 	// Leadership-scoped goroutines (scheduler/autoscaler) run under leaderCtx,
 	// which is cancelled on loss of leadership. mu guards swaps when leadership
@@ -117,6 +118,9 @@ func (s *Server) Start(ctx context.Context) error {
 		log.Error().Err(err).Msg("failed to load service definitions")
 	}
 	s.services = services
+
+	// Initialize drain manager
+	s.drainManager = NewDrainManager(s)
 
 	// Start metrics collection (every 10s)
 	s.metricsStore.StartCollection(clusterState, s.services, 10*time.Second)

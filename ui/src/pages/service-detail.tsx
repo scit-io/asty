@@ -199,7 +199,7 @@ export default function ServiceDetail() {
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbLink to="/">Dashboard</BreadcrumbLink>
+              <BreadcrumbLink to="/">Cluster</BreadcrumbLink>
             </BreadcrumbItem>
             <BreadcrumbSeparator />
             <BreadcrumbItem>

@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MetricsChart } from '@/components/metrics-chart'
-import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw } from 'lucide-react'
+import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw, Heart } from 'lucide-react'
 import type { MetricPoint, ClusterStatus } from '@/types'
 
 interface Node {
@@ -23,7 +23,7 @@ interface Node {
   allocations_planned: number
 }
 
-export default function Dashboard() {
+export default function Cluster() {
   const navigate = useNavigate()
   const [nodes, setNodes] = useState<Node[]>([])
   const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
@@ -167,7 +167,7 @@ export default function Dashboard() {
               <Shield className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-sm font-bold font-mono">
+              <div className="text-sm font-bold font-mono mt-1 mb-2">
                 {clusterStatus.cluster.leader || 'none'}
               </div>
               <p className="text-xs text-muted-foreground font-mono">
@@ -179,7 +179,7 @@ export default function Dashboard() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Cluster Health</CardTitle>
-              <Activity className="h-4 w-4 text-muted-foreground" />
+              <Heart className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
@@ -268,6 +268,8 @@ export default function Dashboard() {
                               ? 'success'
                               : node.status === 'down'
                               ? 'destructive'
+                              : node.status === 'draining' || node.status === 'drained'
+                              ? 'warning'
                               : 'secondary'
                           }
                         >
@@ -312,7 +314,7 @@ export default function Dashboard() {
         <TabsContent value="logs" className="space-y-4">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>Asty Cluster Logs</CardTitle>
+              <CardTitle>Cluster Logs</CardTitle>
               <div className="flex items-center gap-2">
                 {isStreamingRef.current && (
                   <Badge variant="default" className="animate-pulse">
