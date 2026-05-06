@@ -1,76 +1,13 @@
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
-import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { Package, Activity } from 'lucide-react'
-import type { ServiceDefinition, AutoscalerServiceStatus, Allocation } from '@/types'
-
-interface ServiceUsage {
-  avgCpuPercent: number
-  avgMemoryPercent: number
-  avgCpuMHz: number
-  avgMemoryMB: number
-}
+import { useClusterStore } from '@/store/cluster'
 
 export default function Services() {
   const navigate = useNavigate()
-  const [services, setServices] = useState<ServiceDefinition[]>([])
-  const [autoscalerStatus, setAutoscalerStatus] = useState<Record<string, AutoscalerServiceStatus>>({})
-  const [serviceUsage, setServiceUsage] = useState<Record<string, ServiceUsage>>({})
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let cancelled = false
-
-    const fetchData = async () => {
-      try {
-        const [svcRes, asRes] = await Promise.all([
-          api.getServices(),
-          api.getAutoscalerStatus().catch(() => ({ services: {} })),
-        ])
-        if (cancelled) return
-        setServices(svcRes.services || [])
-        setAutoscalerStatus(asRes.services || {})
-
-        // Fetch allocations for each service to calculate usage
-        const usageMap: Record<string, ServiceUsage> = {}
-        await Promise.all(
-          (svcRes.services || []).map(async (svc) => {
-            try {
-              const detailRes = await api.getService(svc.Name)
-              const allocations: Allocation[] = detailRes.allocations || []
-              const running = allocations.filter(a => a.status === 'running')
-
-              if (running.length > 0) {
-                const totalCpu = running.reduce((sum, a) => sum + a.cpu_usage, 0)
-                const totalMem = running.reduce((sum, a) => sum + a.memory_usage, 0)
-                const avgCpu = totalCpu / running.length
-                const avgMem = totalMem / running.length
-
-                usageMap[svc.Name] = {
-                  avgCpuPercent: Math.round(avgCpu),
-                  avgMemoryPercent: Math.round((avgMem / svc.Resources.Memory) * 100),
-                  avgCpuMHz: Math.round((avgCpu / 100) * svc.Resources.CPU),
-                  avgMemoryMB: Math.round(avgMem),
-                }
-              }
-            } catch {
-              // skip on error
-            }
-          })
-        )
-        if (!cancelled) setServiceUsage(usageMap)
-      } catch {
-        // keep current state
-      }
-      if (!cancelled) timer = setTimeout(fetchData, 5000)
-    }
-
-    fetchData()
-    return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [])
+  const services = useClusterStore((s) => s.services)
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -99,7 +36,7 @@ export default function Services() {
               </TableHeader>
               <TableBody>
                 {services.map((svc) => {
-                  const as = autoscalerStatus[svc.Name]
+                  const hasUsage = svc.current_copies !== undefined && svc.current_copies > 0
                   return (
                     <TableRow
                       key={svc.Name}
@@ -117,15 +54,13 @@ export default function Services() {
                           {svc.Type}
                         </Badge>
                       </TableCell>
+                      <TableCell>{svc.current_copies ?? '-'}</TableCell>
                       <TableCell>
-                        {as ? as.current_copies : '-'}
-                      </TableCell>
-                      <TableCell>
-                        {serviceUsage[svc.Name] ? (
+                        {hasUsage ? (
                           <>
-                            <div>{serviceUsage[svc.Name].avgCpuPercent}%</div>
+                            <div>{Math.round(svc.avg_cpu_percent ?? 0)}%</div>
                             <div className="text-xs text-muted-foreground">
-                              {serviceUsage[svc.Name].avgCpuMHz} / {svc.Resources.CPU} MHz
+                              {Math.round(svc.avg_cpu_mhz ?? 0)} / {svc.Resources.CPU} MHz
                             </div>
                           </>
                         ) : (
@@ -135,11 +70,11 @@ export default function Services() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {serviceUsage[svc.Name] ? (
+                        {hasUsage ? (
                           <>
-                            <div>{serviceUsage[svc.Name].avgMemoryPercent}%</div>
+                            <div>{Math.round(svc.avg_memory_percent ?? 0)}%</div>
                             <div className="text-xs text-muted-foreground">
-                              {serviceUsage[svc.Name].avgMemoryMB} / {svc.Resources.Memory} MB
+                              {Math.round(svc.avg_memory_mb ?? 0)} / {svc.Resources.Memory} MB
                             </div>
                           </>
                         ) : (
@@ -154,13 +89,13 @@ export default function Services() {
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        {svc.Type === 'service' && as ? (
+                        {svc.Type === 'service' && svc.min_copies !== undefined ? (
                           <div className="flex items-center gap-2 justify-end">
-                            {(as.cooldown_up_active || as.cooldown_down_active) && (
+                            {(svc.cooldown_up_active || svc.cooldown_down_active) && (
                               <Badge variant="secondary">cooldown</Badge>
                             )}
                             <span className="text-sm text-muted-foreground">
-                              min {as.min_copies}
+                              min {svc.min_copies}
                             </span>
                           </div>
                         ) : (

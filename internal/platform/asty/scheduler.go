@@ -241,6 +241,36 @@ func (s *Scheduler) hasResources(node *NodeInfo, required Resources) bool {
 	return cpuFree >= required.CPU && memFree >= int64(required.Memory)
 }
 
+// SelectNearestForReplacement picks the healthy node nearest to sourceNodeID
+// that has free resources for svc and isn't already hosting it. The intended
+// caller is the drain manager: when a node is being drained, freed allocations
+// should land on the closest free node — not get spread across the cluster by
+// the global geo-balance heuristic.
+//
+// Returns nil if no suitable node exists; caller should fall back to whatever
+// the scheduler picks on the next reconcile.
+func (s *Scheduler) SelectNearestForReplacement(sourceNodeID string, svc *ServiceDefinition) *NodeInfo {
+	source, err := s.clusterState.GetNode(sourceNodeID)
+	if err != nil {
+		return nil
+	}
+	nodes, err := s.clusterState.ListNodes()
+	if err != nil {
+		return nil
+	}
+	allocs, err := s.clusterState.ListAllocations(svc.Name)
+	if err != nil {
+		return nil
+	}
+
+	// Exclude source and any node already hosting a live copy.
+	used := nodeIDsOf(liveAllocations(allocs))
+	used[sourceNodeID] = true
+
+	healthy := s.filterHealthyNodes(nodes)
+	return s.SelectNodeForTrafficBasedPlacement(datacenterOf(source), healthy, svc.Resources, used)
+}
+
 // SelectNodeForTrafficBasedPlacement picks a node closest to sourceDatacenter
 // that has free resources and is not already in usedNodes. Used by the
 // autoscaler to place an extra copy near hot traffic.

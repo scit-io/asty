@@ -73,8 +73,14 @@ func NewLeaderElection(nc *nats.Conn, nodeID string, nodeIP string) (*LeaderElec
 	}, nil
 }
 
-// CampaignForLeader attempts to become the leader
+// CampaignForLeader attempts to become the leader. Immediately tries to claim
+// on entry so a fresh single-node cluster has a leader within a NATS round-trip
+// instead of after the first 5s tick.
 func (le *LeaderElection) CampaignForLeader(ctx context.Context) error {
+	if err := le.tryBecomeLeader(); err != nil {
+		log.Debug().Err(err).Msg("initial leader claim failed")
+	}
+
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -238,9 +244,16 @@ func (le *LeaderElection) GetLeader() (LeaderInfo, error) {
 	return info, nil
 }
 
-// WaitForLeader waits until a leader is elected
+// WaitForLeader waits until a leader is elected. Polls aggressively (200ms)
+// because in a single-node cluster CampaignForLeader has already claimed the
+// key before we get here — there's no need to sleep a full second between
+// checks just to discover what we already know.
 func (le *LeaderElection) WaitForLeader(ctx context.Context) (LeaderInfo, error) {
-	ticker := time.NewTicker(1 * time.Second)
+	if leader, err := le.GetLeader(); err == nil {
+		return leader, nil
+	}
+
+	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {

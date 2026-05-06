@@ -2,7 +2,7 @@ export interface Node {
   id: string
   datacenter: string
   ip: string
-  status: 'ready' | 'down' | 'initializing'
+  status: 'ready' | 'down' | 'initializing' | 'draining' | 'drained'
   cpu_total: number
   cpu_available: number
   memory_total: number
@@ -77,6 +77,22 @@ export interface ServiceDefinition {
     Interval: string
     Timeout: string
   }
+
+  // Runtime fields populated by streamHub in the global SSE 'services' event.
+  // Optional because /api/v1/services REST endpoint returns the bare definition.
+  current_copies?: number
+  avg_cpu_percent?: number
+  avg_memory_percent?: number
+  avg_cpu_mhz?: number
+  avg_memory_mb?: number
+  min_copies?: number
+  target_cpu?: number
+  target_memory?: number
+  traffic_threshold?: number
+  cooldown_up_active?: boolean
+  cooldown_down_active?: boolean
+  last_action?: string
+  last_action_at?: number
 }
 
 export interface NodesResponse {

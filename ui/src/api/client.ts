@@ -1,14 +1,6 @@
 import type {
-  ClusterStatus,
-  NodesResponse,
-  ServicesResponse,
-  NodeDetail,
-  AllocationsResponse,
   AllocationDetail,
   LogsResponse,
-  MetricsResponse,
-  ServiceMetricsResponse,
-  AllocationMetricsResponse,
   AutoscalerStatusResponse,
   AutoscalerEventsResponse,
   ServiceDetailResponse,
@@ -26,20 +18,11 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json()
 }
 
+// Realtime data (status, nodes, services, allocations, metrics) flows through
+// SSE — see /api/v1/stream*. REST endpoints below are reserved for mutations
+// and the few non-streaming reads that don't fit the SSE model.
 export const api = {
-  // Cluster
-  getStatus: () => fetchJSON<ClusterStatus>(`${API_BASE}/status`),
-
-  // Nodes
-  getNodes: () => fetchJSON<NodesResponse>(`${API_BASE}/nodes`),
-  getNode: (id: string) => fetchJSON<NodeDetail>(`${API_BASE}/nodes/${id}`),
-  getNodeAllocations: (id: string) =>
-    fetchJSON<AllocationsResponse>(`${API_BASE}/allocations?node_id=${id}`),
-  getNodeLogs: (id: string) =>
-    fetchJSON<LogsResponse>(`${API_BASE}/logs/node/${id}`),
-
-  // Services
-  getServices: () => fetchJSON<ServicesResponse>(`${API_BASE}/services`),
+  // Services (definition lookup; runtime data comes from SSE)
   getService: (name: string) =>
     fetchJSON<ServiceDetailResponse>(`${API_BASE}/services/${name}`),
   scaleService: (name: string, count: number) =>
@@ -49,23 +32,14 @@ export const api = {
       body: JSON.stringify({ count }),
     }),
 
-  // Allocations
+  // Allocations (definition lookup; live data comes from SSE)
   getAllocation: (id: string) =>
     fetchJSON<AllocationDetail>(`${API_BASE}/allocations/${id}`),
   getAllocationLogs: (id: string) =>
     fetchJSON<LogsResponse>(`${API_BASE}/logs/allocation/${id}`),
 
-  // Metrics
-  getClusterMetrics: (period?: string) =>
-    fetchJSON<MetricsResponse>(`${API_BASE}/metrics/cluster?period=${period || '1h'}`),
-  getNodeMetrics: (id: string, period?: string) =>
-    fetchJSON<MetricsResponse>(`${API_BASE}/metrics/nodes/${id}?period=${period || '1h'}`),
-  getServiceMetrics: (name: string, period?: string) =>
-    fetchJSON<ServiceMetricsResponse>(`${API_BASE}/metrics/services/${name}?period=${period || '1h'}`),
-  getAllocationMetrics: (id: string, period?: string) =>
-    fetchJSON<AllocationMetricsResponse>(`${API_BASE}/metrics/allocations/${id}?period=${period || '1h'}`),
-
-  // Autoscaler
+  // Autoscaler (events history is not part of SSE; status mirrors SSE but
+  // exposed for ad-hoc queries)
   getAutoscalerStatus: () =>
     fetchJSON<AutoscalerStatusResponse>(`${API_BASE}/autoscaler/status`),
   getAutoscalerEvents: (service?: string, limit?: number) =>
@@ -83,7 +57,7 @@ export const api = {
   getDeployments: () =>
     fetchJSON<DeploymentsResponse>(`${API_BASE}/deployments`),
 
-  // Actions
+  // Mutations
   drainNode: (id: string, enable: boolean) =>
     fetchJSON(`${API_BASE}/nodes/${id}/drain`, {
       method: 'POST',

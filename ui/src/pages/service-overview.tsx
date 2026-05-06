@@ -1,7 +1,8 @@
 import { useNavigate, useParams } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -16,66 +17,50 @@ import {
 import { MetricsChart } from '@/components/metrics-chart'
 import { Cpu, MemoryStick, Activity, Layers } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
-import type {
-  ServiceDefinition,
-  Allocation,
-  MetricPoint,
-  ScalingEvent,
-  AutoscalerServiceStatus,
-} from '@/types'
+import { useClusterStore } from '@/store/cluster'
+import type { ScalingEvent } from '@/types'
 
 export default function ServiceOverview() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
-  const [service, setService] = useState<ServiceDefinition | null>(null)
-  const [allocations, setAllocations] = useState<Allocation[]>([])
-  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
-  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
-  const [allocCountMetrics, setAllocCountMetrics] = useState<MetricPoint[]>([])
+  const { serviceCache, subscribeService, services } = useClusterStore()
+  const cached = name ? serviceCache[name] : undefined
+  const service = cached?.service || null
+  const allocations = cached?.allocations || []
+  const cpuMetrics = cached?.cpuMetrics || []
+  const memoryMetrics = cached?.memoryMetrics || []
+  const allocCountMetrics = cached?.allocCountMetrics || []
   const [events, setEvents] = useState<ScalingEvent[]>([])
-  const [autoscalerStatus, setAutoscalerStatus] = useState<AutoscalerServiceStatus | null>(null)
 
+  // Autoscaler status is part of the global services SSE event (runtime fields).
+  const autoscalerStatus = useMemo(() => {
+    if (!name) return null
+    return services.find((s) => s.Name === name) || null
+  }, [name, services])
+
+  // Subscribe to service detail SSE (definition + allocations + metrics)
+  useEffect(() => {
+    if (!name) return
+    return subscribeService(name)
+  }, [name, subscribeService])
+
+  // Scaling events history is the only piece not in SSE — light polling.
   useEffect(() => {
     if (!name) return
     let timer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
 
-    const fetchData = async () => {
+    const poll = async () => {
       try {
-        const [svcRes, metricsRes, eventsRes, asRes] = await Promise.all([
-          api.getService(name),
-          api.getServiceMetrics(name),
-          api.getAutoscalerEvents(name, 50),
-          api.getAutoscalerStatus(),
-        ])
-        if (cancelled) return
-        setService(svcRes.service)
-        setAllocations(svcRes.allocations || [])
-        setCpuMetrics(metricsRes.cpu || [])
-        setMemoryMetrics(metricsRes.memory || [])
-        setAllocCountMetrics(metricsRes.allocations_count || [])
-        setEvents(eventsRes.events || [])
-        setAutoscalerStatus(asRes.services?.[name] || null)
-      } catch {
-        // keep current state
-      }
-      if (!cancelled) timer = setTimeout(fetchData, 5000)
+        const eventsRes = await api.getAutoscalerEvents(name, 50)
+        if (!cancelled) setEvents(eventsRes.events || [])
+      } catch { /* keep current */ }
+      if (!cancelled) timer = setTimeout(poll, 15000)
     }
 
-    fetchData()
+    poll()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [name])
-
-  if (!service) {
-    return (
-      <div className="container mx-auto p-6">
-        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-          <Activity className="h-12 w-12 mb-4" />
-          <p>Loading service...</p>
-        </div>
-      </div>
-    )
-  }
 
   const runningCount = allocations.filter((a) => a.status === 'running').length
 
@@ -94,10 +79,19 @@ export default function ServiceOverview() {
           </BreadcrumbList>
         </Breadcrumb>
         <div className="flex items-center gap-3">
-          <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
-          <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>
-            {service.Type}
-          </Badge>
+          {service ? (
+            <>
+              <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
+              <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>
+                {service.Type}
+              </Badge>
+            </>
+          ) : (
+            <>
+              <Skeleton className="h-9 w-32" />
+              <Skeleton className="h-6 w-16" />
+            </>
+          )}
         </div>
       </div>
 
@@ -108,10 +102,19 @@ export default function ServiceOverview() {
             <Layers className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{runningCount}</div>
-            <p className="text-xs text-muted-foreground">
-              of {allocations.length} total
-            </p>
+            {service ? (
+              <>
+                <div className="text-2xl font-bold">{runningCount}</div>
+                <p className="text-xs text-muted-foreground">
+                  of {allocations.length} total
+                </p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-8 mb-2" />
+                <Skeleton className="h-3 w-20" />
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -121,8 +124,17 @@ export default function ServiceOverview() {
             <Cpu className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{service.Resources.CPU}</div>
-            <p className="text-xs text-muted-foreground">MHz per instance</p>
+            {service ? (
+              <>
+                <div className="text-2xl font-bold">{service.Resources.CPU}</div>
+                <p className="text-xs text-muted-foreground">MHz per instance</p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-16 mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -132,8 +144,17 @@ export default function ServiceOverview() {
             <MemoryStick className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{service.Resources.Memory}</div>
-            <p className="text-xs text-muted-foreground">MB per instance</p>
+            {service ? (
+              <>
+                <div className="text-2xl font-bold">{service.Resources.Memory}</div>
+                <p className="text-xs text-muted-foreground">MB per instance</p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-16 mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -143,9 +164,18 @@ export default function ServiceOverview() {
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{service.Health.Type || 'none'}</div>
-            {service.Health.Path && (
-              <p className="text-xs text-muted-foreground font-mono">{service.Health.Path}</p>
+            {service ? (
+              <>
+                <div className="text-2xl font-bold">{service.Health.Type || 'none'}</div>
+                {service.Health.Path && (
+                  <p className="text-xs text-muted-foreground font-mono">{service.Health.Path}</p>
+                )}
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-16 mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </>
             )}
           </CardContent>
         </Card>
@@ -231,7 +261,7 @@ export default function ServiceOverview() {
                           )}
                         </TableCell>
                         <TableCell>
-                          <div>{Math.round((alloc.memory_usage / service.Resources.Memory) * 100)}%</div>
+                          <div>{service ? Math.round((alloc.memory_usage / service.Resources.Memory) * 100) : '?'}%</div>
                           {service && (
                             <div className="text-xs text-muted-foreground">
                               {alloc.memory_usage} / {service.Resources.Memory} MB

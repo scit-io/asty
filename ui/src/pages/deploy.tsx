@@ -6,10 +6,11 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Rocket, Package } from 'lucide-react'
-import type { ServiceDefinition, DeploymentRecord } from '@/types'
+import { useClusterStore } from '@/store/cluster'
+import type { DeploymentRecord } from '@/types'
 
 export default function Deploy() {
-  const [services, setServices] = useState<ServiceDefinition[]>([])
+  const services = useClusterStore((s) => s.services)
   const [deployments, setDeployments] = useState<DeploymentRecord[]>([])
   const [selectedService, setSelectedService] = useState('')
   const [version, setVersion] = useState('')
@@ -22,16 +23,10 @@ export default function Deploy() {
 
     const fetchData = async () => {
       try {
-        const [svcRes, depRes] = await Promise.all([
-          api.getServices(),
-          api.getDeployments().catch(() => ({ deployments: [], count: 0 })),
-        ])
+        const depRes = await api.getDeployments().catch(() => ({ deployments: [], count: 0 }))
         if (cancelled) return
-        setServices(svcRes.services || [])
         setDeployments(depRes.deployments || [])
-      } catch {
-        // keep current state
-      }
+      } catch { /* keep current */ }
       if (!cancelled) timer = setTimeout(fetchData, 10000)
     }
 

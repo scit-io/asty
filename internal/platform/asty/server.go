@@ -30,6 +30,7 @@ type Server struct {
 	api            *API
 	metricsStore   *MetricsStore
 	drainManager   *DrainManager
+	streamHub      *streamHub
 
 	// Leadership-scoped goroutines (scheduler/autoscaler) run under leaderCtx,
 	// which is cancelled on loss of leadership. mu guards swaps when leadership
@@ -127,6 +128,10 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Subscribe to Gateway RPS metrics
 	s.subscribeGatewayMetrics()
+
+	// Single shared snapshot source for all SSE handlers — refreshes every 5s.
+	s.streamHub = newStreamHub(s, 5*time.Second)
+	go s.streamHub.Run(ctx)
 
 	// Initialize API server
 	s.api = NewAPI(s, s.cfg.UIAddr)

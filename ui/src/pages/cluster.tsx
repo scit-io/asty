@@ -1,91 +1,60 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
-import { api } from '@/api/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
 import { MetricsChart } from '@/components/metrics-chart'
+import { Button } from '@/components/ui/button'
 import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw, Heart } from 'lucide-react'
-import type { MetricPoint, ClusterStatus } from '@/types'
-
-interface Node {
-  id: string
-  ip: string
-  datacenter: string
-  status: string
-  cpu_total: number
-  cpu_available: number
-  memory_total: number
-  memory_available: number
-  allocations_running: number
-  allocations_planned: number
-}
+import { useClusterStore } from '@/store/cluster'
+import type { MetricPoint } from '@/types'
 
 export default function Cluster() {
   const navigate = useNavigate()
-  const [nodes, setNodes] = useState<Node[]>([])
-  const [clusterStatus, setClusterStatus] = useState<ClusterStatus | null>(null)
+  const { nodes, clusterStatus } = useClusterStore()
   const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
   const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
   const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
-  const isStreamingRef = useRef(false)
-  const eventSourceRef = useRef<EventSource | null>(null)
+  const [isStreaming, setIsStreaming] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
-  const statusStreamRef = useRef<EventSource | null>(null)
 
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
+    let retryCount = 0
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
+    let es: EventSource | null = null
 
-    const fetchData = async () => {
-      try {
-        const [nodesRes, statusRes, metricsRes] = await Promise.all([
-          api.getNodes(),
-          api.getStatus(),
-          api.getClusterMetrics('1h'),
-        ])
+    const open = () => {
+      if (cancelled) return
+      es = new EventSource('/api/v1/stream/metrics/cluster')
+
+      es.addEventListener('metrics', (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          setCpuMetrics(data.cpu || [])
+          setMemoryMetrics(data.memory || [])
+          setRpsMetrics(data.rps || [])
+        } catch { /* ignore */ }
+      })
+
+      es.onopen = () => { retryCount = 0 }
+      es.onerror = () => {
+        es?.close()
         if (cancelled) return
-        setNodes(nodesRes.nodes || [])
-        setClusterStatus(statusRes)
-        setCpuMetrics(metricsRes.cpu || [])
-        setMemoryMetrics(metricsRes.memory || [])
-        setRpsMetrics(metricsRes.rps || [])
-      } catch {
-        // keep current state
+        retryCount++
+        if (retryCount > 10) return
+        retryTimer = setTimeout(open, Math.min(3000 * Math.pow(2, retryCount - 1), 60000))
       }
-      if (!cancelled) timer = setTimeout(fetchData, 5000)
     }
 
-    fetchData()
-    return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [])
-
-  // SSE stream for real-time cluster status updates
-  useEffect(() => {
-    const eventSource = new EventSource('/api/v1/stream')
-
-    eventSource.addEventListener('status', (event) => {
-      try {
-        const data = JSON.parse(event.data)
-        if (data.cluster) {
-          setClusterStatus((prev) => prev ? { ...prev, cluster: data.cluster } : prev)
-        }
-      } catch {
-        // ignore parse errors
-      }
-    })
-
-    eventSource.onerror = () => {
-      eventSource.close()
-    }
-
-    statusStreamRef.current = eventSource
+    open()
     return () => {
-      eventSource.close()
-      statusStreamRef.current = null
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+      es?.close()
     }
   }, [])
 
@@ -93,10 +62,11 @@ export default function Cluster() {
     let retryCount = 0
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
+    let eventSource: EventSource | null = null
 
     const startStreaming = () => {
       if (cancelled) return
-      const eventSource = new EventSource('/api/v1/logs/cluster?follow=true&lines=100')
+      eventSource = new EventSource('/api/v1/logs/cluster?follow=true&lines=100')
 
       eventSource.onmessage = (event) => {
         try {
@@ -109,8 +79,8 @@ export default function Cluster() {
       }
 
       eventSource.onerror = () => {
-        eventSource.close()
-        isStreamingRef.current = false
+        eventSource?.close()
+        setIsStreaming(false)
         if (cancelled) return
         retryCount++
         retryTimer = setTimeout(startStreaming, Math.min(5000 * Math.pow(2, retryCount - 1), 60000))
@@ -118,80 +88,111 @@ export default function Cluster() {
 
       eventSource.onopen = () => {
         retryCount = 0
-        isStreamingRef.current = true
+        setIsStreaming(true)
       }
-
-      eventSourceRef.current = eventSource
     }
 
     startStreaming()
     return () => {
       cancelled = true
       if (retryTimer) clearTimeout(retryTimer)
-      eventSourceRef.current?.close()
-      eventSourceRef.current = null
+      eventSource?.close()
     }
   }, [])
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      {clusterStatus && (
-        <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Nodes</CardTitle>
-              <Server className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{clusterStatus.cluster.nodes_healthy}</div>
-              <p className="text-xs text-muted-foreground">
-                of {clusterStatus.cluster.nodes_total} total
-              </p>
-            </CardContent>
-          </Card>
+      <div className="grid gap-4 grid-cols-2 sm:grid-cols-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Nodes</CardTitle>
+            <Server className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {clusterStatus ? (
+              <>
+                <div className="text-2xl font-bold">{clusterStatus.cluster.nodes_healthy}</div>
+                <p className="text-xs text-muted-foreground">
+                  of {clusterStatus.cluster.nodes_total} total
+                </p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-8 mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Services</CardTitle>
-              <Activity className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{clusterStatus.services.loaded}</div>
-              <p className="text-xs text-muted-foreground">loaded</p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Services</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {clusterStatus ? (
+              <>
+                <div className="text-2xl font-bold">{clusterStatus.services.loaded}</div>
+                <p className="text-xs text-muted-foreground">loaded</p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-8 mb-2" />
+                <Skeleton className="h-3 w-16" />
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Leader</CardTitle>
-              <Shield className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm font-bold font-mono mt-1 mb-2">
-                {clusterStatus.cluster.leader || 'none'}
-              </div>
-              <p className="text-xs text-muted-foreground font-mono">
-                {clusterStatus.cluster.leader_ip || '-'}
-              </p>
-            </CardContent>
-          </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Leader</CardTitle>
+            <Shield className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {clusterStatus ? (
+              <>
+                <div className="text-sm font-bold font-mono mt-1 mb-2">
+                  {clusterStatus.cluster.leader || 'none'}
+                </div>
+                <p className="text-xs text-muted-foreground font-mono">
+                  {clusterStatus.cluster.leader_ip || '-'}
+                </p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-5 w-24 mt-1 mb-2" />
+                <Skeleton className="h-3 w-32" />
+              </>
+            )}
+          </CardContent>
+        </Card>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Cluster Health</CardTitle>
-              <Heart className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {clusterStatus.cluster.nodes_total > 0
-                  ? Math.round((clusterStatus.cluster.nodes_healthy / clusterStatus.cluster.nodes_total) * 100)
-                  : 0}%
-              </div>
-              <p className="text-xs text-muted-foreground">nodes healthy</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Cluster Health</CardTitle>
+            <Heart className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {clusterStatus ? (
+              <>
+                <div className="text-2xl font-bold">
+                  {clusterStatus.cluster.nodes_total > 0
+                    ? Math.round((clusterStatus.cluster.nodes_healthy / clusterStatus.cluster.nodes_total) * 100)
+                    : 0}%
+                </div>
+                <p className="text-xs text-muted-foreground">nodes healthy</p>
+              </>
+            ) : (
+              <>
+                <Skeleton className="h-8 w-12 mb-2" />
+                <Skeleton className="h-3 w-24" />
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <div className="grid gap-4 md:grid-cols-3">
         <MetricsChart title="Cluster CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
@@ -316,7 +317,7 @@ export default function Cluster() {
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle>Cluster Logs</CardTitle>
               <div className="flex items-center gap-2">
-                {isStreamingRef.current && (
+                {isStreaming && (
                   <Badge variant="default" className="animate-pulse">
                     Live
                   </Badge>
@@ -339,7 +340,7 @@ export default function Cluster() {
                   </>
                 ) : (
                   <div className="text-muted-foreground">
-                    {isStreamingRef.current ? 'Waiting for cluster logs...' : 'Connecting to cluster log stream...'}
+                    {isStreaming ? 'Waiting for cluster logs...' : 'Connecting to cluster log stream...'}
                   </div>
                 )}
               </div>

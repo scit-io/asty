@@ -1,7 +1,9 @@
+import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { ThemeProvider } from '@/components/theme-provider'
 import { Header } from '@/components/header'
 import { Toaster } from 'sonner'
+import { useClusterStore } from '@/store/cluster'
 import Cluster from '@/pages/cluster'
 import NodeDetail from '@/pages/node-detail'
 import ServiceDetail from '@/pages/service-detail'
@@ -10,6 +12,12 @@ import ServiceOverview from '@/pages/service-overview'
 import Deploy from '@/pages/deploy'
 
 export default function App() {
+  const initSSE = useClusterStore((s) => s.initSSE)
+
+  useEffect(() => {
+    return initSSE()
+  }, [initSSE])
+
   return (
     <ThemeProvider defaultTheme="system" storageKey="astiui-theme">
       <BrowserRouter>

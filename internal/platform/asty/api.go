@@ -43,11 +43,11 @@ func (api *API) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/deployments", api.handleDeployments)
 	mux.HandleFunc("/api/v1/status", api.handleStatus)
 	mux.HandleFunc("/api/v1/events", api.handleEvents)
+	mux.HandleFunc("/api/v1/stream/node/", api.handleStreamNode)
+	mux.HandleFunc("/api/v1/stream/service/", api.handleStreamService)
+	mux.HandleFunc("/api/v1/stream/allocation/", api.handleStreamAllocation)
+	mux.HandleFunc("/api/v1/stream/metrics/cluster", api.handleStreamMetricsCluster)
 	mux.HandleFunc("/api/v1/stream", api.handleStream)
-	mux.HandleFunc("/api/v1/metrics/cluster", api.handleMetricsCluster)
-	mux.HandleFunc("/api/v1/metrics/nodes/", api.handleMetricsNode)
-	mux.HandleFunc("/api/v1/metrics/services/", api.handleMetricsService)
-	mux.HandleFunc("/api/v1/metrics/allocations/", api.handleMetricsAllocation)
 	mux.HandleFunc("/api/v1/autoscaler/events", api.handleAutoscalerEvents)
 	mux.HandleFunc("/api/v1/autoscaler/status", api.handleAutoscalerStatus)
 	mux.HandleFunc("/api/v1/logs/cluster", api.handleLogsCluster)
@@ -99,23 +99,23 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"api":     "/api/v1",
 		"endpoints": map[string]string{
 			"status":             "/api/v1/status",
-			"nodes":             "/api/v1/nodes",
-			"services":          "/api/v1/services",
-			"allocations":       "/api/v1/allocations",
-			"deploy":            "/api/v1/deploy",
-			"deployments":       "/api/v1/deployments",
-			"metrics_cluster":   "/api/v1/metrics/cluster",
-			"metrics_node":      "/api/v1/metrics/nodes/:id",
-			"metrics_service":   "/api/v1/metrics/services/:name",
-			"metrics_alloc":     "/api/v1/metrics/allocations/:id",
-			"autoscaler_status": "/api/v1/autoscaler/status",
-			"autoscaler_events": "/api/v1/autoscaler/events",
-			"stream":            "/api/v1/stream",
-			"logs_cluster":      "/api/v1/logs/cluster",
-			"logs_node":         "/api/v1/logs/node/:id",
-			"logs_allocation":   "/api/v1/logs/allocation/:id",
-			"health":            "/health",
-			"metrics":           "/metrics",
+			"nodes":              "/api/v1/nodes",
+			"services":           "/api/v1/services",
+			"allocations":        "/api/v1/allocations",
+			"deploy":             "/api/v1/deploy",
+			"deployments":        "/api/v1/deployments",
+			"autoscaler_status":  "/api/v1/autoscaler/status",
+			"autoscaler_events":  "/api/v1/autoscaler/events",
+			"stream":             "/api/v1/stream",
+			"stream_node":        "/api/v1/stream/node/:id",
+			"stream_service":     "/api/v1/stream/service/:name",
+			"stream_allocation":  "/api/v1/stream/allocation/:id",
+			"stream_metrics":     "/api/v1/stream/metrics/cluster",
+			"logs_cluster":       "/api/v1/logs/cluster",
+			"logs_node":          "/api/v1/logs/node/:id",
+			"logs_allocation":    "/api/v1/logs/allocation/:id",
+			"health":             "/health",
+			"metrics":            "/metrics",
 		},
 		"docs": "https://github.com/yourorg/asty",
 	}
@@ -638,144 +638,6 @@ func (api *API) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMetricsCluster returns cluster-wide metrics
-func (api *API) handleMetricsCluster(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Parse period (default 1h)
-	period := r.URL.Query().Get("period")
-	duration := 1 * time.Hour
-	if period != "" {
-		if d, err := time.ParseDuration(period); err == nil {
-			duration = d
-		}
-	}
-
-	since := time.Now().Add(-duration)
-
-	cpu := api.server.metricsStore.Get("cluster.cpu", since)
-	memory := api.server.metricsStore.Get("cluster.memory", since)
-	rps := api.server.metricsStore.Get("cluster.rps", since)
-
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"cpu":    cpu,
-		"memory": memory,
-		"rps":    rps,
-		"period": duration.String(),
-	})
-}
-
-// handleMetricsNode returns per-node metrics
-func (api *API) handleMetricsNode(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Extract node ID from path
-	nodeID := r.URL.Path[len("/api/v1/metrics/nodes/"):]
-	if nodeID == "" {
-		api.writeError(w, http.StatusBadRequest, "node ID required", nil)
-		return
-	}
-
-	// Parse period (default 1h)
-	period := r.URL.Query().Get("period")
-	duration := 1 * time.Hour
-	if period != "" {
-		if d, err := time.ParseDuration(period); err == nil {
-			duration = d
-		}
-	}
-
-	since := time.Now().Add(-duration)
-
-	cpu := api.server.metricsStore.Get("node."+nodeID+".cpu", since)
-	memory := api.server.metricsStore.Get("node."+nodeID+".memory", since)
-	rps := api.server.metricsStore.Get("node."+nodeID+".rps", since)
-
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"node_id": nodeID,
-		"cpu":     cpu,
-		"memory":  memory,
-		"rps":     rps,
-		"period":  duration.String(),
-	})
-}
-
-// handleMetricsService returns per-service metrics
-func (api *API) handleMetricsService(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	serviceName := r.URL.Path[len("/api/v1/metrics/services/"):]
-	if serviceName == "" {
-		api.writeError(w, http.StatusBadRequest, "service name required", nil)
-		return
-	}
-
-	period := r.URL.Query().Get("period")
-	duration := 1 * time.Hour
-	if period != "" {
-		if d, err := time.ParseDuration(period); err == nil {
-			duration = d
-		}
-	}
-
-	since := time.Now().Add(-duration)
-
-	cpu := api.server.metricsStore.Get("service."+serviceName+".cpu", since)
-	memory := api.server.metricsStore.Get("service."+serviceName+".memory", since)
-	allocCount := api.server.metricsStore.Get("service."+serviceName+".alloc_count", since)
-
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"service":           serviceName,
-		"cpu":               cpu,
-		"memory":            memory,
-		"allocations_count": allocCount,
-		"period":            duration.String(),
-	})
-}
-
-// handleMetricsAllocation returns per-allocation metrics
-func (api *API) handleMetricsAllocation(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	allocID := r.URL.Path[len("/api/v1/metrics/allocations/"):]
-	if allocID == "" {
-		api.writeError(w, http.StatusBadRequest, "allocation ID required", nil)
-		return
-	}
-
-	period := r.URL.Query().Get("period")
-	duration := 1 * time.Hour
-	if period != "" {
-		if d, err := time.ParseDuration(period); err == nil {
-			duration = d
-		}
-	}
-
-	since := time.Now().Add(-duration)
-
-	cpu := api.server.metricsStore.Get("alloc."+allocID+".cpu", since)
-	memory := api.server.metricsStore.Get("alloc."+allocID+".memory", since)
-
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"allocation_id": allocID,
-		"cpu":           cpu,
-		"memory":        memory,
-		"period":        duration.String(),
-	})
-}
-
 // handleAutoscalerEvents returns autoscaler scaling events
 func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -857,14 +719,9 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleStream handles SSE streaming
-func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Set SSE headers
+// sseSetup writes SSE headers and returns a flusher. On unsupported writers it
+// sends an error response and returns nil.
+func sseSetup(w http.ResponseWriter) http.Flusher {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -873,86 +730,295 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return nil
+	}
+	return flusher
+}
+
+// sseEvent writes a single SSE event (event: name, data: json, blank line).
+func sseEvent(w http.ResponseWriter, event string, data []byte) {
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+}
+
+// handleStream handles the global SSE stream — cluster status, nodes, services
+// (with usage), and drain progress. Reads from streamHub.
+func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Send initial status event
-	initLeader, _ := api.server.leaderElection.GetLeader()
-	initNodes, _ := api.server.clusterState.ListNodes()
-	initLeaderNode := initLeader.ID
-	for _, node := range initNodes {
-		if node.IP == initLeader.IP {
-			initLeaderNode = node.ID
-			break
-		}
-	}
-	status, _ := json.Marshal(map[string]interface{}{
-		"cluster": map[string]interface{}{
-			"leader":        initLeaderNode,
-			"leader_ip":     initLeader.IP,
-			"is_leader":     api.server.leaderElection.IsLeader(),
-			"nodes_total":   len(initNodes),
-			"nodes_healthy": len(initNodes),
-		},
-		"timestamp": time.Now().Unix(),
-	})
-
-	fmt.Fprintf(w, "event: status\ndata: %s\n\n", status)
-	flusher.Flush()
-
-	// Subscribe to drain progress events via NATS
-	drainCh := make(chan []byte, 16)
-	drainSub, err := api.server.nc.Subscribe("asty.v1.drain.progress", func(msg *nats.Msg) {
-		select {
-		case drainCh <- msg.Data:
-		default:
-		}
-	})
-	if err == nil {
-		defer drainSub.Unsubscribe()
+	flusher := sseSetup(w)
+	if flusher == nil {
+		return
 	}
 
-	// Keep connection open and send updates every 5 seconds
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	hub := api.server.streamHub
+	snapshots, unsubSnap := hub.Subscribe()
+	defer unsubSnap()
+	drainCh, unsubDrain := hub.SubscribeDrain()
+	defer unsubDrain()
+
+	emit := func(snap *clusterSnapshot) {
+		sseEvent(w, "status", mustJSON(map[string]interface{}{
+			"cluster":   snap.Cluster,
+			"services":  map[string]interface{}{"loaded": len(snap.Services)},
+			"timestamp": snap.Timestamp,
+		}))
+		sseEvent(w, "nodes", mustJSON(map[string]interface{}{"nodes": snap.Nodes}))
+		sseEvent(w, "services", mustJSON(map[string]interface{}{"services": snap.Services}))
+		flusher.Flush()
+	}
+
+	// Keepalive ping: matters when proxies have idle timeouts (nginx default 60s).
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
 
 	ctx := r.Context()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case data := <-drainCh:
-			fmt.Fprintf(w, "event: drain_progress\ndata: %s\n\n", data)
+		case snap, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			emit(snap)
+		case data, ok := <-drainCh:
+			if !ok {
+				return
+			}
+			sseEvent(w, "drain_progress", data)
 			flusher.Flush()
-		case <-ticker.C:
-			nodes, _ := api.server.clusterState.ListNodes()
-			healthyNodes := 0
-			for _, node := range nodes {
-				if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
-					healthyNodes++
-				}
-			}
+		case <-ping.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
 
-			tickLeader, _ := api.server.leaderElection.GetLeader()
-			leaderNode := tickLeader.ID
-			for _, node := range nodes {
-				if node.IP == tickLeader.IP {
-					leaderNode = node.ID
-					break
-				}
-			}
-			statusData, _ := json.Marshal(map[string]interface{}{
-				"cluster": map[string]interface{}{
-					"leader":        leaderNode,
-					"leader_ip":     tickLeader.IP,
-					"is_leader":     api.server.leaderElection.IsLeader(),
-					"nodes_total":   len(nodes),
-					"nodes_healthy": healthyNodes,
-				},
-				"timestamp": time.Now().Unix(),
-			})
+// handleStreamNode streams allocations + metrics for a single node.
+func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
-			fmt.Fprintf(w, "event: status\ndata: %s\n\n", statusData)
+	nodeID := r.URL.Path[len("/api/v1/stream/node/"):]
+	if nodeID == "" {
+		http.Error(w, "node ID required", http.StatusBadRequest)
+		return
+	}
+
+	flusher := sseSetup(w)
+	if flusher == nil {
+		return
+	}
+
+	snapshots, unsub := api.server.streamHub.Subscribe()
+	defer unsub()
+
+	emit := func(snap *clusterSnapshot) {
+		allocs := snap.AllocsByNode[nodeID]
+		if allocs == nil {
+			allocs = []*ServiceAllocation{}
+		}
+		sseEvent(w, "allocations", mustJSON(map[string]interface{}{"allocations": allocs}))
+
+		since := time.Now().Add(-1 * time.Hour)
+		ms := api.server.metricsStore
+		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+			"cpu":    ms.Get("node."+nodeID+".cpu", since),
+			"memory": ms.Get("node."+nodeID+".memory", since),
+			"rps":    ms.Get("node."+nodeID+".rps", since),
+		}))
+		flusher.Flush()
+	}
+
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snap, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			emit(snap)
+		case <-ping.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// handleStreamService streams definition + allocations + metrics for a service.
+func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	serviceName := r.URL.Path[len("/api/v1/stream/service/"):]
+	if serviceName == "" {
+		http.Error(w, "service name required", http.StatusBadRequest)
+		return
+	}
+
+	flusher := sseSetup(w)
+	if flusher == nil {
+		return
+	}
+
+	snapshots, unsub := api.server.streamHub.Subscribe()
+	defer unsub()
+
+	emit := func(snap *clusterSnapshot) {
+		var svcDef *ServiceDefinition
+		for _, svc := range snap.Services {
+			if svc.Name == serviceName {
+				svcDef = svc.ServiceDefinition
+				break
+			}
+		}
+		allocs := snap.AllocsByService[serviceName]
+		if allocs == nil {
+			allocs = []*ServiceAllocation{}
+		}
+
+		sseEvent(w, "detail", mustJSON(map[string]interface{}{
+			"service":     svcDef,
+			"allocations": allocs,
+		}))
+
+		since := time.Now().Add(-1 * time.Hour)
+		ms := api.server.metricsStore
+		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+			"cpu":               ms.Get("service."+serviceName+".cpu", since),
+			"memory":            ms.Get("service."+serviceName+".memory", since),
+			"allocations_count": ms.Get("service."+serviceName+".alloc_count", since),
+		}))
+		flusher.Flush()
+	}
+
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snap, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			emit(snap)
+		case <-ping.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// handleStreamAllocation streams a single allocation's detail + metrics.
+func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	allocID := r.URL.Path[len("/api/v1/stream/allocation/"):]
+	if allocID == "" {
+		http.Error(w, "allocation ID required", http.StatusBadRequest)
+		return
+	}
+
+	flusher := sseSetup(w)
+	if flusher == nil {
+		return
+	}
+
+	snapshots, unsub := api.server.streamHub.Subscribe()
+	defer unsub()
+
+	emit := func(snap *clusterSnapshot) {
+		alloc := snap.AllocByID[allocID]
+		sseEvent(w, "detail", mustJSON(map[string]interface{}{"allocation": alloc}))
+
+		since := time.Now().Add(-1 * time.Hour)
+		ms := api.server.metricsStore
+		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+			"cpu":    ms.Get("alloc."+allocID+".cpu", since),
+			"memory": ms.Get("alloc."+allocID+".memory", since),
+		}))
+		flusher.Flush()
+	}
+
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case snap, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			emit(snap)
+		case <-ping.C:
+			fmt.Fprint(w, ": keepalive\n\n")
+			flusher.Flush()
+		}
+	}
+}
+
+// handleStreamMetricsCluster streams cluster-level metric time-series.
+func (api *API) handleStreamMetricsCluster(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	flusher := sseSetup(w)
+	if flusher == nil {
+		return
+	}
+
+	snapshots, unsub := api.server.streamHub.Subscribe()
+	defer unsub()
+
+	emit := func() {
+		since := time.Now().Add(-1 * time.Hour)
+		ms := api.server.metricsStore
+		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+			"cpu":    ms.Get("cluster.cpu", since),
+			"memory": ms.Get("cluster.memory", since),
+			"rps":    ms.Get("cluster.rps", since),
+		}))
+		flusher.Flush()
+	}
+
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			emit()
+		case <-ping.C:
+			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()
 		}
 	}
