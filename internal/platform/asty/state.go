@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -448,7 +449,7 @@ func (cs *ClusterState) WatchNodes(ctx context.Context, onChange func(*NodeInfo)
 // Mirrors WatchNodes: deletes arrive as ServiceAllocation with Status=deleted
 // so callers can react without a separate channel. Blocks until ctx is done.
 func (cs *ClusterState) WatchAllocations(ctx context.Context, onChange func(*ServiceAllocation)) error {
-	watcher, err := cs.bucket.Watch("alloc.*", nats.Context(ctx))
+	watcher, err := cs.bucket.Watch("alloc.>", nats.Context(ctx))
 	if err != nil {
 		return fmt.Errorf("failed to create alloc watcher: %w", err)
 	}
@@ -463,6 +464,82 @@ func (cs *ClusterState) WatchAllocations(ctx context.Context, onChange func(*Ser
 				return nil
 			}
 			if entry == nil {
+				continue
+			}
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				svc, node := splitAllocKey(entry.Key())
+				onChange(&ServiceAllocation{ServiceName: svc, NodeID: node, Status: "deleted"})
+				continue
+			}
+			var alloc ServiceAllocation
+			if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+				log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal allocation")
+				continue
+			}
+			onChange(&alloc)
+		}
+	}
+}
+
+// WatchNodesInit is like WatchNodes but also calls onReady once after the
+// initial key-history replay completes (NATS end-of-history nil marker).
+// Useful for callers building an in-memory index that need to know when the
+// index is fully seeded before processing live updates.
+func (cs *ClusterState) WatchNodesInit(ctx context.Context, onChange func(*NodeInfo), onReady func()) error {
+	watcher, err := cs.bucket.Watch("node.*", nats.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to create node watcher: %w", err)
+	}
+	defer watcher.Stop()
+
+	var readyOnce sync.Once
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
+			if entry == nil {
+				readyOnce.Do(onReady)
+				continue
+			}
+			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+				onChange(&NodeInfo{ID: keySuffix(entry.Key(), "node."), Status: "deleted"})
+				continue
+			}
+			var node NodeInfo
+			if err := json.Unmarshal(entry.Value(), &node); err != nil {
+				log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal node")
+				continue
+			}
+			onChange(&node)
+		}
+	}
+}
+
+// WatchAllocationsInit is like WatchAllocations but also calls onReady once
+// after the initial key-history replay. Uses alloc.> to correctly match keys
+// of the form alloc.<service>.<nodeID>.
+func (cs *ClusterState) WatchAllocationsInit(ctx context.Context, onChange func(*ServiceAllocation), onReady func()) error {
+	watcher, err := cs.bucket.Watch("alloc.>", nats.Context(ctx))
+	if err != nil {
+		return fmt.Errorf("failed to create alloc watcher: %w", err)
+	}
+	defer watcher.Stop()
+
+	var readyOnce sync.Once
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case entry, ok := <-watcher.Updates():
+			if !ok {
+				return nil
+			}
+			if entry == nil {
+				readyOnce.Do(onReady)
 				continue
 			}
 			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {

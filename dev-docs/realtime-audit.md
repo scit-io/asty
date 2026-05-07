@@ -208,9 +208,9 @@ Frontend: `appendMetrics()` helper в store, `MAX_CHART_POINTS = 1440`.
 
 ---
 
-### Приоритет 4 — Event-driven streamHub (масштаб 1000×1000)
+### Приоритет 4 — Event-driven streamHub (масштаб 1000×1000) ✅ Выполнено (2026-05-07)
 
-#### P4.1 JetStream Watch вместо KV polling
+#### P4.1 ✅ JetStream Watch вместо KV polling
 
 Текущий `buildSnapshot()` делает `ListAllocations(svc.Name)` для каждого сервиса — 1000 KV-читов на тик.
 
@@ -236,7 +236,7 @@ func (idx *allocIndex) onNodeUpdate(node *NodeInfo) { ... }
 func (idx *allocIndex) onAllocUpdate(alloc *ServiceAllocation) { ... }
 ```
 
-#### P4.2 Event-triggered hub refresh
+#### P4.2 ✅ Event-triggered hub refresh
 
 Вместо тиккера по 5 секунд — инициировать refresh при получении события от KV Watch.
 
@@ -335,10 +335,10 @@ NATS pub/sub (logs):
 - [x] **P3.1** Кольцевой `LogBuffer` — история логов (1000 строк, per-source)
 - [x] **P3.2** REST-эндпоинты логов возвращают историю из буфера + live через NATS
 
-### Производительность / масштаб (следующий этап)
+### Производительность / масштаб ✅ Выполнено (2026-05-07)
 
-- [ ] **P4.1** JetStream KV Watch → `allocIndex` (убрать KV polling в buildSnapshot)
-- [ ] **P4.2** Debounced event-triggered hub refresh
+- [x] **P4.1** JetStream KV Watch → `allocIndex` (убрать KV polling в buildSnapshot)
+- [x] **P4.2** Event-triggered hub refresh с coalescing notify channel
 - [ ] **P5** История кластерных событий (ClusterEvent ring buffer + SSE event)
 
 ---
@@ -347,10 +347,10 @@ NATS pub/sub (logs):
 
 | Метрика | До (баг) | После P1–P3 ✅ | После P4 |
 |---|---|---|---|
-| KV-читов/сек (фон) | ~300 | ~150 (только hub) | ~0 |
+| KV-читов/сек (фон) | ~300 | ~150 (только hub) | ~0 ✅ |
 | Размер SSE payload (node detail, /тик) | ~14 KB | ~0.1 KB (delta) | ~0.1 KB |
 | RAM (MetricsStore) | ~5 GB | ~0.4 GB | ~0.4 GB |
-| Задержка обновления UI | 10–60с* | 5с | <1с |
+| Задержка обновления UI | 10–60с* | 5с | <1с ✅ |
 
 *WriteTimeout рвал SSE через 10с, exponential backoff растягивал reconnect до 60с
 

@@ -176,11 +176,12 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 	// Start log streaming to NATS
 	go a.streamProcessLogs(svc.Name, proc)
 
-	// Register health check if configured
-	if svc.Health.Type == "http" {
-		// TODO: get dynamic port from environment variable like ${ASTY_HEALTH_ADDR}
-		// For now, skip health check registration
-		// a.healthChecker.Register(svc.Name, addr, svc.Health.Path, svc.Health.GetInterval(), svc.Health.GetTimeout())
+	// Register health check if configured and address is known.
+	if svc.Health.Type == "http" && svc.Health.Addr != "" {
+		if err := a.healthChecker.Register(svc.Name, svc.Health.Addr, svc.Health.Path,
+			svc.Health.GetInterval(), svc.Health.GetTimeout()); err != nil {
+			log.Warn().Err(err).Str("service", svc.Name).Msg("health check registration failed")
+		}
 	}
 
 	// Register metrics collection
@@ -606,9 +607,13 @@ func (a *Agent) publishProcessMetrics(ctx context.Context) {
 				}
 				cpu := int(metrics.CPUPercent)
 				mem := int(metrics.MemoryMB)
+				healthStatus := a.healthChecker.HealthStatusStr(serviceName)
 				err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
 					alloc.CPUUsage = cpu
 					alloc.MemoryUsage = mem
+					if healthStatus != "" {
+						alloc.HealthStatus = healthStatus
+					}
 					return true
 				})
 				if err != nil {

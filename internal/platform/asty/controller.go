@@ -38,6 +38,10 @@ type ServiceController struct {
 	// we drop it from the rate-limited retry path. Until then errors keep
 	// bouncing through AddRateLimited with exponential backoff.
 	failureLimit int
+
+	// onEvent is called after significant lifecycle events (scale, failure).
+	// May be nil — callers must nil-guard.
+	onEvent func(ClusterEvent)
 }
 
 // CommandDispatcher abstracts the agent RPC. Lets the controller live without
@@ -186,6 +190,15 @@ func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 			prev, had := seen[id]
 			seen[id] = a.Status
 			if !had || prev != a.Status {
+				// Skip only starting→pending: this is dispatchPending's own
+				// revert after a failed SendStartCommand. It already called
+				// AddRateLimited — enqueuing here bypasses that rate limit
+				// and creates a tight retry loop.
+				// NOTE: node reordering in the UI ("nodes jumping") is a separate
+				// frontend sorting issue unrelated to this filter — see realtime-plan.md Задача 4.
+				if prev == "starting" && a.Status == "pending" {
+					return
+				}
 				c.queue.Add(a.ServiceName)
 			}
 		})
@@ -365,6 +378,11 @@ func (c *ServiceController) pruneFailed(svc *ServiceDefinition) {
 			Msg("pruning permanently failed allocation")
 		if err := c.state.DeleteAllocation(svc.Name, alloc.NodeID); err != nil {
 			log.Error().Err(err).Msg("delete failed allocation")
+			continue
+		}
+		if c.onEvent != nil {
+			c.onEvent(newEvent("alloc_failed", svc.Name, alloc.NodeID,
+				fmt.Sprintf("restarts=%d", alloc.Restarts)))
 		}
 	}
 }
@@ -385,5 +403,13 @@ func (c *ServiceController) autoscaleOnce(ctx context.Context, svc *ServiceDefin
 		Msg("autoscaling decision")
 	if err := c.autoscaler.ExecuteScalingDecision(ctx, d, svc); err != nil {
 		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler execute failed")
+		return
+	}
+	if c.onEvent != nil {
+		target := d.TargetNode
+		if d.Action == "scale_down" {
+			target = d.RemoveNode
+		}
+		c.onEvent(newEvent(d.Action, svc.Name, target, d.Reason))
 	}
 }

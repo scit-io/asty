@@ -10,6 +10,71 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// allocIndex is an in-memory mirror of the KV node and allocation state.
+// Populated by KV Watch goroutines; reads are lock-free in the hot path via
+// snapshot(). All mutations hold the write lock.
+type allocIndex struct {
+	mu     sync.RWMutex
+	nodes  map[string]*NodeInfo          // nodeID → NodeInfo
+	allocs map[string]*ServiceAllocation // "svc/nodeID" → ServiceAllocation
+}
+
+func newAllocIndex() *allocIndex {
+	return &allocIndex{
+		nodes:  make(map[string]*NodeInfo),
+		allocs: make(map[string]*ServiceAllocation),
+	}
+}
+
+func (idx *allocIndex) onNode(n *NodeInfo) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	if n.Status == "deleted" {
+		delete(idx.nodes, n.ID)
+	} else {
+		clone := *n
+		idx.nodes[n.ID] = &clone
+	}
+}
+
+// hasNode returns true if nodeID is currently in the index.
+func (idx *allocIndex) hasNode(id string) bool {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	_, ok := idx.nodes[id]
+	return ok
+}
+
+func (idx *allocIndex) onAlloc(a *ServiceAllocation) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	k := a.ServiceName + "/" + a.NodeID
+	if a.Status == "deleted" {
+		delete(idx.allocs, k)
+	} else {
+		clone := *a
+		idx.allocs[k] = &clone
+	}
+}
+
+// snapshot returns a point-in-time copy of nodes and allocations; safe to use
+// outside the lock after the call returns.
+func (idx *allocIndex) snapshot() (nodes []*NodeInfo, allocs []*ServiceAllocation) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	nodes = make([]*NodeInfo, 0, len(idx.nodes))
+	for _, n := range idx.nodes {
+		nc := *n
+		nodes = append(nodes, &nc)
+	}
+	allocs = make([]*ServiceAllocation, 0, len(idx.allocs))
+	for _, a := range idx.allocs {
+		ac := *a
+		allocs = append(allocs, &ac)
+	}
+	return
+}
+
 // streamHub is the single source of truth for SSE handlers. One goroutine
 // refreshes a complete cluster snapshot on a fixed interval; SSE handlers
 // subscribe and read from the latest snapshot instead of independently
@@ -18,12 +83,10 @@ type streamHub struct {
 	server   *Server
 	interval time.Duration
 
+	idx *allocIndex // in-memory KV mirror; updated by Watch goroutines
+
 	mu       sync.RWMutex
 	snapshot *clusterSnapshot
-
-	// Per-allocation usage history → allocation metric time-series.
-	// Kept in the hub (not metricsStore) because hub already iterates
-	// allocations on every tick.
 
 	subsMu sync.Mutex
 	subs   map[int]chan *clusterSnapshot
@@ -33,6 +96,11 @@ type streamHub struct {
 	drainSubsMu sync.Mutex
 	drainSubs   map[int]chan []byte
 	drainNextID int
+
+	// cluster_event is event-driven (not snapshot)
+	eventSubsMu sync.Mutex
+	eventSubs   map[int]chan []byte
+	eventNextID int
 }
 
 // clusterSnapshot is the immutable per-tick state shared with all subscribers.
@@ -89,15 +157,21 @@ func newStreamHub(server *Server, interval time.Duration) *streamHub {
 	return &streamHub{
 		server:    server,
 		interval:  interval,
+		idx:       newAllocIndex(),
 		subs:      make(map[int]chan *clusterSnapshot),
 		drainSubs: make(map[int]chan []byte),
+		eventSubs: make(map[int]chan []byte),
 	}
 }
 
-// Run is the hub's main loop: refresh snapshot, fan out to subscribers, sleep.
-// Also subscribes to drain events on NATS and forwards to drain subscribers.
+// Run is the hub's main loop. It:
+//   1. Subscribes to drain events (fan-out to SSE clients).
+//   2. Seeds the allocIndex via KV Watch with history replay, waits for both
+//      node and alloc indexes to be ready before the first snapshot.
+//   3. Re-runs refresh on every KV change (coalesced via notify channel) and
+//      as a periodic fallback every h.interval seconds.
 func (h *streamHub) Run(ctx context.Context) {
-	// Subscribe once to drain events (instead of per-SSE-connection)
+	// Drain events are event-driven — subscribe once, fan out to all SSE clients.
 	drainSub, err := h.server.nc.Subscribe("asty.v1.drain.progress", func(msg *nats.Msg) {
 		h.fanoutDrain(msg.Data)
 	})
@@ -107,16 +181,99 @@ func (h *streamHub) Run(ctx context.Context) {
 		defer drainSub.Unsubscribe()
 	}
 
-	// Compute initial snapshot before any subscriber connects.
+	// notify is a coalescing trigger: a KV Watch callback sends here; if a
+	// notification is already pending the send is dropped. This means rapid
+	// bursts of KV changes produce at most one pending refresh, not N.
+	notify := make(chan struct{}, 1)
+	triggerRefresh := func() {
+		select {
+		case notify <- struct{}{}:
+		default:
+		}
+	}
+
+	// nodesReady and allocsReady are signalled once after the initial KV history
+	// replay completes. The hub waits for both before publishing the first snapshot
+	// so subscribers never see a partial or empty cluster view.
+	nodesReady := make(chan struct{}, 1)
+	allocsReady := make(chan struct{}, 1)
+
+	go func() {
+		for ctx.Err() == nil {
+			err := h.server.clusterState.WatchNodesInit(ctx,
+				func(n *NodeInfo) {
+					isNew := !h.idx.hasNode(n.ID)
+					isDel := n.Status == "deleted"
+					h.idx.onNode(n)
+					triggerRefresh()
+					if isDel {
+						h.server.addClusterEvent(newEvent("node_leave", "", n.ID, ""))
+					} else if isNew {
+						h.server.addClusterEvent(newEvent("node_join", "", n.ID, n.Datacenter))
+					}
+				},
+				func() {
+					select {
+					case nodesReady <- struct{}{}:
+					default:
+					}
+				},
+			)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				log.Warn().Err(err).Msg("streamHub: node watcher error, retrying")
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}()
+
+	go func() {
+		for ctx.Err() == nil {
+			err := h.server.clusterState.WatchAllocationsInit(ctx,
+				func(a *ServiceAllocation) { h.idx.onAlloc(a) },
+				func() {
+					select {
+					case allocsReady <- struct{}{}:
+					default:
+					}
+				},
+			)
+			if ctx.Err() != nil {
+				return
+			}
+			if err != nil {
+				log.Warn().Err(err).Msg("streamHub: alloc watcher error, retrying")
+				time.Sleep(2 * time.Second)
+			}
+		}
+	}()
+
+	// Wait for the initial KV history replay to complete on both watchers before
+	// publishing the first snapshot. This avoids serving an empty cluster view.
+	select {
+	case <-ctx.Done():
+		return
+	case <-nodesReady:
+	}
+	select {
+	case <-ctx.Done():
+		return
+	case <-allocsReady:
+	}
+
 	h.refresh()
 
-	ticker := time.NewTicker(h.interval)
+	ticker := time.NewTicker(h.interval) // periodic fallback
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-notify:
+			h.refresh()
 		case <-ticker.C:
 			h.refresh()
 		}
@@ -214,35 +371,58 @@ func (h *streamHub) fanoutDrain(data []byte) {
 	}
 }
 
-// buildSnapshot does a single sweep over KV: list nodes once, list allocations
-// once per service. Result is cached for the next interval. Cost: O(nodes + services).
+// SubscribeEvents registers a channel for cluster_event JSON payloads.
+func (h *streamHub) SubscribeEvents() (<-chan []byte, func()) {
+	ch := make(chan []byte, 16)
+	h.eventSubsMu.Lock()
+	id := h.eventNextID
+	h.eventNextID++
+	h.eventSubs[id] = ch
+	h.eventSubsMu.Unlock()
+	return ch, func() {
+		h.eventSubsMu.Lock()
+		if existing, ok := h.eventSubs[id]; ok {
+			delete(h.eventSubs, id)
+			close(existing)
+		}
+		h.eventSubsMu.Unlock()
+	}
+}
+
+// FanoutEvent serialises e and delivers it to all cluster_event subscribers.
+func (h *streamHub) FanoutEvent(e ClusterEvent) {
+	data := mustJSON(e)
+	h.eventSubsMu.Lock()
+	defer h.eventSubsMu.Unlock()
+	for _, ch := range h.eventSubs {
+		select {
+		case ch <- data:
+		default:
+		}
+	}
+}
+
+// buildSnapshot assembles a complete cluster snapshot from the in-memory
+// allocIndex (populated by KV Watch goroutines) with no KV reads for nodes or
+// allocations. Cost: O(nodes + allocs) from memory.
 func (h *streamHub) buildSnapshot() *clusterSnapshot {
 	now := time.Now()
 
-	nodes, _ := h.server.clusterState.ListNodes()
-	if nodes == nil {
-		nodes = []*NodeInfo{}
-	}
+	// Read from the in-memory index — no KV round-trips.
+	nodes, rawAllocs := h.idx.snapshot()
 
 	allocsByNode := make(map[string][]*ServiceAllocation)
-	allocsByService := make(map[string][]*ServiceAllocation, len(h.server.services))
+	allocsByService := make(map[string][]*ServiceAllocation)
 	allocByID := make(map[string]*ServiceAllocation)
 
-	services := h.server.services
-	for _, svc := range services {
-		allocs, err := h.server.clusterState.ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		allocsByService[svc.Name] = allocs
-		for _, a := range allocs {
-			allocsByNode[a.NodeID] = append(allocsByNode[a.NodeID], a)
+	for _, a := range rawAllocs {
+		allocsByNode[a.NodeID] = append(allocsByNode[a.NodeID], a)
+		allocsByService[a.ServiceName] = append(allocsByService[a.ServiceName], a)
+		if a.ID != "" {
 			allocByID[a.ID] = a
 		}
 	}
 
-	// Enrich nodes with allocation counts (mutates the NodeInfo copies returned
-	// by ListNodes, which are decoded fresh on each call — safe).
 	healthy := 0
 	for _, node := range nodes {
 		running, planned := 0, 0
@@ -279,6 +459,7 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 
 	// Per-service usage + autoscaler info
 	cfg := h.server.cfg
+	services := h.server.services
 	servicesOut := make([]ServiceWithUsage, 0, len(services))
 	for _, svc := range services {
 		allocs := allocsByService[svc.Name]

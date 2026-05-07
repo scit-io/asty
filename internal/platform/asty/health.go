@@ -173,6 +173,20 @@ func (hc *HealthChecker) IsHealthy(processName string) bool {
 	return check.Healthy
 }
 
+// HealthStatusStr returns "healthy", "unhealthy", or "" (no probe registered).
+func (hc *HealthChecker) HealthStatusStr(processName string) string {
+	hc.mu.RLock()
+	defer hc.mu.RUnlock()
+	check, exists := hc.checks[processName]
+	if !exists {
+		return ""
+	}
+	if check.Healthy {
+		return "healthy"
+	}
+	return "unhealthy"
+}
+
 // GetStatus returns the health check status for a process
 func (hc *HealthChecker) GetStatus(processName string) (*HealthCheck, bool) {
 	hc.mu.RLock()

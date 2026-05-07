@@ -44,6 +44,7 @@ type Resources struct {
 
 type Health struct {
 	Type     string `yaml:"type"`     // http, tcp
+	Addr     string `yaml:"addr"`     // e.g. ":8080"; if empty, probe is disabled
 	Path     string `yaml:"path"`     // for http
 	Interval string `yaml:"interval"` // 10s
 	Timeout  string `yaml:"timeout"`  // 3s

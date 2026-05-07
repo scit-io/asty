@@ -46,7 +46,6 @@ func (api *API) Start(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/stream/node/", api.handleStreamNode)
 	mux.HandleFunc("/api/v1/stream/service/", api.handleStreamService)
 	mux.HandleFunc("/api/v1/stream/allocation/", api.handleStreamAllocation)
-	mux.HandleFunc("/api/v1/stream/metrics/cluster", api.handleStreamMetricsCluster)
 	mux.HandleFunc("/api/v1/stream", api.handleStream)
 	mux.HandleFunc("/api/v1/autoscaler/events", api.handleAutoscalerEvents)
 	mux.HandleFunc("/api/v1/autoscaler/status", api.handleAutoscalerStatus)
@@ -110,7 +109,6 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 			"stream_node":        "/api/v1/stream/node/:id",
 			"stream_service":     "/api/v1/stream/service/:name",
 			"stream_allocation":  "/api/v1/stream/allocation/:id",
-			"stream_metrics":     "/api/v1/stream/metrics/cluster",
 			"logs_cluster":       "/api/v1/logs/cluster",
 			"logs_node":          "/api/v1/logs/node/:id",
 			"logs_allocation":    "/api/v1/logs/allocation/:id",
@@ -533,17 +531,17 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleEvents returns cluster events
+// handleEvents returns recent cluster events from the ring buffer.
 func (api *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// TODO: implement events storage
+	events := api.server.eventBuffer.GetLast(200)
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"events": []interface{}{},
-		"count":  0,
+		"events": events,
+		"count":  len(events),
 	})
 }
 
@@ -758,6 +756,8 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer unsubSnap()
 	drainCh, unsubDrain := hub.SubscribeDrain()
 	defer unsubDrain()
+	eventCh, unsubEvent := hub.SubscribeEvents()
+	defer unsubEvent()
 
 	var lastMetricsSent time.Time
 	ms := api.server.metricsStore
@@ -809,6 +809,12 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			sseEvent(w, "drain_progress", data)
+			flusher.Flush()
+		case data, ok := <-eventCh:
+			if !ok {
+				return
+			}
+			sseEvent(w, "cluster_event", data)
 			flusher.Flush()
 		case <-ping.C:
 			fmt.Fprint(w, ": keepalive\n\n")
@@ -1005,63 +1011,6 @@ func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			emit(snap)
-		case <-ping.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			flusher.Flush()
-		}
-	}
-}
-
-// handleStreamMetricsCluster streams cluster-level metric time-series.
-func (api *API) handleStreamMetricsCluster(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	flusher := sseSetup(w)
-	if flusher == nil {
-		return
-	}
-
-	snapshots, unsub := api.server.streamHub.Subscribe()
-	defer unsub()
-
-	var lastMetricsSent time.Time
-	ms := api.server.metricsStore
-
-	emit := func() {
-		var cpu, memory, rps []MetricPoint
-		if lastMetricsSent.IsZero() {
-			since := time.Now().Add(-2 * time.Hour)
-			cpu = ms.Get("cluster.cpu", since)
-			memory = ms.Get("cluster.memory", since)
-			rps = ms.Get("cluster.rps", since)
-		} else {
-			cpu = ms.GetAfter("cluster.cpu", lastMetricsSent)
-			memory = ms.GetAfter("cluster.memory", lastMetricsSent)
-			rps = ms.GetAfter("cluster.rps", lastMetricsSent)
-		}
-		lastMetricsSent = time.Now()
-		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu": cpu, "memory": memory, "rps": rps,
-		}))
-		flusher.Flush()
-	}
-
-	ping := time.NewTicker(30 * time.Second)
-	defer ping.Stop()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case _, ok := <-snapshots:
-			if !ok {
-				return
-			}
-			emit()
 		case <-ping.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 			flusher.Flush()

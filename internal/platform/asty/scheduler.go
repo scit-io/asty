@@ -64,7 +64,14 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *ServiceDefinition
 	}
 
 	live := liveAllocations(allocs)
-	occupied := nodeIDsOf(live)
+	// occupied includes failed allocs so ReconcileService doesn't overwrite them
+	// with a fresh pending (which resets ConsecutiveFailures to 0 and prevents
+	// pruneFailed from ever pruning them). pruneFailed handles deletion when
+	// ConsecutiveFailures >= threshold; after deletion the node becomes free.
+	// Stopped allocs are NOT included — they are intentionally vacated (drain).
+	// NOTE: node reordering in the UI ("nodes jumping") is a separate frontend
+	// sorting issue unrelated to placement logic — see realtime-plan.md Задача 4.
+	occupied := occupiedNodes(allocs)
 
 	switch svc.Type {
 	case ServiceTypeSystem:
@@ -359,6 +366,21 @@ func (s *Scheduler) SelectNodeForTrafficBasedPlacement(sourceDatacenter string, 
 		}
 	}
 	return nil
+}
+
+// occupiedNodes returns the set of nodeIDs that should not receive a new
+// placement. Includes live allocs AND failed allocs — failed ones must not be
+// overwritten (that would reset ConsecutiveFailures before pruneFailed prunes
+// them). Stopped allocs are excluded: they are intentionally vacated (drain).
+func occupiedNodes(allocs []*ServiceAllocation) map[string]bool {
+	out := make(map[string]bool, len(allocs))
+	for _, a := range allocs {
+		switch a.Status {
+		case "pending", "starting", "running", "failed":
+			out[a.NodeID] = true
+		}
+	}
+	return out
 }
 
 // liveAllocations returns the allocations that count toward the desired set —

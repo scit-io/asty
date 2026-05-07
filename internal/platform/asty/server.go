@@ -30,6 +30,7 @@ type Server struct {
 	api            *API
 	metricsStore   *MetricsStore
 	logBuffer      *LogBuffer
+	eventBuffer    *EventBuffer
 	drainManager   *DrainManager
 	streamHub      *streamHub
 
@@ -96,6 +97,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize metrics store (2h in-memory; hub feeds it, no KV-polling loop).
 	s.metricsStore = NewMetricsStore(2 * time.Hour)
 	s.logBuffer = NewLogBuffer(1000)
+	s.eventBuffer = NewEventBuffer(10000)
 
 	// Initialize autoscaler
 	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.metricsStore)
@@ -235,6 +237,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 		workers,
 		resync,
 	)
+	controller.onEvent = s.addClusterEvent
 	go controller.Run(leaderCtx)
 }
 
@@ -244,6 +247,15 @@ func (s *Server) stopLeaderWork() {
 	if s.leaderCancel != nil {
 		s.leaderCancel()
 		s.leaderCancel = nil
+	}
+}
+
+// addClusterEvent stores e in the event buffer and fans it out to all active
+// SSE subscribers via the stream hub.
+func (s *Server) addClusterEvent(e ClusterEvent) {
+	s.eventBuffer.Add(e)
+	if s.streamHub != nil {
+		s.streamHub.FanoutEvent(e)
 	}
 }
 
