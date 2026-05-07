@@ -29,6 +29,7 @@ type Server struct {
 	services       []*ServiceDefinition
 	api            *API
 	metricsStore   *MetricsStore
+	logBuffer      *LogBuffer
 	drainManager   *DrainManager
 	streamHub      *streamHub
 
@@ -92,8 +93,9 @@ func (s *Server) Start(ctx context.Context) error {
 	natsWriter := NewNATSWriter(s.nc, "asty.v1.server.logs")
 	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
-	// Initialize metrics store (24h retention)
-	s.metricsStore = NewMetricsStore(24 * time.Hour)
+	// Initialize metrics store (2h in-memory; hub feeds it, no KV-polling loop).
+	s.metricsStore = NewMetricsStore(2 * time.Hour)
+	s.logBuffer = NewLogBuffer(1000)
 
 	// Initialize autoscaler
 	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.metricsStore)
@@ -123,11 +125,11 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize drain manager
 	s.drainManager = NewDrainManager(s)
 
-	// Start metrics collection (every 10s)
-	s.metricsStore.StartCollection(clusterState, s.services, 10*time.Second)
-
 	// Subscribe to Gateway RPS metrics
 	s.subscribeGatewayMetrics()
+
+	// Buffer logs from NATS into logBuffer for history endpoint.
+	s.startLogBuffering()
 
 	// Single shared snapshot source for all SSE handlers — refreshes every 5s.
 	s.streamHub = newStreamHub(s, 5*time.Second)
@@ -434,10 +436,66 @@ func parseUpdateDuration(s string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// startLogBuffering subscribes to NATS log subjects and feeds lines into
+// logBuffer so that history endpoints can serve recent logs without a live SSE
+// connection. One subscription per source type using NATS wildcards.
+func (s *Server) startLogBuffering() {
+	parseAndAppend := func(source string, data []byte) {
+		var entry map[string]interface{}
+		if err := json.Unmarshal(data, &entry); err != nil {
+			return
+		}
+
+		level, _ := entry["level"].(string)
+		msg, _ := entry["message"].(string)
+
+		var ts int64
+		switch v := entry["timestamp"].(type) {
+		case float64:
+			ts = int64(v)
+		}
+
+		timeStr := ""
+		if t, ok := entry["time"].(string); ok {
+			timeStr = t
+		} else if ts > 0 {
+			timeStr = fmt.Sprintf("%d", ts)
+		}
+
+		line := fmt.Sprintf("[%s] [%s] %s", timeStr, level, msg)
+		s.logBuffer.Append(source, LogLine{Timestamp: ts, Level: level, Line: line})
+	}
+
+	// Cluster server logs.
+	if _, err := s.nc.Subscribe("asty.v1.server.logs", func(msg *nats.Msg) {
+		parseAndAppend("cluster", msg.Data)
+	}); err != nil {
+		log.Error().Err(err).Msg("failed to subscribe cluster log buffer")
+	}
+
+	// Agent logs — single wildcard sub handles all nodes and services.
+	// Subject pattern: asty.v1.agent.{nodeID}.logs.{service|"agent"}
+	if _, err := s.nc.Subscribe("asty.v1.agent.*.logs.*", func(msg *nats.Msg) {
+		// Extract nodeID and service from subject tokens.
+		// tokens: asty(0) v1(1) agent(2) nodeID(3) logs(4) service(5)
+		parts := splitSubject(msg.Subject)
+		if len(parts) < 6 {
+			return
+		}
+		nodeID := parts[3]
+		svc := parts[5]
+		if svc == "agent" {
+			parseAndAppend("node."+nodeID, msg.Data)
+		} else {
+			parseAndAppend("node."+nodeID+".svc."+svc, msg.Data)
+		}
+	}); err != nil {
+		log.Error().Err(err).Msg("failed to subscribe agent log buffer")
+	}
+}
+
 // subscribeGatewayMetrics ingests per-gateway valid-RPS reports into
-// node.<id>.rps. Cluster aggregation is computed periodically by
-// MetricsStore.collectMetrics (sum of the most-recent per-node sample) —
-// doing it here would corrupt cluster.rps with one point per gateway report.
+// node.<id>.rps. Cluster RPS is aggregated by IngestSnapshot.
 func (s *Server) subscribeGatewayMetrics() {
 	subject := "asty.v1.metrics.gateway.*"
 	_, err := s.nc.Subscribe(subject, func(msg *nats.Msg) {
@@ -475,4 +533,18 @@ func (s *Server) connectNATS() error {
 	s.nc = nc
 	log.Info().Str("url", natsURL).Msg("connected to NATS")
 	return nil
+}
+
+// splitSubject splits a NATS subject by '.'.
+func splitSubject(subject string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(subject); i++ {
+		if subject[i] == '.' {
+			parts = append(parts, subject[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, subject[start:])
+	return parts
 }

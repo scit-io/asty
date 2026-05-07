@@ -60,7 +60,7 @@ func (api *API) Start(ctx context.Context) error {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		WriteTimeout:      0, // SSE connections are long-lived
 	}
 
 	log.Info().Str("addr", api.addr).Msg("API server starting")
@@ -741,7 +741,7 @@ func sseEvent(w http.ResponseWriter, event string, data []byte) {
 }
 
 // handleStream handles the global SSE stream — cluster status, nodes, services
-// (with usage), and drain progress. Reads from streamHub.
+// (with usage), cluster metrics (delta), and drain progress.
 func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -759,6 +759,9 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	drainCh, unsubDrain := hub.SubscribeDrain()
 	defer unsubDrain()
 
+	var lastMetricsSent time.Time
+	ms := api.server.metricsStore
+
 	emit := func(snap *clusterSnapshot) {
 		sseEvent(w, "status", mustJSON(map[string]interface{}{
 			"cluster":   snap.Cluster,
@@ -767,6 +770,23 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		}))
 		sseEvent(w, "nodes", mustJSON(map[string]interface{}{"nodes": snap.Nodes}))
 		sseEvent(w, "services", mustJSON(map[string]interface{}{"services": snap.Services}))
+
+		// Cluster metrics — full history on first connect, delta on subsequent ticks.
+		var cpu, memory, rps []MetricPoint
+		if lastMetricsSent.IsZero() {
+			since := time.Now().Add(-2 * time.Hour)
+			cpu = ms.Get("cluster.cpu", since)
+			memory = ms.Get("cluster.memory", since)
+			rps = ms.Get("cluster.rps", since)
+		} else {
+			cpu = ms.GetAfter("cluster.cpu", lastMetricsSent)
+			memory = ms.GetAfter("cluster.memory", lastMetricsSent)
+			rps = ms.GetAfter("cluster.rps", lastMetricsSent)
+		}
+		lastMetricsSent = time.Now()
+		sseEvent(w, "cluster_metrics", mustJSON(map[string]interface{}{
+			"cpu": cpu, "memory": memory, "rps": rps,
+		}))
 		flusher.Flush()
 	}
 
@@ -818,6 +838,9 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 	snapshots, unsub := api.server.streamHub.Subscribe()
 	defer unsub()
 
+	var lastMetricsSent time.Time
+	ms := api.server.metricsStore
+
 	emit := func(snap *clusterSnapshot) {
 		allocs := snap.AllocsByNode[nodeID]
 		if allocs == nil {
@@ -825,12 +848,20 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 		}
 		sseEvent(w, "allocations", mustJSON(map[string]interface{}{"allocations": allocs}))
 
-		since := time.Now().Add(-1 * time.Hour)
-		ms := api.server.metricsStore
+		var cpu, memory, rps []MetricPoint
+		if lastMetricsSent.IsZero() {
+			since := time.Now().Add(-2 * time.Hour)
+			cpu = ms.Get("node."+nodeID+".cpu", since)
+			memory = ms.Get("node."+nodeID+".memory", since)
+			rps = ms.Get("node."+nodeID+".rps", since)
+		} else {
+			cpu = ms.GetAfter("node."+nodeID+".cpu", lastMetricsSent)
+			memory = ms.GetAfter("node."+nodeID+".memory", lastMetricsSent)
+			rps = ms.GetAfter("node."+nodeID+".rps", lastMetricsSent)
+		}
+		lastMetricsSent = time.Now()
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":    ms.Get("node."+nodeID+".cpu", since),
-			"memory": ms.Get("node."+nodeID+".memory", since),
-			"rps":    ms.Get("node."+nodeID+".rps", since),
+			"cpu": cpu, "memory": memory, "rps": rps,
 		}))
 		flusher.Flush()
 	}
@@ -876,6 +907,9 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 	snapshots, unsub := api.server.streamHub.Subscribe()
 	defer unsub()
 
+	var lastMetricsSent time.Time
+	ms := api.server.metricsStore
+
 	emit := func(snap *clusterSnapshot) {
 		var svcDef *ServiceDefinition
 		for _, svc := range snap.Services {
@@ -888,18 +922,25 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 		if allocs == nil {
 			allocs = []*ServiceAllocation{}
 		}
-
 		sseEvent(w, "detail", mustJSON(map[string]interface{}{
 			"service":     svcDef,
 			"allocations": allocs,
 		}))
 
-		since := time.Now().Add(-1 * time.Hour)
-		ms := api.server.metricsStore
+		var cpu, memory, allocCount []MetricPoint
+		if lastMetricsSent.IsZero() {
+			since := time.Now().Add(-2 * time.Hour)
+			cpu = ms.Get("service."+serviceName+".cpu", since)
+			memory = ms.Get("service."+serviceName+".memory", since)
+			allocCount = ms.Get("service."+serviceName+".alloc_count", since)
+		} else {
+			cpu = ms.GetAfter("service."+serviceName+".cpu", lastMetricsSent)
+			memory = ms.GetAfter("service."+serviceName+".memory", lastMetricsSent)
+			allocCount = ms.GetAfter("service."+serviceName+".alloc_count", lastMetricsSent)
+		}
+		lastMetricsSent = time.Now()
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":               ms.Get("service."+serviceName+".cpu", since),
-			"memory":            ms.Get("service."+serviceName+".memory", since),
-			"allocations_count": ms.Get("service."+serviceName+".alloc_count", since),
+			"cpu": cpu, "memory": memory, "allocations_count": allocCount,
 		}))
 		flusher.Flush()
 	}
@@ -948,13 +989,6 @@ func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
 	emit := func(snap *clusterSnapshot) {
 		alloc := snap.AllocByID[allocID]
 		sseEvent(w, "detail", mustJSON(map[string]interface{}{"allocation": alloc}))
-
-		since := time.Now().Add(-1 * time.Hour)
-		ms := api.server.metricsStore
-		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":    ms.Get("alloc."+allocID+".cpu", since),
-			"memory": ms.Get("alloc."+allocID+".memory", since),
-		}))
 		flusher.Flush()
 	}
 
@@ -993,13 +1027,24 @@ func (api *API) handleStreamMetricsCluster(w http.ResponseWriter, r *http.Reques
 	snapshots, unsub := api.server.streamHub.Subscribe()
 	defer unsub()
 
+	var lastMetricsSent time.Time
+	ms := api.server.metricsStore
+
 	emit := func() {
-		since := time.Now().Add(-1 * time.Hour)
-		ms := api.server.metricsStore
+		var cpu, memory, rps []MetricPoint
+		if lastMetricsSent.IsZero() {
+			since := time.Now().Add(-2 * time.Hour)
+			cpu = ms.Get("cluster.cpu", since)
+			memory = ms.Get("cluster.memory", since)
+			rps = ms.Get("cluster.rps", since)
+		} else {
+			cpu = ms.GetAfter("cluster.cpu", lastMetricsSent)
+			memory = ms.GetAfter("cluster.memory", lastMetricsSent)
+			rps = ms.GetAfter("cluster.rps", lastMetricsSent)
+		}
+		lastMetricsSent = time.Now()
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":    ms.Get("cluster.cpu", since),
-			"memory": ms.Get("cluster.memory", since),
-			"rps":    ms.Get("cluster.rps", since),
+			"cpu": cpu, "memory": memory, "rps": rps,
 		}))
 		flusher.Flush()
 	}
@@ -1022,6 +1067,37 @@ func (api *API) handleStreamMetricsCluster(w http.ResponseWriter, r *http.Reques
 			flusher.Flush()
 		}
 	}
+}
+
+// formatLogEntry converts a parsed NATS log JSON entry to a display string.
+func formatLogEntry(entry map[string]interface{}) string {
+	level, _ := entry["level"].(string)
+	message, _ := entry["message"].(string)
+
+	var timeStr string
+	if t, ok := entry["time"].(string); ok {
+		timeStr = t
+	} else if ts, ok := entry["timestamp"].(float64); ok {
+		timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
+	} else {
+		timeStr = time.Now().Format(time.RFC3339)
+	}
+
+	line := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
+
+	// Append extra structured fields if present.
+	extra := make(map[string]interface{})
+	for k, v := range entry {
+		if k != "level" && k != "message" && k != "time" && k != "timestamp" {
+			extra[k] = v
+		}
+	}
+	if len(extra) > 0 {
+		if b, err := json.Marshal(extra); err == nil {
+			line += " " + string(b)
+		}
+	}
+	return line
 }
 
 // writeJSON writes JSON response
@@ -1094,35 +1170,29 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Request initial logs from agent via NATS
-	cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines, false)
-	if err != nil {
-		api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
-		return
-	}
-
-	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", allocation.NodeID)
-
-	msg, err := api.server.nc.Request(subject, cmdData, 5*time.Second)
-	if err != nil {
-		log.Error().Err(err).Str("node_id", allocation.NodeID).Msg("failed to request logs from agent")
-		api.writeError(w, http.StatusServiceUnavailable, "failed to retrieve logs from agent", err)
-		return
-	}
-
-	// Parse logs response
-	var logsResp LogsResponse
-	if err := json.Unmarshal(msg.Data, &logsResp); err != nil {
-		api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
-		return
-	}
-
-	if !logsResp.Success {
-		api.writeError(w, http.StatusInternalServerError, "agent failed to retrieve logs", fmt.Errorf("%s", logsResp.Error))
-		return
-	}
-
-	// If not following, return JSON with initial logs
 	if !follow {
+		// NATS request-reply to get logs directly from the agent process buffer.
+		cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines, false)
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
+			return
+		}
+		subject := fmt.Sprintf("asty.v1.agent.%s.cmd", allocation.NodeID)
+		msg, err := api.server.nc.Request(subject, cmdData, 5*time.Second)
+		if err != nil {
+			log.Error().Err(err).Str("node_id", allocation.NodeID).Msg("failed to request logs from agent")
+			api.writeError(w, http.StatusServiceUnavailable, "failed to retrieve logs from agent", err)
+			return
+		}
+		var logsResp LogsResponse
+		if err := json.Unmarshal(msg.Data, &logsResp); err != nil {
+			api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
+			return
+		}
+		if !logsResp.Success {
+			api.writeError(w, http.StatusInternalServerError, "agent failed to retrieve logs", fmt.Errorf("%s", logsResp.Error))
+			return
+		}
 		api.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"allocation_id": allocID,
 			"service_name":  allocation.ServiceName,
@@ -1133,283 +1203,166 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SSE streaming mode
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	// SSE streaming mode: replay buffer then subscribe for live logs.
+	flusher := sseSetup(w)
+	if flusher == nil {
 		return
 	}
 
-	// Send initial logs
-	for _, line := range logsResp.Logs {
-		logEntry, _ := json.Marshal(map[string]interface{}{
-			"line": line,
-			"timestamp": time.Now().Unix(),
-		})
-		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+	bufKey := "node." + allocation.NodeID + ".svc." + allocation.ServiceName
+	for _, entry := range api.server.logBuffer.GetLast(bufKey, lines) {
+		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
+		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 	flusher.Flush()
 
-	// Subscribe to log stream via NATS
 	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", allocation.NodeID, allocation.ServiceName)
 	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
-		// Forward log line to SSE
-		fmt.Fprintf(w, "data: %s\n\n", msg.Data)
+		var entry map[string]interface{}
+		if err := json.Unmarshal(msg.Data, &entry); err != nil {
+			fmt.Fprintf(w, "data: %s\n\n", msg.Data)
+		} else {
+			line := formatLogEntry(entry)
+			data, _ := json.Marshal(map[string]interface{}{"line": line, "timestamp": entry["timestamp"]})
+			fmt.Fprintf(w, "data: %s\n\n", data)
+		}
 		flusher.Flush()
 	})
-
 	if err != nil {
 		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to log stream")
 		return
 	}
 	defer sub.Unsubscribe()
 
-	log.Info().
-		Str("allocation_id", allocID).
-		Str("subject", streamSubject).
-		Msg("streaming logs via SSE")
-
-	// Keep connection alive until client disconnects
 	<-r.Context().Done()
-
-	log.Info().Str("allocation_id", allocID).Msg("log stream closed")
 }
 
 
-// handleLogsNode returns logs for a node (agent logs)
+// handleLogsNode returns logs for a node (agent logs).
+// follow=false → JSON with buffered history; follow=true → SSE (history + live).
 func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Extract node ID from path: /api/v1/logs/node/:id
 	nodeID := r.URL.Path[len("/api/v1/logs/node/"):]
 	if nodeID == "" {
 		api.writeError(w, http.StatusBadRequest, "node ID required", nil)
 		return
 	}
 
-	// Check if node exists
 	_, err := api.server.clusterState.GetNode(nodeID)
 	if err != nil {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
 	}
 
-	// Parse query parameters
-	lines := 100 // default
+	nLines := 100
 	if l := r.URL.Query().Get("lines"); l != "" {
-		fmt.Sscanf(l, "%d", &lines)
+		fmt.Sscanf(l, "%d", &nLines)
 	}
-
 	follow := r.URL.Query().Get("follow") == "true"
 
-	// Non-streaming mode: return placeholder
 	if !follow {
+		history := api.server.logBuffer.GetLast("node."+nodeID, nLines)
+		lines := make([]string, len(history))
+		for i, e := range history {
+			lines[i] = e.Line
+		}
 		api.writeJSON(w, http.StatusOK, map[string]interface{}{
-			"node_id": nodeID,
-			"logs": []string{
-				fmt.Sprintf("[%s] [info] Node agent log stream available via SSE (follow=true)", time.Now().Format(time.RFC3339)),
-				"[asty] Use follow=true for real-time agent events",
-			},
-			"line_count": 2,
+			"node_id": nodeID, "logs": lines, "line_count": len(lines),
 		})
 		return
 	}
 
-	// SSE streaming mode
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	flusher := sseSetup(w)
+	if flusher == nil {
 		return
 	}
 
-	// Subscribe to node log stream via NATS
-	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", nodeID)
+	// Replay buffered history.
+	for _, entry := range api.server.logBuffer.GetLast("node."+nodeID, nLines) {
+		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}
+	flusher.Flush()
 
+	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", nodeID)
 	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
-		// msg.Data contains JSON: {"timestamp": ..., "level": ..., "message": ..., ...}
 		var entry map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			return
 		}
-
-		// Format log line for UI
-		level := entry["level"]
-		message := entry["message"]
-
-		var timeStr string
-		if t, ok := entry["time"].(string); ok {
-			timeStr = t
-		} else if ts, ok := entry["timestamp"].(float64); ok {
-			timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
-		} else {
-			timeStr = time.Now().Format(time.RFC3339)
-		}
-
-		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
-
-		// Add extra fields if present
-		delete(entry, "timestamp")
-		delete(entry, "time")
-		delete(entry, "level")
-		delete(entry, "message")
-
-		if len(entry) > 0 {
-			extraJSON, _ := json.Marshal(entry)
-			logLine += " " + string(extraJSON)
-		}
-
-		// Send to SSE
-		logEntry, _ := json.Marshal(map[string]interface{}{
-			"line":      logLine,
-			"timestamp": entry["timestamp"],
-		})
-		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+		line := formatLogEntry(entry)
+		data, _ := json.Marshal(map[string]interface{}{"line": line, "timestamp": entry["timestamp"]})
+		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	})
-
 	if err != nil {
 		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to node log stream")
-		http.Error(w, "Failed to subscribe to log stream", http.StatusInternalServerError)
 		return
 	}
 	defer sub.Unsubscribe()
 
-	// Send initial message
-	initMsg, _ := json.Marshal(map[string]interface{}{
-		"line":      fmt.Sprintf("[%s] [info] Node agent log stream connected", time.Now().Format(time.RFC3339)),
-		"timestamp": time.Now().Unix(),
-	})
-	fmt.Fprintf(w, "data: %s\n\n", initMsg)
-	flusher.Flush()
-
-	log.Info().Str("node_id", nodeID).Str("subject", streamSubject).Msg("node log stream opened")
-
-	// Keep connection alive until client disconnects
 	<-r.Context().Done()
-
-	log.Info().Str("node_id", nodeID).Msg("node log stream closed")
 }
 
-// handleLogsCluster returns cluster-wide logs (server logs) via SSE
+// handleLogsCluster returns cluster-wide logs (server logs).
+// follow=false → JSON with buffered history; follow=true → SSE (history + live).
 func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Parse query parameters
-	lines := 100 // default
+	nLines := 100
 	if l := r.URL.Query().Get("lines"); l != "" {
-		fmt.Sscanf(l, "%d", &lines)
+		fmt.Sscanf(l, "%d", &nLines)
 	}
-
 	follow := r.URL.Query().Get("follow") == "true"
 
-	// Non-streaming mode: return recent logs (not implemented yet - would need log buffer)
 	if !follow {
-		// Return JSON with placeholder - real implementation would need ring buffer
+		history := api.server.logBuffer.GetLast("cluster", nLines)
+		lines := make([]string, len(history))
+		for i, e := range history {
+			lines[i] = e.Line
+		}
 		api.writeJSON(w, http.StatusOK, map[string]interface{}{
-			"logs": []string{
-				fmt.Sprintf("[%s] [info] Cluster log stream available via SSE (follow=true)", time.Now().Format(time.RFC3339)),
-				"[asty] Use follow=true for real-time cluster events",
-			},
-			"line_count": 2,
+			"logs": lines, "line_count": len(lines),
 		})
 		return
 	}
 
-	// SSE streaming mode
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	flusher := sseSetup(w)
+	if flusher == nil {
 		return
 	}
 
-	// Subscribe to cluster log stream via NATS
-	streamSubject := "asty.v1.server.logs"
+	// Replay buffered history before subscribing to live NATS.
+	for _, entry := range api.server.logBuffer.GetLast("cluster", nLines) {
+		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
+		fmt.Fprintf(w, "data: %s\n\n", data)
+	}
+	flusher.Flush()
 
-	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
-		// msg.Data already contains JSON: {"timestamp": ..., "level": ..., "message": ..., ...}
-		// Parse it to extract line and format for UI
+	sub, err := api.server.nc.Subscribe("asty.v1.server.logs", func(msg *nats.Msg) {
 		var entry map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			return
 		}
-
-		// Format log line for UI
-		level := entry["level"]
-		message := entry["message"]
-
-		var timeStr string
-		if t, ok := entry["time"].(string); ok {
-			timeStr = t
-		} else if ts, ok := entry["timestamp"].(float64); ok {
-			timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
-		} else {
-			timeStr = time.Now().Format(time.RFC3339)
-		}
-
-		logLine := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
-
-		// Add extra fields if present
-		delete(entry, "timestamp")
-		delete(entry, "time")
-		delete(entry, "level")
-		delete(entry, "message")
-
-		if len(entry) > 0 {
-			extraJSON, _ := json.Marshal(entry)
-			logLine += " " + string(extraJSON)
-		}
-
-		// Send to SSE
-		logEntry, _ := json.Marshal(map[string]interface{}{
-			"line":      logLine,
-			"timestamp": entry["timestamp"],
-		})
-		fmt.Fprintf(w, "data: %s\n\n", logEntry)
+		line := formatLogEntry(entry)
+		data, _ := json.Marshal(map[string]interface{}{"line": line, "timestamp": entry["timestamp"]})
+		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	})
-
 	if err != nil {
-		log.Error().Err(err).Str("subject", streamSubject).Msg("failed to subscribe to cluster log stream")
-		http.Error(w, "Failed to subscribe to log stream", http.StatusInternalServerError)
+		log.Error().Err(err).Msg("failed to subscribe to cluster log stream")
 		return
 	}
 	defer sub.Unsubscribe()
 
-	// Send initial message
-	initMsg, _ := json.Marshal(map[string]interface{}{
-		"line":      fmt.Sprintf("[%s] [info] Cluster log stream connected", time.Now().Format(time.RFC3339)),
-		"timestamp": time.Now().Unix(),
-	})
-	fmt.Fprintf(w, "data: %s\n\n", initMsg)
-	flusher.Flush()
-
-	log.Info().Str("subject", streamSubject).Msg("cluster log stream opened")
-
-	// Keep connection alive until client disconnects
 	<-r.Context().Done()
-
-	log.Info().Msg("cluster log stream closed")
 }
 
 // handleNodeDrain handles POST /api/v1/nodes/:id/drain

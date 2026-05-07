@@ -22,17 +22,16 @@ type ScalingEvent struct {
 	NodeID    string `json:"node_id,omitempty"`
 }
 
-// MetricsStore stores timeseries metrics in memory
+// MetricsStore stores timeseries metrics in memory with bounded retention.
 type MetricsStore struct {
 	mu      sync.RWMutex
-	metrics map[string][]MetricPoint // key: "cluster.cpu", "node.agent-1.cpu", etc
+	metrics map[string][]MetricPoint // key: "cluster.cpu", "node.{id}.cpu", etc
 	maxAge  time.Duration
 
 	eventsMu sync.RWMutex
 	events   []ScalingEvent // ring buffer, max 1000
 }
 
-// NewMetricsStore creates a new metrics store
 func NewMetricsStore(maxAge time.Duration) *MetricsStore {
 	return &MetricsStore{
 		metrics: make(map[string][]MetricPoint),
@@ -41,48 +40,59 @@ func NewMetricsStore(maxAge time.Duration) *MetricsStore {
 	}
 }
 
-// Add adds a metric point
+// Add appends a metric point and prunes values older than maxAge.
 func (ms *MetricsStore) Add(key string, value float64) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
-	now := time.Now().Unix()
-	point := MetricPoint{
-		Timestamp: now,
-		Value:     value,
-	}
-
+	point := MetricPoint{Timestamp: time.Now().Unix(), Value: value}
 	ms.metrics[key] = append(ms.metrics[key], point)
 	ms.cleanOld(key)
 }
 
-// Get returns metric points for a key within the time range
+// Get returns metric points for a key with timestamp >= since.
 func (ms *MetricsStore) Get(key string, since time.Time) []MetricPoint {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	points, ok := ms.metrics[key]
-	if !ok {
-		return []MetricPoint{}
-	}
-
+	points := ms.metrics[key]
 	sinceUnix := since.Unix()
-	result := []MetricPoint{}
+	var result []MetricPoint
 	for _, p := range points {
 		if p.Timestamp >= sinceUnix {
 			result = append(result, p)
 		}
 	}
-
+	if result == nil {
+		return []MetricPoint{}
+	}
 	return result
 }
 
-// cleanOld removes old data points (called while holding lock)
+// GetAfter returns metric points for a key with timestamp strictly > after.
+// Used for delta streaming: callers pass the time of the last send.
+func (ms *MetricsStore) GetAfter(key string, after time.Time) []MetricPoint {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+
+	points := ms.metrics[key]
+	afterUnix := after.Unix()
+	var result []MetricPoint
+	for _, p := range points {
+		if p.Timestamp > afterUnix {
+			result = append(result, p)
+		}
+	}
+	if result == nil {
+		return []MetricPoint{}
+	}
+	return result
+}
+
+// cleanOld removes points older than maxAge (must be called with mu held).
 func (ms *MetricsStore) cleanOld(key string) {
 	cutoff := time.Now().Add(-ms.maxAge).Unix()
 	points := ms.metrics[key]
-
-	// Find first point that should be kept
 	keepFrom := 0
 	for i, p := range points {
 		if p.Timestamp >= cutoff {
@@ -90,21 +100,74 @@ func (ms *MetricsStore) cleanOld(key string) {
 			break
 		}
 	}
-
 	ms.metrics[key] = points[keepFrom:]
 }
 
-// StartCollection starts periodic metrics collection
-func (ms *MetricsStore) StartCollection(state *ClusterState, services []*ServiceDefinition, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	go func() {
-		for range ticker.C {
-			ms.collectMetrics(state, services)
+// IngestSnapshot derives metrics from a hub snapshot. Called by streamHub on
+// every refresh so metricsStore does not need its own KV-polling loop.
+// Per-allocation time series are intentionally omitted (allocations are
+// ephemeral; current values are embedded in the snapshot itself).
+func (ms *MetricsStore) IngestSnapshot(snap *clusterSnapshot) {
+	var totalCPUUsed, totalCPUTotal float64
+	var totalMemUsed, totalMemTotal float64
+
+	for _, node := range snap.Nodes {
+		if node.Status != "ready" {
+			continue
 		}
-	}()
+		cpuUsed := float64(node.CPUTotal - node.CPUAvailable)
+		memUsed := float64(node.MemoryTotal - node.MemoryAvailable)
+		totalCPUUsed += cpuUsed
+		totalCPUTotal += float64(node.CPUTotal)
+		totalMemUsed += memUsed
+		totalMemTotal += float64(node.MemoryTotal)
+
+		cpuPct := 0.0
+		if node.CPUTotal > 0 {
+			cpuPct = cpuUsed / float64(node.CPUTotal) * 100
+		}
+		memPct := 0.0
+		if node.MemoryTotal > 0 {
+			memPct = memUsed / float64(node.MemoryTotal) * 100
+		}
+		ms.Add("node."+node.ID+".cpu", cpuPct)
+		ms.Add("node."+node.ID+".memory", memPct)
+	}
+
+	clusterCPU := 0.0
+	if totalCPUTotal > 0 {
+		clusterCPU = totalCPUUsed / totalCPUTotal * 100
+	}
+	clusterMem := 0.0
+	if totalMemTotal > 0 {
+		clusterMem = totalMemUsed / totalMemTotal * 100
+	}
+	ms.Add("cluster.cpu", clusterCPU)
+	ms.Add("cluster.memory", clusterMem)
+
+	// cluster.rps: sum the most recent per-node RPS (added by gateway reports).
+	cutoff := time.Now().Add(-30 * time.Second)
+	var clusterRPS float64
+	for _, node := range snap.Nodes {
+		if node.Status != "ready" {
+			continue
+		}
+		pts := ms.Get("node."+node.ID+".rps", cutoff)
+		if len(pts) > 0 {
+			clusterRPS += pts[len(pts)-1].Value
+		}
+	}
+	ms.Add("cluster.rps", clusterRPS)
+
+	// Per-service aggregates already computed in snapshot.
+	for _, svc := range snap.Services {
+		ms.Add("service."+svc.Name+".cpu", svc.AvgCPUPercent)
+		ms.Add("service."+svc.Name+".memory", svc.AvgMemoryMB)
+		ms.Add("service."+svc.Name+".alloc_count", float64(svc.CurrentCopies))
+	}
 }
 
-// AddEvent records a scaling event
+// AddEvent records a scaling event.
 func (ms *MetricsStore) AddEvent(event ScalingEvent) {
 	ms.eventsMu.Lock()
 	defer ms.eventsMu.Unlock()
@@ -112,14 +175,13 @@ func (ms *MetricsStore) AddEvent(event ScalingEvent) {
 	if event.Timestamp == 0 {
 		event.Timestamp = time.Now().Unix()
 	}
-
 	if len(ms.events) >= 1000 {
 		ms.events = ms.events[1:]
 	}
 	ms.events = append(ms.events, event)
 }
 
-// GetEvents returns scaling events, optionally filtered by service
+// GetEvents returns scaling events, newest first, optionally filtered by service.
 func (ms *MetricsStore) GetEvents(service string, limit int) []ScalingEvent {
 	ms.eventsMu.RLock()
 	defer ms.eventsMu.RUnlock()
@@ -127,113 +189,11 @@ func (ms *MetricsStore) GetEvents(service string, limit int) []ScalingEvent {
 	if limit <= 0 {
 		limit = 100
 	}
-
 	var filtered []ScalingEvent
 	for i := len(ms.events) - 1; i >= 0 && len(filtered) < limit; i-- {
 		if service == "" || ms.events[i].Service == service {
 			filtered = append(filtered, ms.events[i])
 		}
 	}
-
 	return filtered
-}
-
-// collectMetrics collects current metrics from cluster state
-func (ms *MetricsStore) collectMetrics(state *ClusterState, services []*ServiceDefinition) {
-	nodes, err := state.ListNodes()
-	if err != nil {
-		return
-	}
-
-	var totalCPUUsed, totalCPUTotal float64
-	var totalMemUsed, totalMemTotal float64
-
-	for _, node := range nodes {
-		if node.Status != "ready" {
-			continue
-		}
-
-		cpuUsed := float64(node.CPUTotal - node.CPUAvailable)
-		memUsed := float64(node.MemoryTotal - node.MemoryAvailable)
-
-		totalCPUUsed += cpuUsed
-		totalCPUTotal += float64(node.CPUTotal)
-		totalMemUsed += memUsed
-		totalMemTotal += float64(node.MemoryTotal)
-
-		// Per-node metrics
-		cpuPercent := 0.0
-		if node.CPUTotal > 0 {
-			cpuPercent = (cpuUsed / float64(node.CPUTotal)) * 100
-		}
-		memPercent := 0.0
-		if node.MemoryTotal > 0 {
-			memPercent = (memUsed / float64(node.MemoryTotal)) * 100
-		}
-
-		ms.Add("node."+node.ID+".cpu", cpuPercent)
-		ms.Add("node."+node.ID+".memory", memPercent)
-	}
-
-	// Cluster-wide metrics
-	clusterCPU := 0.0
-	if totalCPUTotal > 0 {
-		clusterCPU = (totalCPUUsed / totalCPUTotal) * 100
-	}
-	clusterMem := 0.0
-	if totalMemTotal > 0 {
-		clusterMem = (totalMemUsed / totalMemTotal) * 100
-	}
-
-	ms.Add("cluster.cpu", clusterCPU)
-	ms.Add("cluster.memory", clusterMem)
-
-	// cluster.rps is the sum of the most recent per-node valid_rps reported
-	// by gateways. Each gateway publishes to node.<id>.rps independently;
-	// summing them at collection time produces a coherent cluster-total time
-	// series instead of the previous behavior, which appended every per-node
-	// report into cluster.rps and produced an unrelated value cloud.
-	cutoff := time.Now().Add(-30 * time.Second)
-	var clusterRPS float64
-	for _, node := range nodes {
-		if node.Status != "ready" {
-			continue
-		}
-		points := ms.Get("node."+node.ID+".rps", cutoff)
-		if len(points) == 0 {
-			continue
-		}
-		clusterRPS += points[len(points)-1].Value
-	}
-	ms.Add("cluster.rps", clusterRPS)
-
-	// Per-service aggregate metrics
-	for _, svc := range services {
-		allocs, err := state.ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-
-		var svcCPU, svcMem float64
-		var running int
-		for _, alloc := range allocs {
-			if alloc.Status == "running" {
-				svcCPU += float64(alloc.CPUUsage)
-				svcMem += float64(alloc.MemoryUsage)
-				running++
-			}
-		}
-
-		ms.Add("service."+svc.Name+".cpu", svcCPU)
-		ms.Add("service."+svc.Name+".memory", svcMem)
-		ms.Add("service."+svc.Name+".alloc_count", float64(running))
-
-		// Per-allocation metrics
-		for _, alloc := range allocs {
-			if alloc.Status == "running" {
-				ms.Add("alloc."+alloc.ID+".cpu", float64(alloc.CPUUsage))
-				ms.Add("alloc."+alloc.ID+".memory", float64(alloc.MemoryUsage))
-			}
-		}
-	}
 }

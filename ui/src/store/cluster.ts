@@ -7,6 +7,16 @@ import type {
   ServiceDefinition,
 } from '@/types'
 
+// Max chart points kept in memory per series (2h at 5s = 1440 ticks,
+// but metricsStore records at hub interval so ~1440 points max).
+const MAX_CHART_POINTS = 1440
+
+function appendMetrics(existing: MetricPoint[], incoming: MetricPoint[]): MetricPoint[] {
+  if (!incoming.length) return existing
+  const merged = [...existing, ...incoming]
+  return merged.length > MAX_CHART_POINTS ? merged.slice(merged.length - MAX_CHART_POINTS) : merged
+}
+
 interface NodeData {
   node: Node | null
   allocations: Allocation[]
@@ -25,8 +35,6 @@ interface ServiceData {
 
 interface AllocationData {
   allocation: Allocation | null
-  cpuMetrics: MetricPoint[]
-  memoryMetrics: MetricPoint[]
 }
 
 interface ClusterStore {
@@ -34,6 +42,9 @@ interface ClusterStore {
   clusterStatus: ClusterStatus | null
   nodes: Node[]
   services: ServiceDefinition[]
+  clusterCpuMetrics: MetricPoint[]
+  clusterMemoryMetrics: MetricPoint[]
+  clusterRpsMetrics: MetricPoint[]
 
   // Detail caches (populated by per-page SSE subscriptions)
   nodeCache: Record<string, NodeData>
@@ -42,7 +53,7 @@ interface ClusterStore {
 
   sseConnected: boolean
 
-  // Global SSE (cluster status / nodes / services / drain_progress)
+  // Global SSE (cluster status / nodes / services / cluster_metrics / drain_progress)
   initSSE: () => () => void
 
   // Per-page SSE subscriptions — return unsubscribe fn
@@ -90,10 +101,21 @@ function openStream(
   }
 }
 
+const emptyNodeData = (): NodeData => ({
+  node: null, allocations: [], cpuMetrics: [], memoryMetrics: [], rpsMetrics: [],
+})
+
+const emptyServiceData = (): ServiceData => ({
+  service: null, allocations: [], cpuMetrics: [], memoryMetrics: [], allocCountMetrics: [],
+})
+
 export const useClusterStore = create<ClusterStore>((set, get) => ({
   clusterStatus: null,
   nodes: [],
   services: [],
+  clusterCpuMetrics: [],
+  clusterMemoryMetrics: [],
+  clusterRpsMetrics: [],
   nodeCache: {},
   serviceCache: {},
   allocationCache: {},
@@ -123,15 +145,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
           const nodeCache = { ...get().nodeCache }
           for (const node of nodes) {
             const existing = nodeCache[node.id]
-            nodeCache[node.id] = existing
-              ? { ...existing, node }
-              : {
-                  node,
-                  allocations: [],
-                  cpuMetrics: [],
-                  memoryMetrics: [],
-                  rpsMetrics: [],
-                }
+            nodeCache[node.id] = existing ? { ...existing, node } : { ...emptyNodeData(), node }
           }
           set({ nodes, nodeCache })
         } catch { /* ignore */ }
@@ -144,6 +158,17 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
         } catch { /* ignore */ }
       })
 
+      es.addEventListener('cluster_metrics', (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          set((state) => ({
+            clusterCpuMetrics: appendMetrics(state.clusterCpuMetrics, data.cpu || []),
+            clusterMemoryMetrics: appendMetrics(state.clusterMemoryMetrics, data.memory || []),
+            clusterRpsMetrics: appendMetrics(state.clusterRpsMetrics, data.rps || []),
+          }))
+        } catch { /* ignore */ }
+      })
+
       es.addEventListener('drain_progress', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -153,10 +178,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
               set((state) => ({
                 nodeCache: {
                   ...state.nodeCache,
-                  [data.node_id]: {
-                    ...cached,
-                    node: { ...cached.node, status: data.status },
-                  },
+                  [data.node_id]: { ...cached, node: { ...cached.node, status: data.status } },
                 },
               }))
             }
@@ -178,42 +200,26 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
           const data = JSON.parse(event.data)
           const allocations: Allocation[] = data.allocations || []
           set((state) => {
-            const existing = state.nodeCache[nodeId] || {
-              node: null,
-              allocations: [],
-              cpuMetrics: [],
-              memoryMetrics: [],
-              rpsMetrics: [],
-            }
-            return {
-              nodeCache: {
-                ...state.nodeCache,
-                [nodeId]: { ...existing, allocations },
-              },
-            }
+            const existing = state.nodeCache[nodeId] || emptyNodeData()
+            return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, allocations } } }
           })
         } catch { /* ignore */ }
       })
 
+      // Delta append: server sends only new points since last tick.
       es.addEventListener('metrics', (event) => {
         try {
           const data = JSON.parse(event.data)
           set((state) => {
-            const existing = state.nodeCache[nodeId] || {
-              node: null,
-              allocations: [],
-              cpuMetrics: [],
-              memoryMetrics: [],
-              rpsMetrics: [],
-            }
+            const existing = state.nodeCache[nodeId] || emptyNodeData()
             return {
               nodeCache: {
                 ...state.nodeCache,
                 [nodeId]: {
                   ...existing,
-                  cpuMetrics: data.cpu || [],
-                  memoryMetrics: data.memory || [],
-                  rpsMetrics: data.rps || [],
+                  cpuMetrics: appendMetrics(existing.cpuMetrics, data.cpu || []),
+                  memoryMetrics: appendMetrics(existing.memoryMetrics, data.memory || []),
+                  rpsMetrics: appendMetrics(existing.rpsMetrics, data.rps || []),
                 },
               },
             }
@@ -229,13 +235,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
         try {
           const data = JSON.parse(event.data)
           set((state) => {
-            const existing = state.serviceCache[name] || {
-              service: null,
-              allocations: [],
-              cpuMetrics: [],
-              memoryMetrics: [],
-              allocCountMetrics: [],
-            }
+            const existing = state.serviceCache[name] || emptyServiceData()
             return {
               serviceCache: {
                 ...state.serviceCache,
@@ -250,25 +250,20 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
         } catch { /* ignore */ }
       })
 
+      // Delta append for service metrics.
       es.addEventListener('metrics', (event) => {
         try {
           const data = JSON.parse(event.data)
           set((state) => {
-            const existing = state.serviceCache[name] || {
-              service: null,
-              allocations: [],
-              cpuMetrics: [],
-              memoryMetrics: [],
-              allocCountMetrics: [],
-            }
+            const existing = state.serviceCache[name] || emptyServiceData()
             return {
               serviceCache: {
                 ...state.serviceCache,
                 [name]: {
                   ...existing,
-                  cpuMetrics: data.cpu || [],
-                  memoryMetrics: data.memory || [],
-                  allocCountMetrics: data.allocations_count || [],
+                  cpuMetrics: appendMetrics(existing.cpuMetrics, data.cpu || []),
+                  memoryMetrics: appendMetrics(existing.memoryMetrics, data.memory || []),
+                  allocCountMetrics: appendMetrics(existing.allocCountMetrics, data.allocations_count || []),
                 },
               },
             }
@@ -283,42 +278,12 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
       es.addEventListener('detail', (event) => {
         try {
           const data = JSON.parse(event.data)
-          set((state) => {
-            const existing = state.allocationCache[allocId] || {
-              allocation: null,
-              cpuMetrics: [],
-              memoryMetrics: [],
-            }
-            return {
-              allocationCache: {
-                ...state.allocationCache,
-                [allocId]: { ...existing, allocation: data.allocation || null },
-              },
-            }
-          })
-        } catch { /* ignore */ }
-      })
-
-      es.addEventListener('metrics', (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          set((state) => {
-            const existing = state.allocationCache[allocId] || {
-              allocation: null,
-              cpuMetrics: [],
-              memoryMetrics: [],
-            }
-            return {
-              allocationCache: {
-                ...state.allocationCache,
-                [allocId]: {
-                  ...existing,
-                  cpuMetrics: data.cpu || [],
-                  memoryMetrics: data.memory || [],
-                },
-              },
-            }
-          })
+          set((state) => ({
+            allocationCache: {
+              ...state.allocationCache,
+              [allocId]: { allocation: data.allocation || null },
+            },
+          }))
         } catch { /* ignore */ }
       })
     })
@@ -331,10 +296,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
       return {
         nodeCache: {
           ...state.nodeCache,
-          [nodeId]: {
-            ...cached,
-            node: { ...cached.node, status },
-          },
+          [nodeId]: { ...cached, node: { ...cached.node, status } },
         },
       }
     })

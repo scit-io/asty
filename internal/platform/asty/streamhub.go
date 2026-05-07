@@ -125,6 +125,8 @@ func (h *streamHub) Run(ctx context.Context) {
 
 func (h *streamHub) refresh() {
 	snap := h.buildSnapshot()
+	// Feed snapshot into metricsStore — no separate KV-polling loop needed.
+	h.server.metricsStore.IngestSnapshot(snap)
 	h.mu.Lock()
 	h.snapshot = snap
 	h.mu.Unlock()

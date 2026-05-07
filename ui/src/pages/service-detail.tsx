@@ -21,7 +21,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { MetricsChart } from '@/components/metrics-chart'
 import { Cpu, MemoryStick, Clock, Activity, RotateCw, StopCircle } from 'lucide-react'
 import { formatDistanceToNow } from 'date-fns'
 import { useClusterStore } from '@/store/cluster'
@@ -31,8 +30,6 @@ export default function ServiceDetail() {
   const { allocationCache, subscribeAllocation, services } = useClusterStore()
   const cached = allocId ? allocationCache[allocId] : undefined
   const allocation = cached?.allocation || null
-  const cpuMetrics = cached?.cpuMetrics || []
-  const memoryMetrics = cached?.memoryMetrics || []
   const [logLines, setLogLines] = useState<string[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
@@ -314,10 +311,15 @@ export default function ServiceDetail() {
         </TabsContent>
 
         <TabsContent value="metrics" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <MetricsChart title="CPU Usage" data={cpuMetrics} color="hsl(var(--chart-1))" />
-            <MetricsChart title="Memory Usage" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" MB" />
-          </div>
+          <Card>
+            <CardContent className="pt-6">
+              <p className="text-sm text-muted-foreground">
+                Per-allocation metrics are available in the parent service overview.
+                Current CPU: <span className="font-mono font-medium">{allocation?.cpu_usage ?? '-'}%</span>{' '}
+                / Memory: <span className="font-mono font-medium">{allocation?.memory_usage ?? '-'} MB</span>
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="logs" className="space-y-4">

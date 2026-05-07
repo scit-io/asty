@@ -9,55 +9,22 @@ import { MetricsChart } from '@/components/metrics-chart'
 import { Button } from '@/components/ui/button'
 import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw, Heart } from 'lucide-react'
 import { useClusterStore } from '@/store/cluster'
-import type { MetricPoint } from '@/types'
 
 export default function Cluster() {
   const navigate = useNavigate()
-  const { nodes, clusterStatus } = useClusterStore()
-  const [cpuMetrics, setCpuMetrics] = useState<MetricPoint[]>([])
-  const [memoryMetrics, setMemoryMetrics] = useState<MetricPoint[]>([])
-  const [rpsMetrics, setRpsMetrics] = useState<MetricPoint[]>([])
+  const {
+    nodes,
+    clusterStatus,
+    clusterCpuMetrics,
+    clusterMemoryMetrics,
+    clusterRpsMetrics,
+  } = useClusterStore()
+
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    let retryCount = 0
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
-    let cancelled = false
-    let es: EventSource | null = null
-
-    const open = () => {
-      if (cancelled) return
-      es = new EventSource('/api/v1/stream/metrics/cluster')
-
-      es.addEventListener('metrics', (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          setCpuMetrics(data.cpu || [])
-          setMemoryMetrics(data.memory || [])
-          setRpsMetrics(data.rps || [])
-        } catch { /* ignore */ }
-      })
-
-      es.onopen = () => { retryCount = 0 }
-      es.onerror = () => {
-        es?.close()
-        if (cancelled) return
-        retryCount++
-        if (retryCount > 10) return
-        retryTimer = setTimeout(open, Math.min(3000 * Math.pow(2, retryCount - 1), 60000))
-      }
-    }
-
-    open()
-    return () => {
-      cancelled = true
-      if (retryTimer) clearTimeout(retryTimer)
-      es?.close()
-    }
-  }, [])
-
+  // Cluster logs via SSE — history + live.
   useEffect(() => {
     let retryCount = 0
     let retryTimer: ReturnType<typeof setTimeout> | null = null
@@ -195,9 +162,9 @@ export default function Cluster() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
-        <MetricsChart title="Cluster CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
-        <MetricsChart title="Cluster Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
-        <MetricsChart title="Gateway RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
+        <MetricsChart title="Cluster CPU" data={clusterCpuMetrics} color="hsl(var(--chart-1))" />
+        <MetricsChart title="Cluster Memory" data={clusterMemoryMetrics} color="hsl(var(--chart-2))" />
+        <MetricsChart title="Gateway RPS" data={clusterRpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
       </div>
 
       <Tabs defaultValue="nodes" className="space-y-4">
