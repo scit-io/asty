@@ -1,6 +1,7 @@
 # Аудит реального времени: UI ↔ Backend
 
-**Дата:** 2026-05-07  
+**Дата аудита:** 2026-05-07  
+**Дата реализации P1–P3:** 2026-05-07  
 **Контекст:** Данные в UI не обновляются в реальном времени. Требуется аудит SSE/Polling, план для event-driven архитектуры, учёт графиков с историей и масштаб 1000 сервисов × 1000 нод.
 
 ---
@@ -48,18 +49,18 @@ api.httpServer = &http.Server{
 
 ## 2. Карта всех UI ↔ Backend взаимодействий
 
-### 2.1 SSE-потоки (текущие)
+### 2.1 SSE-потоки (актуальное состояние после P1–P3)
 
 | Endpoint | Кто открывает | Частота событий | Что несёт |
 |---|---|---|---|
-| `GET /api/v1/stream` | `App.tsx` → `initSSE()` | каждые 5с (hub tick) | status, nodes, services (с runtime-метриками) |
-| `GET /api/v1/stream/node/:id` | `subscribeNode()` | каждые 5с | allocations этой ноды + полная история метрик (1 час) |
-| `GET /api/v1/stream/service/:name` | `subscribeService()` | каждые 5с | detail + allocations + полная история метрик (1 час) |
-| `GET /api/v1/stream/allocation/:id` | `subscribeAllocation()` | каждые 5с | detail + полная история метрик (1 час) |
-| `GET /api/v1/stream/metrics/cluster` | `cluster.tsx` useEffect | каждые 5с | полная история метрик кластера (1 час) |
-| `GET /api/v1/logs/cluster?follow=true` | `cluster.tsx` useEffect | push (NATS sub) | live логи сервера |
-| `GET /api/v1/logs/node/:id?follow=true` | `node-detail.tsx` | push (NATS sub) | live логи агента |
-| `GET /api/v1/logs/allocation/:id?follow=true` | `service-detail.tsx` | push (NATS sub) | live логи процесса |
+| `GET /api/v1/stream` | `App.tsx` → `initSSE()` | каждые 5с (hub tick) | status, nodes, services, **cluster_metrics** (delta) |
+| `GET /api/v1/stream/node/:id` | `subscribeNode()` | каждые 5с | allocations + metrics (delta, история на первом connect) |
+| `GET /api/v1/stream/service/:name` | `subscribeService()` | каждые 5с | detail + allocations + metrics (delta) |
+| `GET /api/v1/stream/allocation/:id` | `subscribeAllocation()` | каждые 5с | detail только (no per-alloc metrics) |
+| ~~`GET /api/v1/stream/metrics/cluster`~~ | ~~cluster.tsx~~ | — | **удалён**, метрики теперь в `/stream` |
+| `GET /api/v1/logs/cluster?follow=true` | `cluster.tsx` useEffect | push (NATS sub) | история из LogBuffer + live логи сервера |
+| `GET /api/v1/logs/node/:id?follow=true` | `node-detail.tsx` | push (NATS sub) | история из LogBuffer + live логи агента |
+| `GET /api/v1/logs/allocation/:id?follow=true` | `service-detail.tsx` | push (NATS sub) | история из LogBuffer + live логи процесса |
 
 ### 2.2 REST-запросы (текущие)
 
@@ -73,92 +74,48 @@ api.httpServer = &http.Server{
 | `GET /api/v1/deployments` | deploy page | одноразовый |
 | `POST /api/v1/...` | мутации (drain, scale, deploy) | одноразовый |
 
-### 2.3 Проблема: Cluster страница открывает 3 SSE-соединения
+### 2.3 ~~Проблема: Cluster страница открывает 3 SSE-соединения~~ ✅ Исправлено
 
-```
-App.tsx:         /api/v1/stream            ← nodes, services, status (уже есть)
-cluster.tsx:     /api/v1/stream/metrics/cluster  ← дублирует, отдельный поток
-cluster.tsx:     /api/v1/logs/cluster?follow=true ← OK, этого нет в глобальном потоке
-```
-
-Метрики кластера можно включить в глобальный `/api/v1/stream` как отдельный event-тип.
+~~`cluster.tsx` открывал `/api/v1/stream/metrics/cluster` отдельно.~~  
+Метрики кластера перенесены в глобальный `/api/v1/stream` как event `cluster_metrics`.  
+Cluster страница теперь открывает 2 SSE-соединения: `/stream` и `/logs/cluster`.
 
 ---
 
 ## 3. Архитектурные проблемы
 
-### 3.1 Два независимых цикла сбора данных
+### 3.1 ~~Два независимых цикла сбора данных~~ ✅ Исправлено
 
-**Проблема:** `metricsStore.StartCollection()` и `streamHub.refresh()` оба читают NATS KV независимо.
+~~`metricsStore.StartCollection()` и `streamHub.refresh()` оба читали NATS KV независимо.~~
 
-```
-streamHub.refresh()           → каждые 5с → ListNodes() + ListAllocations() × сервисы
-metricsStore.collectMetrics() → каждые 10с → ListNodes() + ListAllocations() × сервисы
-```
+Реализован `metricsStore.IngestSnapshot(snap)` — метрики теперь выводятся из snapshot, который hub уже строит.  
+`StartCollection()` и `collectMetrics()` удалены. KV-нагрузка от MetricsStore: **0 читов/сек**.
 
-При 1000 сервисах:
-- streamHub: 1000 KV-читов каждые 5с = **200 читов/сек**
-- metricsStore: 1000 KV-читов каждые 10с = **100 читов/сек**
-- Итого: **~300 KV-читов/сек** только на фоновые петли, без пользовательских запросов
+### 3.2 ~~SSE-потоки шлют всю историю метрик на каждый тик~~ ✅ Исправлено
 
-streamHub уже строит полный snapshot со всеми allocations. metricsStore должен получать данные из этого snapshot, а не ходить в KV сам.
+~~На каждый тик клиент получал 360 точек (час при интервале 10с).~~
 
-### 3.2 SSE-потоки шлют всю историю метрик на каждый тик
+Реализована delta-модель: `lastMetricsSent time.Time` в каждом SSE-хендлере. На первом connect — полная история (2ч), на каждом следующем тике — только новые точки (обычно 1).  
+Добавлен `GetAfter(key, after time.Time)` в MetricsStore.
 
-**Файл:** `api.go`, хендлеры `handleStreamNode`, `handleStreamService`, `handleStreamAllocation`
+Frontend: `appendMetrics()` в store накапливает дельты с ограничением `MAX_CHART_POINTS = 1440`.
 
-```go
-since := time.Now().Add(-1 * time.Hour)
-sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-    "cpu": ms.Get("node."+nodeID+".cpu", since), // 360 точек каждые 5с
-```
+### 3.3 ~~Масштаб in-memory MetricsStore~~ ✅ Исправлено
 
-На каждый тик клиент получает 360 точек (час при интервале 10с). При нескольких открытых вкладках:
-- 1 нода-detail = 2 массива × 360 точек × каждые 5с  
-- 5 вкладок = 10 массивов × 360 точек = **~14 KB JSON каждые 5 секунд**
+~~При `maxAge: 24h`: ~4.7 GB RAM — неприемлемо.~~
 
-Нужна delta-модель: отсылать только новые точки с момента последнего события.
+- `maxAge` снижен до 2 часов → ~0.4 GB RAM
+- Per-allocation метрики убраны из MetricsStore (аллокации эфемерны, UUID накапливался без ограничений)
+- `AllocationData` в store содержит только текущий snapshot (no time series)
 
-### 3.3 Масштаб in-memory MetricsStore
+### 3.4 ~~Нет истории логов~~ ✅ Исправлено
 
-При текущих настройках (`maxAge: 24h`, интервал 10с):
+~~Все log-эндпоинты без `follow=true` возвращали заглушки.~~
 
-```
-Ключи метрик:
-  Ноды:           2 ключа × 1000 нод = 2 000
-  Сервисы:        3 ключа × 1000 сервисов = 3 000
-  Аллокации:      2 ключа × 1000 сервисов × avg 3 аллок = 6 000
-  Итого:          ~11 000 ключей
-
-Точек на ключ:    24h × 3600/10 = 8 640
-
-Размер одной точки: ~50 байт (JSON)
-Итого RAM:        11 000 × 8 640 × 50 = ~4.7 GB
-```
-
-Это неприемлемо для продакшена. Хранить 24h истории in-memory нельзя.
-
-Решение:
-- in-memory: последние 1-2 часа (720-1440 точек)
-- долгосрочная история: NATS JetStream с TTL или внешнее хранилище
-
-Также: per-allocation метрики не нужны исторически — аллокации эфемерны. Достаточно текущего значения в snapshot.
-
-### 3.4 Нет истории логов
-
-Все log-эндпоинты без `follow=true` возвращают заглушки:
-
-```go
-// handleLogsCluster, follow=false:
-"logs": []string{
-    "[...] Cluster log stream available via SSE (follow=true)",
-    "[asty] Use follow=true for real-time cluster events",
-}
-```
-
-Реальная история отсутствует. NATS pub/sub — fire-and-forget, без буферизации.
-
-**Нужно:** кольцевой буфер на сервере (последние N строк) + JetStream для долгосрочного хранения.
+Реализован `LogBuffer` — per-source кольцевой буфер (1000 строк).  
+Sources: `"cluster"`, `"node.{id}"`, `"node.{id}.svc.{name}"`.  
+Буфер пополняется NATS-подписками в `startLogBuffering()` (запускается при старте сервера).  
+`follow=true` — сначала реплей из буфера, затем live NATS.
 
 ### 3.5 handleEvents возвращает пустой массив
 
@@ -192,124 +149,62 @@ func (api *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 ## 5. План исправлений и улучшений
 
-### Приоритет 1 — Критические баги (делать сейчас)
+### Приоритет 1 — Критические баги ✅ Выполнено (2026-05-07)
 
-#### P1.1 Убрать WriteTimeout для SSE
+#### P1.1 ✅ Убрать WriteTimeout для SSE
 
 **Файл:** `internal/platform/asty/api.go`
 
 ```go
-// Вариант A: убрать глобально (проще, SSE — основной режим)
 api.httpServer = &http.Server{
     ReadHeaderTimeout: 5 * time.Second,
     ReadTimeout:       10 * time.Second,
     WriteTimeout:      0, // SSE-совместимо
 }
-
-// Вариант B: per-connection (элегантнее, REST-эндпоинты сохраняют timeout)
-// В начале каждого SSE-хендлера:
-rc := http.NewResponseController(w)
-rc.SetWriteDeadline(time.Time{}) // отключить deadline для этого соединения
 ```
 
-Рекомендую **Вариант A** — проще, нет риска забыть в новых хендлерах.
+Выбран Вариант A (глобально). SSE больше не рвётся через 10 секунд.
 
-#### P1.2 Убрать дублирующийся SSE-поток на странице Cluster
+#### P1.2 ✅ Убрать дублирующийся SSE-поток на странице Cluster
 
-**Файл:** `ui/src/pages/cluster.tsx`
-
-Сейчас открывает `/api/v1/stream/metrics/cluster` отдельно. Решение: добавить `cluster_metrics` event в глобальный `/api/v1/stream` и читать оттуда. Убрать отдельный `useEffect` с EventSource в cluster.tsx.
-
-**Backend:** в `handleStream` добавить `cluster_metrics` event с историей метрик кластера.  
-**Frontend:** в `initSSE()` добавить обработчик `cluster_metrics`, хранить в store.
+`cluster_metrics` event добавлен в глобальный `/api/v1/stream` с delta streaming.  
+`cluster.tsx` убрал отдельный `useEffect` с `/api/v1/stream/metrics/cluster`.  
+`initSSE()` в store обрабатывает `cluster_metrics` и накапливает через `appendMetrics()`.
 
 ---
 
-### Приоритет 2 — Масштаб и производительность
+### Приоритет 2 — Масштаб и производительность ✅ Выполнено (2026-05-07)
 
-#### P2.1 Delta streaming для исторических метрик
+#### P2.1 ✅ Delta streaming для исторических метрик
 
-Вместо "посылать всю историю на каждый тик" — посылать только дельту.
+`lastMetricsSent time.Time` в каждом SSE-хендлере. Первый connect — полная история (2ч), каждый тик — только новые точки.  
+Добавлен `GetAfter(key string, after time.Time) []MetricPoint` в MetricsStore.  
+Frontend: `appendMetrics()` helper в store, `MAX_CHART_POINTS = 1440`.
 
-**Backend:** в каждом SSE-stream-хендлере (node/service/allocation/cluster) хранить `lastSentTimestamp`. На каждый тик отсылать только точки `> lastSentTimestamp`.
+#### P2.2 ✅ Убрать дублирование сбора метрик
 
-```go
-// Вместо:
-since := time.Now().Add(-1 * time.Hour)
-ms.Get(key, since)  // 360 точек
+`metricsStore.StartCollection()` и `collectMetrics()` удалены.  
+`streamHub.refresh()` вызывает `metricsStore.IngestSnapshot(snap)` перед fanout.  
+`IngestSnapshot` выводит CPU/memory/alloc_count из hub snapshot без KV-читов.
 
-// Стать:
-ms.GetAfter(key, lastSentTimestamp)  // только новые точки
-```
+#### P2.3 ✅ Ограничить in-memory историю
 
-При первом соединении — посылать историю целиком (initial burst), потом только дельты.
-
-**Frontend:** в store вместо `cpuMetrics = data.cpu` делать append:
-```ts
-cpuMetrics: [...existing.cpuMetrics, ...data.cpu].slice(-MAX_POINTS)
-```
-
-#### P2.2 Убрать дублирование сбора метрик
-
-Убрать `metricsStore.StartCollection()`. Кормить MetricsStore из streamHub-снимков:
-
-```go
-func (h *streamHub) refresh() {
-    snap := h.buildSnapshot()
-    h.server.metricsStore.IngestSnapshot(snap)  // новый метод
-    h.mu.Lock()
-    h.snapshot = snap
-    h.mu.Unlock()
-    h.fanout(snap)
-}
-```
-
-`IngestSnapshot` извлекает CPU/memory/alloc_count из snap и записывает в store без лишних KV-читов.
-
-#### P2.3 Ограничить in-memory историю
-
-Уменьшить `maxAge` до 2 часов:
-```go
-s.metricsStore = NewMetricsStore(2 * time.Hour)
-```
-
-Убрать per-allocation метрики из MetricsStore (они эфемерны, достаточно текущего значения в snapshot).
+`maxAge` снижен до 2 часов. Per-allocation метрики убраны.  
+`AllocationData` в Zustand store не содержит time series — только текущий snapshot.
 
 ---
 
-### Приоритет 3 — История логов
+### Приоритет 3 — История логов ✅ Выполнено (2026-05-07)
 
-#### P3.1 Кольцевой буфер логов на сервере
+#### P3.1 ✅ Кольцевой буфер логов на сервере
 
-Добавить `LogBuffer` — per-source ring buffer последних N строк:
+`log_buffer.go` — `LogBuffer` с per-source ring buffer (1000 строк).  
+`startLogBuffering()` в Server подписывается на `asty.v1.server.logs` и `asty.v1.agent.*.logs.*`.
 
-```go
-type LogBuffer struct {
-    mu    sync.RWMutex
-    lines map[string][]LogLine  // source → ring buffer
-    maxN  int                   // default: 1000
-}
+#### P3.2 ✅ REST-эндпоинты возвращают историю из буфера
 
-type LogLine struct {
-    Timestamp int64  `json:"ts"`
-    Level     string `json:"level"`
-    Message   string `json:"message"`
-    Fields    map[string]interface{} `json:"fields,omitempty"`
-}
-```
-
-Sources: `"cluster"`, `"node.{id}"`, `"alloc.{service}.{id}"`
-
-Буфер пополняется NATS-подписчиком (тем же, что сейчас используется для SSE).
-
-#### P3.2 REST-эндпоинты возвращают историю из буфера
-
-```
-GET /api/v1/logs/cluster?lines=100    → последние 100 строк из LogBuffer["cluster"]
-GET /api/v1/logs/node/:id?lines=100   → из LogBuffer["node.{id}"]
-```
-
-SSE `follow=true` продолжает работать через NATS-подписку.
+`follow=false` — возвращает последние N строк из LogBuffer.  
+`follow=true` — реплей из буфера + live NATS-подписка.
 
 ---
 
@@ -430,22 +325,19 @@ NATS pub/sub (logs):
 
 ## 7. Приоритизированный план задач
 
-### Сейчас (делать немедленно)
+### Выполнено ✅
 
-- [ ] **P1.1** Убрать `WriteTimeout` в `api.go` → это исправит реальное время на UI
-- [ ] **P1.2** Убрать дублирующий SSE-поток `/stream/metrics/cluster` со страницы Cluster, перенести в глобальный stream
+- [x] **P1.1** Убрать `WriteTimeout` в `api.go` → исправлено реальное время на UI
+- [x] **P1.2** Убрать дублирующий SSE-поток `/stream/metrics/cluster`, перенести `cluster_metrics` в глобальный stream
+- [x] **P2.1** Delta streaming для метрик (`GetAfter` + `lastMetricsSent`)
+- [x] **P2.2** `metricsStore.IngestSnapshot()` — убран дублирующий KV-polling, `StartCollection` удалён
+- [x] **P2.3** `maxAge` снижен до 2h, per-allocation time series убраны
+- [x] **P3.1** Кольцевой `LogBuffer` — история логов (1000 строк, per-source)
+- [x] **P3.2** REST-эндпоинты логов возвращают историю из буфера + live через NATS
 
-### Следующий спринт
+### Производительность / масштаб (следующий этап)
 
-- [ ] **P2.1** Delta streaming для метрик (не полная история на каждый тик)
-- [ ] **P2.2** `metricsStore.IngestSnapshot()` — убрать дублирующий KV-polling
-- [ ] **P2.3** Уменьшить `maxAge` до 2h, убрать per-allocation time series
-- [ ] **P3.1** Кольцевой `LogBuffer` — история логов
-- [ ] **P3.2** REST-эндпоинты логов возвращают историю из буфера
-
-### Производительность / масштаб
-
-- [ ] **P4.1** JetStream KV Watch → `allocIndex` (убрать polling в buildSnapshot)
+- [ ] **P4.1** JetStream KV Watch → `allocIndex` (убрать KV polling в buildSnapshot)
 - [ ] **P4.2** Debounced event-triggered hub refresh
 - [ ] **P5** История кластерных событий (ClusterEvent ring buffer + SSE event)
 
@@ -453,22 +345,274 @@ NATS pub/sub (logs):
 
 ## 8. Оценка влияния по сценарию 1000×1000
 
-| Метрика | Сейчас | После P1 | После P2 | После P4 |
-|---|---|---|---|---|
-| KV-читов/сек (фон) | ~300 | ~300 | ~150 | ~0 |
-| Размер SSE payload (node detail, /тик) | ~14 KB | ~14 KB | ~0.1 KB | ~0.1 KB |
-| RAM (MetricsStore) | ~5 GB | ~5 GB | ~0.4 GB | ~0.4 GB |
-| Задержка обновления UI | 10–60с* | 5с | 5с | <1с |
+| Метрика | До (баг) | После P1–P3 ✅ | После P4 |
+|---|---|---|---|
+| KV-читов/сек (фон) | ~300 | ~150 (только hub) | ~0 |
+| Размер SSE payload (node detail, /тик) | ~14 KB | ~0.1 KB (delta) | ~0.1 KB |
+| RAM (MetricsStore) | ~5 GB | ~0.4 GB | ~0.4 GB |
+| Задержка обновления UI | 10–60с* | 5с | <1с |
 
-*из-за бага WriteTimeout — соединение рвётся и reconnect с backoff
+*WriteTimeout рвал SSE через 10с, exponential backoff растягивал reconnect до 60с
 
 ---
 
 ## 9. Что не стоит менять
 
-- **Architektura SSE hub** — правильная основа, не менять
+- **Архитектура SSE hub** — правильная основа, snapshot остаётся для control-plane state
 - **Drain через NATS pub/sub** — event-driven, уже работает правильно
-- **Log streaming NATS → SSE** — механизм правильный, нужно только добавить буфер истории
+- **Log streaming NATS → SSE** — механизм правильный
 - **REST для мутаций** — правильно (drain, scale, deploy как POST)
 - **Exponential backoff reconnect в UI** — правильно
 - **Non-blocking fan-out** — правильно
+
+---
+
+## 10. Архитектура метрик (следующий этап)
+
+**Дата фиксации:** 2026-05-07
+
+### Концепция
+
+JetStream — центральная шина метрик. Asty не хранит метрики. `MetricsStore` удаляется полностью.
+
+Все источники публикуют в JetStream. Все потребители читают из JetStream через Asty.  
+UI и Prometheus не знают друг о друге и не взаимодействуют между собой.
+
+### Потоки данных
+
+```
+Agent (на каждой ноде):
+  /proc → js.Publish("metrics.node.{id}", payload)
+  /proc → js.Publish("metrics.node.{id}.service.{name}", payload)
+
+Сервисы (напрямую через NATS):
+  app code → js.Publish("metrics.node.{id}.service.{name}.{key}", payload)
+
+Asty Server (урезанный snapshot):
+  KV state → агрегаты по сервису → js.Publish("metrics.service.{name}", payload)
+
+─────────────────────────────────────────────────────
+JetStream STREAM: METRICS
+  subjects:           metrics.>
+  storage:            Memory
+  MaxMsgsPerSubject:  1   ← не хранилище, только последнее значение
+─────────────────────────────────────────────────────
+
+Asty: одна подписка на metrics.>
+  → MetricsCache: map[subject]MetricMsg  ← last value only, не time series
+  → fan-out channels для SSE подписчиков
+
+  ├── SSE /api/v1/stream      → UI        (push на каждый входящий msg)
+  └── GET /metrics            → Prometheus (итерирует MetricsCache при scrape)
+```
+
+### Иерархия subjects
+
+```
+metrics.node.{nodeId}                            ← ресурсы ноды
+metrics.node.{nodeId}.service.{serviceName}      ← сервис на конкретной ноде
+metrics.node.{nodeId}.service.{serviceName}.{key} ← кастомные метрики сервиса
+metrics.service.{serviceName}                    ← агрегат по всем нодам
+```
+
+**Wildcard запросы:**
+- Всё по ноде N: `metrics.node.N.>`
+- Сервис S на всех нодах: `metrics.node.*.service.S`
+- Только ноды (без сервисов): `metrics.node.*`
+- Все агрегаты: `metrics.service.>`
+
+### Формат сообщений
+
+Поля зависят от уровня subject:
+
+```json
+// metrics.node.{id}
+{"ts": 1746617400, "node": "n1", "cpu_percent": 42.3, "memory_mb": 4096, "memory_percent": 65.0, "rps": 8.5}
+
+// metrics.node.{id}.service.{name}
+{"ts": 1746617400, "node": "n1", "service": "gateway", "cpu_percent": 12.1, "memory_mb": 128, "status": "running"}
+
+// metrics.service.{name}  (агрегат, сервер)
+{"ts": 1746617400, "service": "gateway", "avg_cpu_percent": 11.8, "avg_memory_mb": 124, "copies_running": 3}
+
+// metrics.node.{id}.service.{name}.{key}  (кастомные, любые поля)
+{"ts": 1746617400, "node": "n1", "service": "myapp", "value": 88, "queue_depth": 88}
+```
+
+### Prometheus `/metrics`
+
+Asty при каждом scrape итерирует `MetricsCache` и генерирует gauge-метрики.  
+Имена и labels выводятся из subject иерархии автоматически:
+
+```
+asty_node_cpu_percent{node="n1", dc="dc1"}              42.3
+asty_node_memory_mb{node="n1", dc="dc1"}                4096
+asty_node_memory_percent{node="n1", dc="dc1"}           65.0
+asty_node_rps{node="n1", dc="dc1"}                      8.5
+
+asty_service_node_cpu_percent{node="n1", service="gw"}  12.1
+asty_service_node_memory_mb{node="n1", service="gw"}    128
+
+asty_service_avg_cpu_percent{service="gw"}              11.8
+asty_service_avg_memory_mb{service="gw"}                124
+asty_service_copies_running{service="gw"}               3
+
+# Кастомные метрики сервисов — автоматически
+asty_service_node_queue_depth{node="n1", service="myapp"} 88
+```
+
+### Роль snapshot после рефакторинга
+
+Snapshot остаётся, но только для **control-plane state** (не метрики):
+
+| Остаётся в snapshot | Уходит из snapshot |
+|---|---|
+| Список нод и статусы | Сбор CPU/memory из KV → MetricsStore |
+| Список аллокаций (topology) | IngestSnapshot |
+| Список сервисов (определения) | subscribeGatewayMetrics (агент публикует сам) |
+| Cluster status (leader, healthy) | Все метрики в SSE handlers |
+| Агрегаты сервисов → JetStream | |
+
+### Что удаляется
+
+- `MetricsStore` — полностью (ring buffer, `GetAfter`, `Add`, `AddEvent`)
+- `IngestSnapshot` — заменяется на `PublishServiceAggregates` (только агрегаты в JetStream)
+- `subscribeGatewayMetrics` в server — агент публикует RPS напрямую
+- Delta streaming в SSE handlers — не нужен (JetStream push)
+- `collector.go` на сервере — сбор метрик переходит к агенту
+
+### Что добавляется
+
+**Backend:**
+- `MetricsCache` — `map[subject]MetricMsg` + fan-out channels (≤ 1 KB RAM на 1000 метрик)
+- JetStream stream `METRICS` — создаётся при старте Asty если не существует
+- `PublishMetrics(snap)` в агенте — публикует node + node.service метрики в JetStream
+- `PublishServiceAggregates(snap)` на сервере — публикует metrics.service.{name}
+- `/metrics` Prometheus endpoint — генерирует gauges из MetricsCache
+- SSE fan-out из MetricsCache subscription
+
+**Frontend:**
+- `appendMetrics` в store остаётся — браузер накапливает из SSE пока вкладка открыта
+- Убрать `MAX_CHART_POINTS` жёсткое ограничение (или увеличить — браузер ограничен RAM, не сервером)
+
+### Порядок реализации
+
+1. Создать JetStream stream `METRICS` при старте (server + agent)
+2. `MetricsCache` — подписка `metrics.>`, map + fan-out
+3. Агент: `PublishMetrics` — читает /proc, публикует node + node.service в JetStream
+4. Сервер: `PublishServiceAggregates` в hub — агрегаты из KV snapshot → JetStream
+5. SSE handlers — убрать MetricsStore чтение, подписаться на MetricsCache fan-out
+6. `/metrics` — полный Prometheus endpoint из MetricsCache
+7. Удалить MetricsStore, IngestSnapshot, subscribeGatewayMetrics, collector на сервере
+8. UI — убрать жёсткое ограничение точек, накопление остаётся
+
+---
+
+## 11. Health checks: текущее состояние и event-driven архитектура
+
+**Дата фиксации:** 2026-05-07
+
+### Текущее состояние (не работает сквозно)
+
+`health.go` — агент HTTP-опрашивает локальные процессы периодически.  
+Результат хранится in-memory на агенте. Никуда не публикуется.
+
+```go
+// agent.go:183 — закомментировано, TODO про динамический порт
+// a.healthChecker.Register(svc.Name, addr, svc.Health.Path, ...)
+```
+
+`ServiceAllocation.HealthStatus` никогда не обновляется из реальных проверок.  
+`publishProcessMetrics` пишет CPU/memory в KV — но не health status.  
+Поле `health_status` в UI всегда `""` или `"unknown"`.
+
+### Три независимых сигнала здоровья
+
+Здоровье сервиса — это не один вопрос, а три разных:
+
+| Вопрос | Сигнал | Polling? |
+|---|---|---|
+| Процесс жив? | OS: `cmd.Wait()` уже реализован в agent | **Нет** — event при падении |
+| HTTP /health отвечает? | Агент опрашивает локально | Да, но только агент |
+| Агент жив? | JetStream KV TTL — heartbeat | **Нет** — KV Watch на expiry |
+
+### Event-driven подход
+
+**Сигнал 1 — падение процесса (уже event-driven):**
+
+Агент уже ловит выход процесса через `cmd.Wait()` в `monitorProcesses`.  
+Единственное изменение: при падении сразу публиковать в JetStream:
+
+```
+metrics.node.{id}.service.{name}  →  {healthy: false, status: "failed", ts: ...}
+```
+
+Сервер узнаёт о падении через MetricsCache fan-out мгновенно — без polling.
+
+**Сигнал 2 — HTTP health probe (polling, но только локально):**
+
+Агент продолжает опрашивать локальный HTTP endpoint сервиса.  
+Результат идёт в то же metrics-сообщение что и CPU/memory:
+
+```
+metrics.node.{id}.service.{name}  →  {cpu_percent, memory_mb, healthy: true/false, ts: ...}
+```
+
+Сервер не участвует в polling — только получает готовый результат из JetStream.
+
+**Сигнал 3 — liveness агента (JetStream KV TTL, event-driven):**
+
+```
+KV bucket: asty-agents
+  key:   agent.{nodeId}
+  value: {node_id, ip, ts}
+  TTL:   30s
+```
+
+Агент обновляет ключ каждые 10с.  
+Если агент умер → ключ истекает через 30с → KV Watch на сервере получает `KeyValueDelete` событие → нода помечается `down` немедленно.
+
+Это заменяет текущую логику `NodeInfo.LastSeen` (hub читает KV каждые 5с и проверяет время).
+
+### Итоговый event-driven поток
+
+```
+Процесс падает
+  → cmd.Wait() в agent
+  → js.Publish("metrics.node.{id}.service.{name}", {healthy: false})
+  → MetricsCache fan-out → UI + Prometheus
+
+HTTP probe unhealthy
+  → healthChecker.performCheck() локально
+  → следующий publishMetrics тик включает healthy: false
+  → JetStream → MetricsCache fan-out → UI + Prometheus
+
+Агент умирает
+  → KV key "agent.{nodeId}" истекает (TTL 30s)
+  → cs.WatchNodes() на сервере получает Delete event
+  → нода → status: "down"
+  → SSE state event → UI
+```
+
+Сервер не делает ни одного периодического health-запроса.  
+Все изменения здоровья — push-события.
+
+### Что меняется в коде
+
+**Agent:**
+- Раскомментировать и доделать `healthChecker.Register` (решить вопрос с портом через env `ASTY_HEALTH_ADDR`)
+- `publishProcessMetrics` → `publishMetrics`: добавить `healthy` поле из `healthChecker.IsHealthy()`
+- При падении процесса (`cmd.Wait()` → exit) — немедленно publish `{healthy: false, status: "failed"}`
+- Добавить heartbeat loop: `js.KeyValue("asty-agents").Put("agent.{id}", ...)` каждые 10с
+
+**Server:**
+- Убрать проверку `LastSeen` в hub snapshot (заменена KV TTL)
+- `WatchNodes` уже реализован в `state.go` — подписаться на Delete события для `agent.*` keys
+- Нода переходит в `down` по KV Watch событию, а не по таймеру в hub
+
+**Health check registration (доделать):**
+
+Текущая проблема — агент не знает порт процесса. Решения:
+- Сервис принимает порт через env `ASTY_HEALTH_PORT` (задаётся в `.asty` файле)
+- Или: фиксированный порт в `.asty` конфиге (`health.addr: ":8080"`)
+- Или: сервис сам публикует свой health endpoint через NATS при старте
