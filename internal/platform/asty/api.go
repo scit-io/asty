@@ -759,9 +759,6 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	eventCh, unsubEvent := hub.SubscribeEvents()
 	defer unsubEvent()
 
-	var lastMetricsSent time.Time
-	ms := api.server.metricsStore
-
 	emit := func(snap *clusterSnapshot) {
 		sseEvent(w, "status", mustJSON(map[string]interface{}{
 			"cluster":   snap.Cluster,
@@ -771,21 +768,32 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		sseEvent(w, "nodes", mustJSON(map[string]interface{}{"nodes": snap.Nodes}))
 		sseEvent(w, "services", mustJSON(map[string]interface{}{"services": snap.Services}))
 
-		// Cluster metrics — full history on first connect, delta on subsequent ticks.
-		var cpu, memory, rps []MetricPoint
-		if lastMetricsSent.IsZero() {
-			since := time.Now().Add(-2 * time.Hour)
-			cpu = ms.Get("cluster.cpu", since)
-			memory = ms.Get("cluster.memory", since)
-			rps = ms.Get("cluster.rps", since)
-		} else {
-			cpu = ms.GetAfter("cluster.cpu", lastMetricsSent)
-			memory = ms.GetAfter("cluster.memory", lastMetricsSent)
-			rps = ms.GetAfter("cluster.rps", lastMetricsSent)
+		// Cluster metrics — current values computed from snapshot.
+		var totalCPUUsed, totalCPUTotal, totalMemUsed, totalMemTotal, clusterRPS float64
+		ms := api.server.metricsStore
+		for _, node := range snap.Nodes {
+			if node.Status != "ready" {
+				continue
+			}
+			totalCPUUsed += float64(node.CPUTotal - node.CPUAvailable)
+			totalCPUTotal += float64(node.CPUTotal)
+			totalMemUsed += float64(node.MemoryTotal - node.MemoryAvailable)
+			totalMemTotal += float64(node.MemoryTotal)
+			clusterRPS += ms.GetLatestRPS(node.ID)
 		}
-		lastMetricsSent = time.Now()
+		clusterCPU := 0.0
+		if totalCPUTotal > 0 {
+			clusterCPU = totalCPUUsed / totalCPUTotal * 100
+		}
+		clusterMem := 0.0
+		if totalMemTotal > 0 {
+			clusterMem = totalMemUsed / totalMemTotal * 100
+		}
+		now := snap.Timestamp
 		sseEvent(w, "cluster_metrics", mustJSON(map[string]interface{}{
-			"cpu": cpu, "memory": memory, "rps": rps,
+			"cpu":    []MetricPoint{{Timestamp: now, Value: clusterCPU}},
+			"memory": []MetricPoint{{Timestamp: now, Value: clusterMem}},
+			"rps":    []MetricPoint{{Timestamp: now, Value: clusterRPS}},
 		}))
 		flusher.Flush()
 	}
@@ -844,9 +852,6 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 	snapshots, unsub := api.server.streamHub.Subscribe()
 	defer unsub()
 
-	var lastMetricsSent time.Time
-	ms := api.server.metricsStore
-
 	emit := func(snap *clusterSnapshot) {
 		allocs := snap.AllocsByNode[nodeID]
 		if allocs == nil {
@@ -854,20 +859,25 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 		}
 		sseEvent(w, "allocations", mustJSON(map[string]interface{}{"allocations": allocs}))
 
-		var cpu, memory, rps []MetricPoint
-		if lastMetricsSent.IsZero() {
-			since := time.Now().Add(-2 * time.Hour)
-			cpu = ms.Get("node."+nodeID+".cpu", since)
-			memory = ms.Get("node."+nodeID+".memory", since)
-			rps = ms.Get("node."+nodeID+".rps", since)
-		} else {
-			cpu = ms.GetAfter("node."+nodeID+".cpu", lastMetricsSent)
-			memory = ms.GetAfter("node."+nodeID+".memory", lastMetricsSent)
-			rps = ms.GetAfter("node."+nodeID+".rps", lastMetricsSent)
+		// Compute current node metrics from snapshot.
+		var cpuPct, memPct float64
+		for _, node := range snap.Nodes {
+			if node.ID == nodeID {
+				if node.CPUTotal > 0 {
+					cpuPct = float64(node.CPUTotal-node.CPUAvailable) / float64(node.CPUTotal) * 100
+				}
+				if node.MemoryTotal > 0 {
+					memPct = float64(node.MemoryTotal-node.MemoryAvailable) / float64(node.MemoryTotal) * 100
+				}
+				break
+			}
 		}
-		lastMetricsSent = time.Now()
+		rpsVal := api.server.metricsStore.GetLatestRPS(nodeID)
+		now := snap.Timestamp
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu": cpu, "memory": memory, "rps": rps,
+			"cpu":    []MetricPoint{{Timestamp: now, Value: cpuPct}},
+			"memory": []MetricPoint{{Timestamp: now, Value: memPct}},
+			"rps":    []MetricPoint{{Timestamp: now, Value: rpsVal}},
 		}))
 		flusher.Flush()
 	}
@@ -913,14 +923,16 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 	snapshots, unsub := api.server.streamHub.Subscribe()
 	defer unsub()
 
-	var lastMetricsSent time.Time
-	ms := api.server.metricsStore
-
 	emit := func(snap *clusterSnapshot) {
 		var svcDef *ServiceDefinition
+		var avgCPU, avgMem float64
+		var running int
 		for _, svc := range snap.Services {
 			if svc.Name == serviceName {
 				svcDef = svc.ServiceDefinition
+				avgCPU = svc.AvgCPUPercent
+				avgMem = svc.AvgMemoryMB
+				running = svc.CurrentCopies
 				break
 			}
 		}
@@ -933,20 +945,11 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 			"allocations": allocs,
 		}))
 
-		var cpu, memory, allocCount []MetricPoint
-		if lastMetricsSent.IsZero() {
-			since := time.Now().Add(-2 * time.Hour)
-			cpu = ms.Get("service."+serviceName+".cpu", since)
-			memory = ms.Get("service."+serviceName+".memory", since)
-			allocCount = ms.Get("service."+serviceName+".alloc_count", since)
-		} else {
-			cpu = ms.GetAfter("service."+serviceName+".cpu", lastMetricsSent)
-			memory = ms.GetAfter("service."+serviceName+".memory", lastMetricsSent)
-			allocCount = ms.GetAfter("service."+serviceName+".alloc_count", lastMetricsSent)
-		}
-		lastMetricsSent = time.Now()
+		now := snap.Timestamp
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu": cpu, "memory": memory, "allocations_count": allocCount,
+			"cpu":               []MetricPoint{{Timestamp: now, Value: avgCPU}},
+			"memory":            []MetricPoint{{Timestamp: now, Value: avgMem}},
+			"allocations_count": []MetricPoint{{Timestamp: now, Value: float64(running)}},
 		}))
 		flusher.Flush()
 	}

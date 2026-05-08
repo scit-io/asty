@@ -518,7 +518,7 @@ func (s *Server) subscribeGatewayMetrics() {
 		if err := json.Unmarshal(msg.Data, &report); err != nil {
 			return
 		}
-		s.metricsStore.Add("node."+report.NodeID+".rps", report.ValidRPS)
+		s.metricsStore.AddRPS(report.NodeID, report.ValidRPS)
 	})
 	if err != nil {
 		log.Error().Err(err).Str("subject", subject).Msg("failed to subscribe to gateway metrics")

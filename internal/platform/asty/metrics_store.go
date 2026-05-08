@@ -22,40 +22,46 @@ type ScalingEvent struct {
 	NodeID    string `json:"node_id,omitempty"`
 }
 
-// MetricsStore stores timeseries metrics in memory with bounded retention.
+// MetricsStore holds only data needed for autoscaler decisions:
+//   - node.{id}.rps timeseries (gateway traffic, 60s window)
+//   - scaling events log (ring buffer, max 1000)
+//
+// All UI metrics are computed live from the snapshot and pushed directly.
 type MetricsStore struct {
 	mu      sync.RWMutex
-	metrics map[string][]MetricPoint // key: "cluster.cpu", "node.{id}.cpu", etc
+	rps     map[string][]MetricPoint // "node.{id}.rps"
 	maxAge  time.Duration
 
 	eventsMu sync.RWMutex
-	events   []ScalingEvent // ring buffer, max 1000
+	events   []ScalingEvent
 }
 
 func NewMetricsStore(maxAge time.Duration) *MetricsStore {
 	return &MetricsStore{
-		metrics: make(map[string][]MetricPoint),
-		maxAge:  maxAge,
-		events:  make([]ScalingEvent, 0, 1000),
+		rps:    make(map[string][]MetricPoint),
+		maxAge: maxAge,
+		events: make([]ScalingEvent, 0, 1000),
 	}
 }
 
-// Add appends a metric point and prunes values older than maxAge.
-func (ms *MetricsStore) Add(key string, value float64) {
+// AddRPS records a gateway RPS sample for a node.
+func (ms *MetricsStore) AddRPS(nodeID string, value float64) {
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 
+	key := "node." + nodeID + ".rps"
 	point := MetricPoint{Timestamp: time.Now().Unix(), Value: value}
-	ms.metrics[key] = append(ms.metrics[key], point)
+	ms.rps[key] = append(ms.rps[key], point)
 	ms.cleanOld(key)
 }
 
-// Get returns metric points for a key with timestamp >= since.
-func (ms *MetricsStore) Get(key string, since time.Time) []MetricPoint {
+// GetRPS returns RPS points for a node with timestamp >= since.
+func (ms *MetricsStore) GetRPS(nodeID string, since time.Time) []MetricPoint {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	points := ms.metrics[key]
+	key := "node." + nodeID + ".rps"
+	points := ms.rps[key]
 	sinceUnix := since.Unix()
 	var result []MetricPoint
 	for _, p := range points {
@@ -69,30 +75,25 @@ func (ms *MetricsStore) Get(key string, since time.Time) []MetricPoint {
 	return result
 }
 
-// GetAfter returns metric points for a key with timestamp strictly > after.
-// Used for delta streaming: callers pass the time of the last send.
-func (ms *MetricsStore) GetAfter(key string, after time.Time) []MetricPoint {
+// GetLatestRPS returns the most recent RPS value for a node (for snapshot emission).
+func (ms *MetricsStore) GetLatestRPS(nodeID string) float64 {
 	ms.mu.RLock()
 	defer ms.mu.RUnlock()
 
-	points := ms.metrics[key]
-	afterUnix := after.Unix()
-	var result []MetricPoint
-	for _, p := range points {
-		if p.Timestamp > afterUnix {
-			result = append(result, p)
+	key := "node." + nodeID + ".rps"
+	points := ms.rps[key]
+	cutoff := time.Now().Add(-30 * time.Second).Unix()
+	for i := len(points) - 1; i >= 0; i-- {
+		if points[i].Timestamp >= cutoff {
+			return points[i].Value
 		}
 	}
-	if result == nil {
-		return []MetricPoint{}
-	}
-	return result
+	return 0
 }
 
-// cleanOld removes points older than maxAge (must be called with mu held).
 func (ms *MetricsStore) cleanOld(key string) {
 	cutoff := time.Now().Add(-ms.maxAge).Unix()
-	points := ms.metrics[key]
+	points := ms.rps[key]
 	keepFrom := 0
 	for i, p := range points {
 		if p.Timestamp >= cutoff {
@@ -100,71 +101,7 @@ func (ms *MetricsStore) cleanOld(key string) {
 			break
 		}
 	}
-	ms.metrics[key] = points[keepFrom:]
-}
-
-// IngestSnapshot derives metrics from a hub snapshot. Called by streamHub on
-// every refresh so metricsStore does not need its own KV-polling loop.
-// Per-allocation time series are intentionally omitted (allocations are
-// ephemeral; current values are embedded in the snapshot itself).
-func (ms *MetricsStore) IngestSnapshot(snap *clusterSnapshot) {
-	var totalCPUUsed, totalCPUTotal float64
-	var totalMemUsed, totalMemTotal float64
-
-	for _, node := range snap.Nodes {
-		if node.Status != "ready" {
-			continue
-		}
-		cpuUsed := float64(node.CPUTotal - node.CPUAvailable)
-		memUsed := float64(node.MemoryTotal - node.MemoryAvailable)
-		totalCPUUsed += cpuUsed
-		totalCPUTotal += float64(node.CPUTotal)
-		totalMemUsed += memUsed
-		totalMemTotal += float64(node.MemoryTotal)
-
-		cpuPct := 0.0
-		if node.CPUTotal > 0 {
-			cpuPct = cpuUsed / float64(node.CPUTotal) * 100
-		}
-		memPct := 0.0
-		if node.MemoryTotal > 0 {
-			memPct = memUsed / float64(node.MemoryTotal) * 100
-		}
-		ms.Add("node."+node.ID+".cpu", cpuPct)
-		ms.Add("node."+node.ID+".memory", memPct)
-	}
-
-	clusterCPU := 0.0
-	if totalCPUTotal > 0 {
-		clusterCPU = totalCPUUsed / totalCPUTotal * 100
-	}
-	clusterMem := 0.0
-	if totalMemTotal > 0 {
-		clusterMem = totalMemUsed / totalMemTotal * 100
-	}
-	ms.Add("cluster.cpu", clusterCPU)
-	ms.Add("cluster.memory", clusterMem)
-
-	// cluster.rps: sum the most recent per-node RPS (added by gateway reports).
-	cutoff := time.Now().Add(-30 * time.Second)
-	var clusterRPS float64
-	for _, node := range snap.Nodes {
-		if node.Status != "ready" {
-			continue
-		}
-		pts := ms.Get("node."+node.ID+".rps", cutoff)
-		if len(pts) > 0 {
-			clusterRPS += pts[len(pts)-1].Value
-		}
-	}
-	ms.Add("cluster.rps", clusterRPS)
-
-	// Per-service aggregates already computed in snapshot.
-	for _, svc := range snap.Services {
-		ms.Add("service."+svc.Name+".cpu", svc.AvgCPUPercent)
-		ms.Add("service."+svc.Name+".memory", svc.AvgMemoryMB)
-		ms.Add("service."+svc.Name+".alloc_count", float64(svc.CurrentCopies))
-	}
+	ms.rps[key] = points[keepFrom:]
 }
 
 // AddEvent records a scaling event.

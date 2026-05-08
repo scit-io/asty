@@ -224,7 +224,7 @@ func (as *Autoscaler) hasGatewayTraffic(node *NodeInfo) bool {
 	if as.metricsStore == nil {
 		return false
 	}
-	points := as.metricsStore.Get("node."+node.ID+".rps", time.Now().Add(-60*time.Second))
+	points := as.metricsStore.GetRPS(node.ID, time.Now().Add(-60*time.Second))
 	if len(points) == 0 {
 		return false
 	}

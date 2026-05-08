@@ -97,6 +97,7 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
           fill: fillColor,
           width: 2,
           points: { show: false },
+          paths: uPlot.paths.spline!(),
         },
       ],
     }

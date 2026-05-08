@@ -305,8 +305,6 @@ func (h *streamHub) Run(ctx context.Context) {
 
 func (h *streamHub) refresh() {
 	snap := h.buildSnapshot()
-	// Feed snapshot into metricsStore — no separate KV-polling loop needed.
-	h.server.metricsStore.IngestSnapshot(snap)
 	h.mu.Lock()
 	h.snapshot = snap
 	h.mu.Unlock()
@@ -444,6 +442,13 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 	allocsByNode := make(map[string][]*ServiceAllocation)
 	allocsByService := make(map[string][]*ServiceAllocation)
 	allocByID := make(map[string]*ServiceAllocation)
+
+	sort.Slice(rawAllocs, func(i, j int) bool {
+		if rawAllocs[i].ServiceName != rawAllocs[j].ServiceName {
+			return rawAllocs[i].ServiceName < rawAllocs[j].ServiceName
+		}
+		return rawAllocs[i].ID < rawAllocs[j].ID
+	})
 
 	for _, a := range rawAllocs {
 		allocsByNode[a.NodeID] = append(allocsByNode[a.NodeID], a)
