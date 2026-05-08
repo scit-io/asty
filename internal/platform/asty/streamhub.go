@@ -3,6 +3,7 @@ package asty
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -268,11 +269,33 @@ func (h *streamHub) Run(ctx context.Context) {
 	ticker := time.NewTicker(h.interval) // periodic fallback
 	defer ticker.Stop()
 
+	// Debounce KV Watch notifications: coalesce rapid-fire changes into a
+	// single refresh. With 8 agents heartbeating, raw notify can fire ~6-8
+	// times per interval — each producing a full snapshot + SSE fanout.
+	debounceCh := make(chan struct{}, 1)
+	var debounceTimer *time.Timer
+	defer func() {
+		if debounceTimer != nil {
+			debounceTimer.Stop()
+		}
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-notify:
+			if debounceTimer == nil {
+				debounceTimer = time.AfterFunc(500*time.Millisecond, func() {
+					select {
+					case debounceCh <- struct{}{}:
+					default:
+					}
+				})
+			} else {
+				debounceTimer.Reset(500 * time.Millisecond)
+			}
+		case <-debounceCh:
 			h.refresh()
 		case <-ticker.C:
 			h.refresh()
@@ -410,6 +433,13 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 
 	// Read from the in-memory index — no KV round-trips.
 	nodes, rawAllocs := h.idx.snapshot()
+
+	sort.Slice(nodes, func(i, j int) bool {
+		if nodes[i].CreatedAt.Equal(nodes[j].CreatedAt) {
+			return nodes[i].ID < nodes[j].ID
+		}
+		return nodes[i].CreatedAt.Before(nodes[j].CreatedAt)
+	})
 
 	allocsByNode := make(map[string][]*ServiceAllocation)
 	allocsByService := make(map[string][]*ServiceAllocation)

@@ -10,15 +10,15 @@ import { Button } from '@/components/ui/button'
 import { Server, Cpu, MemoryStick, FileText, Activity, Shield, RefreshCw, Heart } from 'lucide-react'
 import { useClusterStore } from '@/store/cluster'
 
+const MAX_LOG_LINES = 500
+
 export default function Cluster() {
   const navigate = useNavigate()
-  const {
-    nodes,
-    clusterStatus,
-    clusterCpuMetrics,
-    clusterMemoryMetrics,
-    clusterRpsMetrics,
-  } = useClusterStore()
+  const nodes = useClusterStore((s) => s.nodes)
+  const clusterStatus = useClusterStore((s) => s.clusterStatus)
+  const clusterCpuMetrics = useClusterStore((s) => s.clusterCpuMetrics)
+  const clusterMemoryMetrics = useClusterStore((s) => s.clusterMemoryMetrics)
+  const clusterRpsMetrics = useClusterStore((s) => s.clusterRpsMetrics)
 
   const [clusterLogs, setClusterLogs] = useState<string[]>([])
   const [isStreaming, setIsStreaming] = useState(false)
@@ -38,7 +38,12 @@ export default function Cluster() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          setClusterLogs((prev) => [...prev, data.line])
+          setClusterLogs((prev) => {
+            const next = prev.length >= MAX_LOG_LINES
+              ? prev.slice(prev.length - MAX_LOG_LINES + 1).concat(data.line)
+              : prev.concat(data.line)
+            return next
+          })
           setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
         } catch {
           // ignore
@@ -208,7 +213,7 @@ export default function Cluster() {
                   <TableHead>Status</TableHead>
                   <TableHead>CPU</TableHead>
                   <TableHead>Memory</TableHead>
-                  <TableHead className="text-right">Services</TableHead>
+                  <TableHead className="text-right">Allocations</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

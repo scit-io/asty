@@ -256,6 +256,10 @@ start_asty() {
 
     info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | server PID=$server_pid | agent PID=$agent_pid"
     info "  Логи: $server_log | $agent_log"
+    # Даём время на подключение к NATS и инициализацию JetStream KV bucket.
+    # Без паузы все агенты создают bucket одновременно и JetStream
+    # не успевает подтвердить stream — "nats: no response from stream".
+    sleep 0.5
   done
 }
 

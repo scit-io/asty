@@ -111,7 +111,12 @@ export default function NodeDetail() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          setLogLines((prev) => [...prev, data.line])
+          setLogLines((prev) => {
+            const next = prev.length >= 500
+              ? prev.slice(prev.length - 499).concat(data.line)
+              : prev.concat(data.line)
+            return next
+          })
           setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
         } catch { /* ignore */ }
       }
@@ -227,7 +232,7 @@ export default function NodeDetail() {
               </Tooltip>
             </TooltipProvider>
           </div>
-          <p className="text-sm sm:text-base text-muted-foreground text-right">
+          <div className="text-sm sm:text-base text-muted-foreground text-right">
             {node ? (
               <>
                 <span className="font-mono">{node.ip}</span> / {node.datacenter}
@@ -235,7 +240,7 @@ export default function NodeDetail() {
             ) : (
               <Skeleton className="h-4 w-40 ml-auto" />
             )}
-          </p>
+          </div>
         </div>
       </div>
 
@@ -286,7 +291,7 @@ export default function NodeDetail() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Services</CardTitle>
+            <CardTitle className="text-sm font-medium">Allocations</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -355,7 +360,7 @@ export default function NodeDetail() {
                         <HelpCircle className="h-4 w-4 text-muted-foreground" />
                       </TooltipTrigger>
                       <TooltipContent>
-                        <p>Gracefully migrate all services to other nodes.</p>
+                        <p>Gracefully migrate all allocations to other nodes.</p>
                         <p>Node remains in cluster but won't receive new allocations.</p>
                       </TooltipContent>
                     </Tooltip>
@@ -381,11 +386,11 @@ export default function NodeDetail() {
         <MetricsChart title="Gateway RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
       </div>
 
-      <Tabs defaultValue="services" className="space-y-4">
+      <Tabs defaultValue="allocations" className="space-y-4">
         <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="services">
+          <TabsTrigger value="allocations">
             <Activity className="h-4 w-4 mr-2" />
-            Node Services
+            Node Allocations
           </TabsTrigger>
           <TabsTrigger value="logs">
             <FileText className="h-4 w-4 mr-2" />
@@ -393,22 +398,22 @@ export default function NodeDetail() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="services" className="space-y-4">
+        <TabsContent value="allocations" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Running Services</CardTitle>
+              <CardTitle>Running Allocations</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               {allocations.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <Activity className="h-12 w-12 mb-4" />
-                  <p>No services running on this node</p>
+                  <p>No allocations running on this node</p>
                 </div>
               ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Service</TableHead>
+                      <TableHead>Allocation</TableHead>
                       <TableHead>Status</TableHead>
                       <TableHead>Health</TableHead>
                       <TableHead>CPU</TableHead>
@@ -520,7 +525,7 @@ export default function NodeDetail() {
           <AlertDialogHeader>
             <AlertDialogTitle>Drain Node</AlertDialogTitle>
             <AlertDialogDescription>
-              This will gracefully migrate all running services from{' '}
+              This will gracefully migrate all running allocations from{' '}
               <code className="font-mono">{node?.id || nodeId}</code> to other nodes.
               The node will remain in the cluster but won't receive new allocations.
             </AlertDialogDescription>

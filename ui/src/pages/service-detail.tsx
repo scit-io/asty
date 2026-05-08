@@ -61,7 +61,12 @@ export default function ServiceDetail() {
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          setLogLines((prev) => [...prev, data.line])
+          setLogLines((prev) => {
+            const next = prev.length >= 500
+              ? prev.slice(prev.length - 499).concat(data.line)
+              : prev.concat(data.line)
+            return next
+          })
           setTimeout(() => logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
         } catch {
           // ignore

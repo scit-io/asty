@@ -7,14 +7,17 @@ import type {
   ServiceDefinition,
 } from '@/types'
 
-// Max chart points kept in memory per series (2h at 5s = 1440 ticks,
-// but metricsStore records at hub interval so ~1440 points max).
-const MAX_CHART_POINTS = 1440
+// Max chart points kept in memory per series (5min at 5s = 60 points).
+const MAX_CHART_POINTS = 60
 
 function appendMetrics(existing: MetricPoint[], incoming: MetricPoint[]): MetricPoint[] {
   if (!incoming.length) return existing
-  const merged = [...existing, ...incoming]
-  return merged.length > MAX_CHART_POINTS ? merged.slice(merged.length - MAX_CHART_POINTS) : merged
+  if (!existing.length) return incoming.slice(-MAX_CHART_POINTS)
+  const merged = existing.concat(incoming)
+  if (merged.length > MAX_CHART_POINTS) {
+    return merged.slice(merged.length - MAX_CHART_POINTS)
+  }
+  return merged
 }
 
 interface NodeData {
@@ -142,12 +145,16 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
         try {
           const data = JSON.parse(event.data)
           const nodes: Node[] = data.nodes || []
-          const nodeCache = { ...get().nodeCache }
-          for (const node of nodes) {
-            const existing = nodeCache[node.id]
-            nodeCache[node.id] = existing ? { ...existing, node } : { ...emptyNodeData(), node }
+          const state = get()
+          const updatedCache = { ...state.nodeCache }
+          let cacheChanged = false
+          for (const n of nodes) {
+            if (updatedCache[n.id]) {
+              updatedCache[n.id] = { ...updatedCache[n.id], node: n }
+              cacheChanged = true
+            }
           }
-          set({ nodes, nodeCache })
+          set(cacheChanged ? { nodes, nodeCache: updatedCache } : { nodes })
         } catch { /* ignore */ }
       })
 
@@ -194,6 +201,13 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
   },
 
   subscribeNode: (nodeId) => {
+    // Seed cache with node from global list so detail page has data immediately.
+    const state = get()
+    if (!state.nodeCache[nodeId]?.node) {
+      const existing = state.nodeCache[nodeId] || emptyNodeData()
+      const found = state.nodes.find((n) => n.id === nodeId) || null
+      set({ nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: found } } })
+    }
     return openStream(`/api/v1/stream/node/${nodeId}`, (es) => {
       es.addEventListener('allocations', (event) => {
         try {
