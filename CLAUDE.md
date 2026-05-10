@@ -170,9 +170,15 @@ Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from o
 internal/platform/asty/
 ├── core/                          # Shared primitives
 │   ├── config/                    # Config struct + Load() + Validate()
-│   ├── types/                     # Node, ServiceDefinition, Allocation, Events, Commands
+│   ├── types/                     # Node, ServiceDefinition, Allocation, Events, Commands, Snapshot
 │   └── errors/                    # Typed errors (ErrNotLeader, ErrNodeNotFound)
 ├── features/                      # Vertical feature slices
+│   ├── api/                       # HTTP API (ServerContext interface + handlers)
+│   │   ├── context.go             # ServerContext, StreamHub, EventBufferReader interfaces
+│   │   ├── api.go                 # Router setup, New(ctx, uiAddr)
+│   │   ├── nodes.go, services.go, allocations.go, status.go
+│   │   ├── autoscaler.go, logs.go, stream.go
+│   │   └── (handlers access server via ServerContext interface)
 │   ├── clustering/
 │   │   ├── controller/            # ServiceController + Workqueue (reconciliation engine)
 │   │   ├── discovery/             # DNS node discovery
@@ -196,20 +202,25 @@ internal/platform/asty/
 │       ├── metrics/               # CPU/Memory collector (platform-specific)
 │       ├── logs/                   # LogBuffer + NATSWriter
 │       └── events/                # EventBuffer (ring buffer)
-├── agent.go, agent_commands.go, agent_lifecycle.go  # Agent entry
-├── server.go                      # Server entry (thin orchestrator)
-├── api_*.go                       # HTTP API handlers (split by domain)
-├── streamhub.go                   # SSE snapshot hub
-├── compat.go                      # All type/var aliases (single file)
-└── compat_funcs.go                # Helper funcs (LoadConfig, EventBuffer, etc.)
+├── server/                        # Server sub-package
+│   ├── server.go                  # Server struct, New(), Start() — implements api.ServerContext
+│   ├── lifecycle.go               # connectNATS, command dispatch, ServerContext methods
+│   ├── streamhub.go              # StreamHub (implements api.StreamHub interface)
+│   ├── snapshot.go               # buildSnapshot(), allocIndex
+│   └── dispatcher.go            # CommandDispatcher for controller
+└── agent/                         # Agent sub-package
+    ├── agent.go                   # Agent struct, New(), Start(), StartService/StopService
+    ├── commands.go                # NATS command handlers (start/stop/getlogs)
+    ├── lifecycle.go               # publishHeartbeat, publishProcessMetrics, monitorProcesses
+    ├── sysinfo_darwin.go          # detectCPUMHz(), detectMemoryMB() for macOS
+    └── sysinfo_linux.go           # detectCPUMHz(), detectMemoryMB() for Linux
 ```
 
 ### Orchestrator Entrypoints
-- `agent.go` + `agent_commands.go` + `agent_lifecycle.go` — process management, NATS commands, heartbeat, metrics
-- `server.go` — leader election, controller wiring, NATS subscriptions
-- `api_setup.go` — HTTP mux + helpers; `api_nodes.go`, `api_services.go`, `api_allocations.go`, `api_autoscaler.go`, `api_logs.go`, `api_stream.go`, `api_status.go`
-- `streamhub.go` — periodic snapshot + SSE fanout
-- `compat.go` + `compat_funcs.go` — backward-compatible aliases (cmd/asty imports `asty.Config`, `asty.NewServer`, etc.)
+- `cmd/asty/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package)
+- `server/` — leader election, controller wiring, NATS subscriptions, implements `api.ServerContext`
+- `agent/` — process management, NATS commands, heartbeat, metrics
+- `features/api/` — HTTP API handlers, decoupled from server via `ServerContext` interface
 
 ### Platform Layer
 - `internal/platform/nc/` — NATS client wrapper (JetStream, KV helpers)
