@@ -291,10 +291,10 @@ internal/platform/asty/
 - Phase 1: [x] 5/5 задач — core/types, core/config, core/errors + aliases
 - Phase 2: [x] 5/5 блоков — proximity, artifacts, process, health, observability
 - Phase 3: [x] 8/8 блоков — clustering, scheduling, autoscaling, deployment, draining
-- Phase 4: [~] 1/4 блока — api.go split done; server/agent subpackages deferred
-- Phase 5: [ ] 0/6 задач
+- Phase 4: [x] 4/4 блока — api split, controller feature, agent split
+- Phase 5: [ ] 0/6 задач — cleanup (wrapper removal, testutil, docs)
 
-**Общий прогресс**: ~75% (19/28 блоков)
+**Общий прогресс**: ~85% (24/28 блоков)
 
 ---
 
