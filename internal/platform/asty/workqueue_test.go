@@ -88,8 +88,8 @@ func TestWorkqueueAddAfter(t *testing.T) {
 // Backoff: each AddRateLimited without Forget doubles the delay.
 func TestWorkqueueRateLimitedBackoff(t *testing.T) {
 	q := NewWorkqueue()
-	q.baseDelay = 20 * time.Millisecond
-	q.maxDelay = 200 * time.Millisecond
+	q.BaseDelay = 20 * time.Millisecond
+	q.MaxDelay = 200 * time.Millisecond
 	defer q.ShutDown()
 
 	q.AddRateLimited("k")
@@ -113,8 +113,8 @@ func TestWorkqueueRateLimitedBackoff(t *testing.T) {
 // Forget resets the failure counter.
 func TestWorkqueueForget(t *testing.T) {
 	q := NewWorkqueue()
-	q.baseDelay = 10 * time.Millisecond
-	q.maxDelay = 200 * time.Millisecond
+	q.BaseDelay = 10 * time.Millisecond
+	q.MaxDelay = 200 * time.Millisecond
 	defer q.ShutDown()
 
 	q.AddRateLimited("k")

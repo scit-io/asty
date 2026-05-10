@@ -237,7 +237,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 		workers,
 		resync,
 	)
-	controller.onEvent = s.addClusterEvent
+	controller.OnEvent = s.addClusterEvent
 	go controller.Run(leaderCtx)
 }
 
