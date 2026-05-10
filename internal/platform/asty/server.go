@@ -357,6 +357,13 @@ func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	return nil
 }
 
+// DrainDeps interface implementation
+
+func (s *Server) GetClusterState() *ClusterState { return s.clusterState }
+func (s *Server) GetScheduler() *Scheduler       { return s.scheduler }
+func (s *Server) GetServices() []*ServiceDefinition { return s.services }
+func (s *Server) GetNATSConn() *nats.Conn        { return s.nc }
+
 // watchLeadership re-arms the leader loop on flips. The sub-context returned
 // by startLeaderWork is cancelled on loss, so a re-elected leader gets a
 // clean run instead of the previous behavior where stale goroutines kept
