@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"asty/internal/platform/asty/core/types"
@@ -66,7 +67,7 @@ func (cs *ClusterState) ListAllocations(serviceName string) ([]*types.ServiceAll
 	allocs := make([]*types.ServiceAllocation, 0)
 
 	for _, key := range keys {
-		if len(key) < len(prefix) || key[:len(prefix)] != prefix {
+		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 
@@ -101,7 +102,7 @@ func (cs *ClusterState) ListAllAllocations() ([]*types.ServiceAllocation, error)
 	const prefix = "alloc."
 	allocs := make([]*types.ServiceAllocation, 0, len(keys))
 	for _, key := range keys {
-		if len(key) < len(prefix) || key[:len(prefix)] != prefix {
+		if !strings.HasPrefix(key, prefix) {
 			continue
 		}
 		entry, err := cs.bucket.Get(key)

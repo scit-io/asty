@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/core/netutil"
 	"asty/internal/platform/asty/core/types"
 	"asty/internal/platform/asty/features/clustering/state"
 	"asty/internal/platform/asty/features/deployment/artifacts"
@@ -44,7 +45,7 @@ type Agent struct {
 func New(cfg *config.Config) (*Agent, error) {
 	nodeID := cfg.NodeID
 	if nodeID == "" {
-		nodeID = generateNodeID()
+		nodeID = netutil.Hostname()
 	}
 
 	workDir := filepath.Join(cfg.WorkDir, nodeID)
@@ -73,9 +74,14 @@ func (a *Agent) Start(ctx context.Context) error {
 		Str("datacenter", a.cfg.Datacenter).
 		Msg("agent starting")
 
-	if err := a.connectNATS(); err != nil {
+	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
+		Host: a.cfg.NATSHost, Port: a.cfg.NATSPort,
+		User: a.cfg.NATSUser, Password: a.cfg.NATSPassword,
+	}, "asty-agent-"+a.nodeID)
+	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
+	a.nc = nc
 	defer a.nc.Close()
 
 	clusterState, err := state.New(a.nc)
@@ -257,7 +263,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 
 	nodeIP := a.cfg.NodeIP
 	if nodeIP == "" {
-		nodeIP = getNodeIP(a.cfg.NATSHost)
+		nodeIP = netutil.LocalIPv4(a.cfg.NATSHost)
 	}
 
 	cpuTotal := detectCPUMHz()
@@ -294,85 +300,22 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	}
 }
 
-func (a *Agent) connectNATS() error {
-	natsURL := fmt.Sprintf("nats://%s:%s", a.cfg.NATSHost, a.cfg.NATSPort)
-
-	opts := []nats.Option{
-		nats.Name("asty-agent-" + a.nodeID),
-	}
-
-	if a.cfg.NATSUser != "" {
-		opts = append(opts, nats.UserInfo(a.cfg.NATSUser, a.cfg.NATSPassword))
-	}
-
-	nc, err := nats.Connect(natsURL, opts...)
-	if err != nil {
-		return err
-	}
-
-	a.nc = nc
-	log.Info().Str("url", natsURL).Msg("connected to NATS")
-	return nil
-}
-
-func generateNodeID() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return hostname
-}
-
-func getNodeIP(natsHost string) string {
-	natsIP := net.ParseIP(natsHost)
-	if natsIP != nil && natsIP.IsLoopback() {
-		return natsHost
-	}
-
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to get network interfaces")
-		return ""
-	}
-
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-
-	log.Warn().Msg("no non-loopback IP address found")
-	return ""
-}
-
-func splitLines(data string, lastN int) []string {
+// tailLines splits data into lines (dropping empty ones) and returns at
+// most lastN trailing lines. Used by the GetLogs RPC to bound the response
+// size when the caller asks for "the last N lines" of a log file.
+func tailLines(data string, lastN int) []string {
 	if data == "" {
 		return []string{}
 	}
-
-	lines := []string{}
-	current := ""
-
-	for _, ch := range data {
-		if ch == '\n' {
-			if current != "" {
-				lines = append(lines, current)
-				current = ""
-			}
-		} else {
-			current += string(ch)
+	parts := strings.Split(data, "\n")
+	lines := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			lines = append(lines, p)
 		}
 	}
-
-	if current != "" {
-		lines = append(lines, current)
-	}
-
 	if lastN > 0 && len(lines) > lastN {
 		return lines[len(lines)-lastN:]
 	}
-
 	return lines
 }

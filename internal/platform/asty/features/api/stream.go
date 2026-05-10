@@ -17,8 +17,7 @@ func sseEvent(w http.ResponseWriter, event string, data []byte) {
 // handleStream handles the global SSE stream — cluster status, nodes, services
 // (with usage), cluster metrics (delta), and drain progress.
 func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -107,8 +106,7 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 
 // handleStreamNode streams allocations + metrics for a single node.
 func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -177,8 +175,7 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 
 // handleStreamService streams definition + allocations + metrics for a service.
 func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -249,8 +246,7 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 
 // handleStreamAllocation streams a single allocation's detail + metrics.
 func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 

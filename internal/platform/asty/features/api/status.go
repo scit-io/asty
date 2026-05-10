@@ -8,8 +8,7 @@ import (
 
 // handleRoot returns API information.
 func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -49,8 +48,7 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 // handleHealth returns health status.
 func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -64,8 +62,7 @@ func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 // handleStatus returns cluster status.
 func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -75,8 +72,9 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	healthyNodes := 0
 	var leaderNodeID string
+	now := time.Now()
 	for _, node := range nodes {
-		if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
+		if node.IsHealthy(now) {
 			healthyNodes++
 		}
 		if node.IP == leaderInfo.IP {
@@ -103,15 +101,15 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleMetrics returns Prometheus metrics.
 func (api *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
 	nodes, _ := api.ctx.ClusterState().ListNodes()
 	healthyNodes := 0
+	now := time.Now()
 	for _, node := range nodes {
-		if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
+		if node.IsHealthy(now) {
 			healthyNodes++
 		}
 	}

@@ -123,7 +123,7 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
 		return
 	}
 
-	logLines := splitLines(string(logData), logsCmd.Lines)
+	logLines := tailLines(string(logData), logsCmd.Lines)
 
 	log.Debug().
 		Str("service", logsCmd.ServiceName).

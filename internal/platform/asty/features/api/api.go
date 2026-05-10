@@ -6,8 +6,13 @@ import (
 	"net/http"
 	"time"
 
+	"asty/internal/platform/asty/core/types"
+
 	"github.com/rs/zerolog/log"
 )
+
+// mustJSON is a package-local alias for types.MustJSON; SSE handlers use
+// it directly so their JSON-emitting one-liners stay readable.
 
 // API provides HTTP API endpoints.
 type API struct {
@@ -98,12 +103,4 @@ func (api *API) writeError(w http.ResponseWriter, status int, message string, er
 	api.writeJSON(w, status, response)
 }
 
-// mustJSON marshals v to JSON or returns an empty object on error.
-func mustJSON(v interface{}) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		log.Error().Err(err).Msg("api: marshal failed")
-		return []byte("{}")
-	}
-	return b
-}
+var mustJSON = types.MustJSON

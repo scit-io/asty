@@ -52,7 +52,7 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefi
 	if err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
-	healthy := s.filterHealthyNodes(nodes)
+	healthy := s.FilterHealthyNodes(nodes)
 	if len(healthy) == 0 {
 		return fmt.Errorf("no healthy nodes available")
 	}
@@ -126,7 +126,7 @@ func (s *Scheduler) reconcileRegular(svc *types.ServiceDefinition, healthy []*ty
 	}
 	needed := target - len(live)
 
-	dcCounts := datacenterCountsByOccupied(healthy, occupied)
+	dcCounts := DatacenterCountsByOccupied(healthy, occupied)
 	candidates := s.PickCandidates(svc, healthy, occupied, dcCounts, nodeAllocCounts, needed)
 	if len(candidates) == 0 {
 		log.Warn().
@@ -227,10 +227,6 @@ func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string
 
 // FilterHealthyNodes keeps only ready nodes with recent heartbeats.
 func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
-	return s.filterHealthyNodes(nodes)
-}
-
-func (s *Scheduler) filterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
 	healthy := make([]*types.NodeInfo, 0, len(nodes))
 	for _, node := range nodes {
 		if node.Status != "ready" {
@@ -272,7 +268,7 @@ func (s *Scheduler) SelectNearestForReplacement(sourceNodeID string, svc *types.
 	used := NodeIDsOf(LiveAllocations(allocs))
 	used[sourceNodeID] = true
 
-	healthy := s.filterHealthyNodes(nodes)
+	healthy := s.FilterHealthyNodes(nodes)
 	return s.SelectNodeForTrafficBasedPlacement(DatacenterOf(source), healthy, svc.Resources, used)
 }
 

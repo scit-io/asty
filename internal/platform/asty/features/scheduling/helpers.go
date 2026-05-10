@@ -53,12 +53,16 @@ func GroupByDatacenter(nodes []*types.NodeInfo) map[string][]*types.NodeInfo {
 	return out
 }
 
-func datacenterCountsByOccupied(healthy []*types.NodeInfo, occupied map[string]bool) map[string]int {
+// DatacenterCountsByOccupied returns the number of nodes per DC that are
+// already occupied by allocations. DCs with zero occupied nodes are still
+// present in the result so that placement can prefer empty DCs.
+func DatacenterCountsByOccupied(healthy []*types.NodeInfo, occupied map[string]bool) map[string]int {
 	counts := make(map[string]int)
 	for _, n := range healthy {
-		counts[DatacenterOf(n)] += 0
+		dc := DatacenterOf(n)
+		counts[dc] += 0
 		if occupied[n.ID] {
-			counts[DatacenterOf(n)]++
+			counts[dc]++
 		}
 	}
 	return counts

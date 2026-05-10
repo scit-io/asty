@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"asty/internal/platform/asty/core/types"
 )
 
 // handleServices returns loaded service definitions.
 func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -29,21 +29,10 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var serviceName, action string
-	for i, ch := range path {
-		if ch == '/' {
-			serviceName = path[:i]
-			action = path[i+1:]
-			break
-		}
-	}
-	if serviceName == "" {
-		serviceName = path
-	}
+	serviceName, action, _ := strings.Cut(path, "/")
 
 	if action != "" {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		if !methodGuard(w, r, http.MethodPost) {
 			return
 		}
 
@@ -68,8 +57,7 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -96,8 +84,7 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 
 // handleDeploy initiates a deployment.
 func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodPost) {
 		return
 	}
 
@@ -133,8 +120,7 @@ func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
 
 // handleDeployments returns deployment history.
 func (api *API) handleDeployments(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 

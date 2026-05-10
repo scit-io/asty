@@ -271,7 +271,7 @@ func (h *streamHub) fanoutDrain(data []byte) {
 
 // FanoutEvent marshals the event and sends to all event subscribers.
 func (h *streamHub) FanoutEvent(e types.ClusterEvent) {
-	data := mustJSON(e)
+	data := types.MustJSON(e)
 	h.eventSubsMu.Lock()
 	defer h.eventSubsMu.Unlock()
 	for _, ch := range h.eventSubs {

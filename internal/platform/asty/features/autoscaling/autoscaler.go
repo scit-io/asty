@@ -224,7 +224,7 @@ func (as *Autoscaler) findOverloadedAlloc(live []*types.ServiceAllocation) *type
 func (as *Autoscaler) pickFreeNode(svc *types.ServiceDefinition, live []*types.ServiceAllocation, nodes []*types.NodeInfo) *types.NodeInfo {
 	healthy := as.scheduler.FilterHealthyNodes(nodes)
 	occupied := scheduling.NodeIDsOf(live)
-	dcCounts := datacenterCountsByOccupied(healthy, occupied)
+	dcCounts := scheduling.DatacenterCountsByOccupied(healthy, occupied)
 	nodeAllocCounts := as.scheduler.ComputeNodeAllocCounts()
 	picks := as.scheduler.PickCandidates(svc, healthy, occupied, dcCounts, nodeAllocCounts, 1)
 	if len(picks) == 0 {
@@ -332,13 +332,3 @@ func (as *Autoscaler) pickAllocationToRemove(live []*types.ServiceAllocation, no
 	return sorted[0]
 }
 
-func datacenterCountsByOccupied(healthy []*types.NodeInfo, occupied map[string]bool) map[string]int {
-	counts := make(map[string]int)
-	for _, n := range healthy {
-		counts[scheduling.DatacenterOf(n)] += 0
-		if occupied[n.ID] {
-			counts[scheduling.DatacenterOf(n)]++
-		}
-	}
-	return counts
-}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/core/netutil"
 	"asty/internal/platform/asty/core/types"
 	"asty/internal/platform/asty/features/autoscaling"
 	autometrics "asty/internal/platform/asty/features/autoscaling/metrics"
@@ -61,7 +62,7 @@ type Server struct {
 func New(cfg *config.Config) (*Server, error) {
 	nodeID := cfg.NodeID
 	if nodeID == "" {
-		nodeID = generateNodeID()
+		nodeID = netutil.Hostname()
 	}
 
 	return &Server{
@@ -92,7 +93,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// Initialize leader election
 	leaderIP := s.cfg.NodeIP
 	if leaderIP == "" {
-		leaderIP = getNodeIP(s.cfg.NATSHost)
+		leaderIP = netutil.LocalIPv4(s.cfg.NATSHost)
 	}
 	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP)
 	if err != nil {

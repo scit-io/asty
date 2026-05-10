@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"asty/internal/platform/asty/core/netutil"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -33,32 +35,14 @@ func NewElection(nc *nats.Conn, nodeID string, nodeIP string) (*Election, error)
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	var bucket nats.KeyValue
-	for attempt := 0; attempt < 30; attempt++ {
-		bucket, err = js.CreateKeyValue(&nats.KeyValueConfig{
-			Bucket:      "asty-leader",
-			Description: "Asty leader election",
-			TTL:         10 * time.Second,
-			History:     5,
-		})
-		if err == nil {
-			break
-		}
-		bucket, err = js.KeyValue("asty-leader")
-		if err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
+	bucket, err := netutil.EnsureBucket(js, &nats.KeyValueConfig{
+		Bucket:      "asty-leader",
+		Description: "Asty leader election",
+		TTL:         10 * time.Second,
+		History:     5,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create/get leader KV bucket after retries: %w", err)
-	}
-
-	for attempt := 0; attempt < 30; attempt++ {
-		if _, err := bucket.Keys(); err == nats.ErrNoKeysFound || err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
+		return nil, err
 	}
 
 	return &Election{

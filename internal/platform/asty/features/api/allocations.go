@@ -2,14 +2,14 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"asty/internal/platform/asty/core/types"
 )
 
 // handleAllocations returns service allocations.
 func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -66,21 +66,10 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var allocID, action string
-	for i, ch := range path {
-		if ch == '/' {
-			allocID = path[:i]
-			action = path[i+1:]
-			break
-		}
-	}
-	if allocID == "" {
-		allocID = path
-	}
+	allocID, action, _ := strings.Cut(path, "/")
 
 	if action != "" {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		if !methodGuard(w, r, http.MethodPost) {
 			return
 		}
 
@@ -105,8 +94,7 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 

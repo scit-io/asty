@@ -3,14 +3,44 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
+	"asty/internal/platform/asty/core/types"
 	"asty/internal/platform/asty/features/draining"
 )
 
+// nodeAllocCounts walks every service's allocations once and groups
+// (planned, running) counts by node ID. Returning a map (instead of
+// computing per-node) keeps complexity at O(allocations) regardless of
+// how many nodes are queried afterwards.
+func (api *API) nodeAllocCounts() map[string]struct{ Planned, Running int } {
+	out := make(map[string]struct{ Planned, Running int })
+	for _, svc := range api.ctx.Services() {
+		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
+		if err != nil {
+			continue
+		}
+		for _, a := range allocs {
+			c := out[a.NodeID]
+			c.Planned++
+			if a.Status == "running" {
+				c.Running++
+			}
+			out[a.NodeID] = c
+		}
+	}
+	return out
+}
+
+func applyAllocCounts(node *types.NodeInfo, counts map[string]struct{ Planned, Running int }) {
+	c := counts[node.ID]
+	node.AllocationsRunning = c.Running
+	node.AllocationsPlanned = c.Planned
+}
+
 // handleNodes returns cluster nodes.
 func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -20,27 +50,9 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	counts := api.nodeAllocCounts()
 	for _, node := range nodes {
-		running := 0
-		planned := 0
-
-		for _, svc := range api.ctx.Services() {
-			allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-			if err != nil {
-				continue
-			}
-			for _, alloc := range allocs {
-				if alloc.NodeID == node.ID {
-					planned++
-					if alloc.Status == "running" {
-						running++
-					}
-				}
-			}
-		}
-
-		node.AllocationsRunning = running
-		node.AllocationsPlanned = planned
+		applyAllocCounts(node, counts)
 	}
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -57,37 +69,24 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var nodeID, action string
-	for i, ch := range path {
-		if ch == '/' {
-			nodeID = path[:i]
-			action = path[i+1:]
-			break
-		}
-	}
-	if nodeID == "" {
-		nodeID = path
-	}
+	nodeID, action, _ := strings.Cut(path, "/")
 
 	if action != "" {
 		switch action {
 		case "drain":
-			if r.Method != http.MethodPost {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			if !methodGuard(w, r, http.MethodPost) {
 				return
 			}
 			api.handleNodeDrain(w, r, nodeID)
 			return
 		case "drain/status":
-			if r.Method != http.MethodGet {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			if !methodGuard(w, r, http.MethodGet) {
 				return
 			}
 			api.handleNodeDrainStatus(w, r, nodeID)
 			return
 		case "pause":
-			if r.Method != http.MethodPost {
-				http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			if !methodGuard(w, r, http.MethodPost) {
 				return
 			}
 			api.writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -102,8 +101,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -113,27 +111,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	running := 0
-	planned := 0
-
-	for _, svc := range api.ctx.Services() {
-		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		for _, alloc := range allocs {
-			if alloc.NodeID == node.ID {
-				planned++
-				if alloc.Status == "running" {
-					running++
-				}
-			}
-		}
-	}
-
-	node.AllocationsRunning = running
-	node.AllocationsPlanned = planned
-
+	applyAllocCounts(node, api.nodeAllocCounts())
 	api.writeJSON(w, http.StatusOK, node)
 }
 

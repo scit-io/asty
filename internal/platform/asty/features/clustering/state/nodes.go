@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"asty/internal/platform/asty/core/types"
@@ -73,7 +74,7 @@ func (cs *ClusterState) ListNodes() ([]*types.NodeInfo, error) {
 
 	nodes := make([]*types.NodeInfo, 0)
 	for _, key := range keys {
-		if len(key) < 5 || key[:5] != "node." {
+		if !strings.HasPrefix(key, "node.") {
 			continue
 		}
 

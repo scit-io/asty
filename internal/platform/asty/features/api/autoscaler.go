@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
 )
 
 // handleAutoscalerEvents returns autoscaler scaling events.
 func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -29,13 +30,13 @@ func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
 
 // handleAutoscalerStatus returns current autoscaler state per service.
 func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
 	cfg := api.ctx.Config()
 	servicesStatus := make(map[string]interface{})
+	now := time.Now()
 
 	for _, svc := range api.ctx.Services() {
 		allocs, _ := api.ctx.ClusterState().ListAllocations(svc.Name)
@@ -46,28 +47,9 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		cooldownUp := false
-		cooldownDown := false
-		var lastAction string
-		var lastActionAt int64
-
+		var cooldown types.CooldownStatus
 		if cd, err := api.ctx.ClusterState().GetServiceCooldown(svc.Name); err == nil {
-			if !cd.LastScaleUp.IsZero() {
-				if time.Since(cd.LastScaleUp) < cfg.CooldownUp {
-					cooldownUp = true
-				}
-				lastAction = "scale_up"
-				lastActionAt = cd.LastScaleUp.Unix()
-			}
-			if !cd.LastScaleDown.IsZero() {
-				if time.Since(cd.LastScaleDown) < cfg.CooldownDown {
-					cooldownDown = true
-				}
-				if cd.LastScaleDown.Unix() > lastActionAt {
-					lastAction = "scale_down"
-					lastActionAt = cd.LastScaleDown.Unix()
-				}
-			}
+			cooldown = cd.Status(now, cfg.CooldownUp, cfg.CooldownDown)
 		}
 
 		servicesStatus[svc.Name] = map[string]interface{}{
@@ -76,10 +58,10 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 			"target_cpu":           cfg.TargetCPU,
 			"target_memory":        cfg.TargetMemory,
 			"traffic_threshold":    cfg.TrafficRPSThreshold,
-			"cooldown_up_active":   cooldownUp,
-			"cooldown_down_active": cooldownDown,
-			"last_action":          lastAction,
-			"last_action_at":       lastActionAt,
+			"cooldown_up_active":   cooldown.UpActive,
+			"cooldown_down_active": cooldown.DownActive,
+			"last_action":          cooldown.LastAction,
+			"last_action_at":       cooldown.LastActionAt,
 		}
 	}
 
@@ -90,8 +72,7 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 
 // handleEvents returns recent cluster events from the ring buffer.
 func (api *API) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 

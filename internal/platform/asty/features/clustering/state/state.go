@@ -3,7 +3,9 @@ package state
 import (
 	"errors"
 	"fmt"
-	"time"
+	"strings"
+
+	"asty/internal/platform/asty/core/netutil"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
@@ -25,33 +27,13 @@ func New(nc *nats.Conn) (*ClusterState, error) {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
 	}
 
-	var bucket nats.KeyValue
-	for attempt := 0; attempt < 30; attempt++ {
-		bucket, err = js.CreateKeyValue(&nats.KeyValueConfig{
-			Bucket:      "asty-cluster",
-			Description: "Asty cluster state",
-			History:     10,
-		})
-		if err == nil {
-			break
-		}
-		bucket, err = js.KeyValue("asty-cluster")
-		if err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
-	}
+	bucket, err := netutil.EnsureBucket(js, &nats.KeyValueConfig{
+		Bucket:      "asty-cluster",
+		Description: "Asty cluster state",
+		History:     10,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to create/get KV bucket after retries: %w", err)
-	}
-
-	for attempt := 0; attempt < 30; attempt++ {
-		if _, err := bucket.Keys(); err == nats.ErrNoKeysFound {
-			break
-		} else if err == nil {
-			break
-		}
-		time.Sleep(1 * time.Second)
+		return nil, err
 	}
 
 	log.Info().Msg("cluster state initialized")
@@ -71,20 +53,18 @@ func isCASConflict(err error) bool {
 	return false
 }
 
+// keySuffix returns the part of key after prefix, or "" if key doesn't
+// start with prefix or is exactly equal to it.
 func keySuffix(key, prefix string) string {
-	if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+	if !strings.HasPrefix(key, prefix) || len(key) == len(prefix) {
 		return ""
 	}
 	return key[len(prefix):]
 }
 
-func splitAllocKey(key string) (string, string) {
-	const prefix = "alloc."
-	rest := keySuffix(key, prefix)
-	for i := 0; i < len(rest); i++ {
-		if rest[i] == '.' {
-			return rest[:i], rest[i+1:]
-		}
-	}
-	return rest, ""
+// splitAllocKey parses an alloc.<service>.<node> KV key into its parts.
+func splitAllocKey(key string) (service, node string) {
+	rest := keySuffix(key, "alloc.")
+	service, node, _ = strings.Cut(rest, ".")
+	return service, node
 }

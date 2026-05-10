@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sort"
 	"strings"
 	"time"
 
@@ -11,6 +12,11 @@ import (
 
 	"github.com/rs/zerolog/log"
 )
+
+// unknownDCLatency is the placeholder used for DC pairs not in the config.
+// Picked larger than any plausible real-world inter-DC latency so unknown
+// pairs always sort last.
+const unknownDCLatency = 1000
 
 // Matrix manages datacenter latency information
 type Matrix struct {
@@ -115,41 +121,35 @@ func (m *Matrix) GetNearestDatacenter(source string, candidates []string) string
 	return nearest
 }
 
-// SortDatacentersByProximity sorts datacenters by proximity to source
+// SortDatacentersByProximity returns dcs ordered by latency from source,
+// with the source DC (if present) always first.
 func (m *Matrix) SortDatacentersByProximity(source string, dcs []string) []string {
-	type dcLatency struct {
-		name    string
-		latency int
-	}
-
-	dcList := make([]dcLatency, 0, len(dcs))
+	sourcePresent := false
+	others := make([]string, 0, len(dcs))
 	for _, dc := range dcs {
 		if dc == source {
-			return append([]string{dc}, m.SortDatacentersByProximity(source, removeFromSlice(dcs, dc))...)
+			sourcePresent = true
+			continue
 		}
-
-		latency, exists := m.GetLatency(source, dc)
-		if !exists {
-			latency = 1000
-		}
-
-		dcList = append(dcList, dcLatency{name: dc, latency: latency})
+		others = append(others, dc)
 	}
 
-	for i := 0; i < len(dcList)-1; i++ {
-		for j := i + 1; j < len(dcList); j++ {
-			if dcList[j].latency < dcList[i].latency {
-				dcList[i], dcList[j] = dcList[j], dcList[i]
-			}
-		}
-	}
+	sort.Slice(others, func(i, j int) bool {
+		return m.latencyOr(source, others[i], unknownDCLatency) <
+			m.latencyOr(source, others[j], unknownDCLatency)
+	})
 
-	result := make([]string, len(dcList))
-	for i, dc := range dcList {
-		result[i] = dc.name
+	if sourcePresent {
+		return append([]string{source}, others...)
 	}
+	return others
+}
 
-	return result
+func (m *Matrix) latencyOr(from, to string, fallback int) int {
+	if v, ok := m.GetLatency(from, to); ok {
+		return v
+	}
+	return fallback
 }
 
 // ValidateLatencies pings nodes to validate configured latencies
@@ -225,16 +225,6 @@ func (m *Matrix) pingNode(ip string) int {
 
 	latency := time.Since(start).Milliseconds()
 	return int(latency)
-}
-
-func removeFromSlice(slice []string, item string) []string {
-	result := make([]string, 0, len(slice)-1)
-	for _, s := range slice {
-		if s != item {
-			result = append(result, s)
-		}
-	}
-	return result
 }
 
 // NodeLister abstracts cluster state for periodic validation.

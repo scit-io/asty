@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
-	"os"
+	"strings"
 	"time"
 
 	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/core/netutil"
 	"asty/internal/platform/asty/core/types"
 	autometrics "asty/internal/platform/asty/features/autoscaling/metrics"
 	"asty/internal/platform/asty/features/clustering/leader"
@@ -91,50 +91,31 @@ func (s *Server) GetNATSConn() *nats.Conn                 { return s.nc }
 
 // --- NATS ---
 
-// connectNATS establishes connection to NATS.
+// connectNATS opens the NATS connection used by the server.
 func (s *Server) connectNATS() error {
-	natsURL := fmt.Sprintf("nats://%s:%s", s.cfg.NATSHost, s.cfg.NATSPort)
-
-	opts := []nats.Option{
-		nats.Name("asty-server-" + s.nodeID),
-	}
-
-	if s.cfg.NATSUser != "" {
-		opts = append(opts, nats.UserInfo(s.cfg.NATSUser, s.cfg.NATSPassword))
-	}
-
-	nc, err := nats.Connect(natsURL, opts...)
+	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
+		Host: s.cfg.NATSHost, Port: s.cfg.NATSPort,
+		User: s.cfg.NATSUser, Password: s.cfg.NATSPassword,
+	}, "asty-server-"+s.nodeID)
 	if err != nil {
 		return err
 	}
-
 	s.nc = nc
-	log.Info().Str("url", natsURL).Msg("connected to NATS")
 	return nil
 }
 
 // --- Commands ---
 
-// sendStartCommand sends a start command to an agent.
-func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) error {
-	cmdBytes, err := types.MarshalStartCommand(svc)
-	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
-	}
+// agentStartCommandTimeout bounds how long we wait for an agent to ack a
+// start command. Most starts take milliseconds; we allow a generous margin
+// for artifact downloads on first start.
+const agentStartCommandTimeout = 30 * time.Second
 
-	resp, err := s.SendCommandToAgent(nodeID, cmdBytes, 30*time.Second)
-	if err != nil {
-		return fmt.Errorf("failed to send command: %w", err)
-	}
+// agentStopCommandTimeout is shorter — stops are local kills with no I/O.
+const agentStopCommandTimeout = 5 * time.Second
 
-	if !resp.Success {
-		return fmt.Errorf("agent returned error: %s", resp.Message)
-	}
-
-	return nil
-}
-
-// SendCommandToAgent sends a command to an agent.
+// SendCommandToAgent sends an already-marshalled command to nodeID and
+// returns the agent's response. Lower-level helpers below build on this.
 func (s *Server) SendCommandToAgent(nodeID string, command []byte, timeout time.Duration) (*types.CommandResponse, error) {
 	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", nodeID)
 
@@ -147,31 +128,23 @@ func (s *Server) SendCommandToAgent(nodeID string, command []byte, timeout time.
 	if err := json.Unmarshal(msg.Data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
-
 	return &resp, nil
 }
 
-// StartServiceOnNode starts a service on a specific node.
-func (s *Server) StartServiceOnNode(nodeID string, svc *types.ServiceDefinition) error {
+// sendStartCommand asks an agent to start svc on its node and returns the
+// first error it sees: marshal, transport, or agent-reported failure.
+func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) error {
 	cmd, err := types.MarshalStartCommand(svc)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("failed to marshal start command: %w", err)
 	}
-
-	resp, err := s.SendCommandToAgent(nodeID, cmd, 30*time.Second)
+	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStartCommandTimeout)
 	if err != nil {
 		return err
 	}
-
 	if !resp.Success {
-		return fmt.Errorf("command failed: %s", resp.Error)
+		return fmt.Errorf("agent rejected start: %s", resp.Error)
 	}
-
-	log.Info().
-		Str("service", svc.Name).
-		Str("node_id", nodeID).
-		Msg("service started on node")
-
 	return nil
 }
 
@@ -179,23 +152,19 @@ func (s *Server) StartServiceOnNode(nodeID string, svc *types.ServiceDefinition)
 func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	cmd, err := types.MarshalStopCommand(serviceName)
 	if err != nil {
-		return fmt.Errorf("failed to marshal command: %w", err)
+		return fmt.Errorf("failed to marshal stop command: %w", err)
 	}
-
-	resp, err := s.SendCommandToAgent(nodeID, cmd, 5*time.Second)
+	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStopCommandTimeout)
 	if err != nil {
 		return err
 	}
-
 	if !resp.Success {
-		return fmt.Errorf("command failed: %s", resp.Error)
+		return fmt.Errorf("agent rejected stop: %s", resp.Error)
 	}
-
 	log.Info().
 		Str("service", serviceName).
 		Str("node_id", nodeID).
 		Msg("stop command dispatched")
-
 	return nil
 }
 
@@ -268,7 +237,7 @@ func (s *Server) startLogBuffering() {
 
 	// Subject pattern: asty.v1.agent.{nodeID}.logs.{service|"agent"}
 	if _, err := s.nc.Subscribe("asty.v1.agent.*.logs.*", func(msg *nats.Msg) {
-		parts := splitSubject(msg.Subject)
+		parts := strings.Split(msg.Subject, ".")
 		if len(parts) < 6 {
 			return
 		}
@@ -315,54 +284,6 @@ func parseUpdateDuration(s string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
-}
-
-// splitSubject splits a NATS subject by '.'.
-func splitSubject(subject string) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(subject); i++ {
-		if subject[i] == '.' {
-			parts = append(parts, subject[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, subject[start:])
-	return parts
-}
-
-// generateNodeID generates a stable node ID based on hostname.
-func generateNodeID() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return hostname
-}
-
-// getNodeIP returns the primary IP address of the node.
-func getNodeIP(natsHost string) string {
-	natsIP := net.ParseIP(natsHost)
-	if natsIP != nil && natsIP.IsLoopback() {
-		return natsHost
-	}
-
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		log.Warn().Err(err).Msg("failed to get network interfaces")
-		return ""
-	}
-
-	for _, addr := range addrs {
-		if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
-			if ipnet.IP.To4() != nil {
-				return ipnet.IP.String()
-			}
-		}
-	}
-
-	log.Warn().Msg("no non-loopback IP address found")
-	return ""
 }
 
 // Compile-time interface checks.

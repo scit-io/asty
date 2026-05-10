@@ -179,7 +179,7 @@ func TestSchedulerFilterHealthyNodes(t *testing.T) {
 		{ID: "n3", Status: "ready", LastSeen: time.Now().Add(-20 * time.Minute)},
 		{ID: "n4", Status: "ready", LastSeen: time.Now()},
 	}
-	healthy := scheduler.filterHealthyNodes(nodes)
+	healthy := scheduler.FilterHealthyNodes(nodes)
 	if len(healthy) != 2 {
 		t.Errorf("expected 2 healthy nodes, got %d", len(healthy))
 	}

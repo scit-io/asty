@@ -1,14 +1,11 @@
 package server
 
 import (
-	"encoding/json"
 	"sort"
 	"sync"
 	"time"
 
 	"asty/internal/platform/asty/core/types"
-
-	"github.com/rs/zerolog/log"
 )
 
 // allocIndex is an in-memory mirror of the KV node and allocation state.
@@ -118,7 +115,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		node.AllocationsRunning = running
 		node.AllocationsPlanned = planned
 
-		if node.Status == "ready" && now.Sub(node.LastSeen) < 2*time.Minute {
+		if node.IsHealthy(now) {
 			healthy++
 		}
 	}
@@ -164,26 +161,9 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			}
 		}
 
-		var cooldownUp, cooldownDown bool
-		var lastAction string
-		var lastActionAt int64
+		var cooldown types.CooldownStatus
 		if cd, err := h.server.clusterState.GetServiceCooldown(svc.Name); err == nil {
-			if !cd.LastScaleUp.IsZero() {
-				if now.Sub(cd.LastScaleUp) < cfg.CooldownUp {
-					cooldownUp = true
-				}
-				lastAction = "scale_up"
-				lastActionAt = cd.LastScaleUp.Unix()
-			}
-			if !cd.LastScaleDown.IsZero() {
-				if now.Sub(cd.LastScaleDown) < cfg.CooldownDown {
-					cooldownDown = true
-				}
-				if cd.LastScaleDown.Unix() > lastActionAt {
-					lastAction = "scale_down"
-					lastActionAt = cd.LastScaleDown.Unix()
-				}
-			}
+			cooldown = cd.Status(now, cfg.CooldownUp, cfg.CooldownDown)
 		}
 
 		servicesOut = append(servicesOut, types.ServiceWithUsage{
@@ -197,10 +177,10 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			TargetCPU:          cfg.TargetCPU,
 			TargetMemory:       cfg.TargetMemory,
 			TrafficThreshold:   cfg.TrafficRPSThreshold,
-			CooldownUpActive:   cooldownUp,
-			CooldownDownActive: cooldownDown,
-			LastAction:         lastAction,
-			LastActionAt:       lastActionAt,
+			CooldownUpActive:   cooldown.UpActive,
+			CooldownDownActive: cooldown.DownActive,
+			LastAction:         cooldown.LastAction,
+			LastActionAt:       cooldown.LastActionAt,
 		})
 	}
 
@@ -215,11 +195,3 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 	}
 }
 
-func mustJSON(v interface{}) []byte {
-	b, err := json.Marshal(v)
-	if err != nil {
-		log.Error().Err(err).Msg("streamHub: marshal failed")
-		return []byte("{}")
-	}
-	return b
-}

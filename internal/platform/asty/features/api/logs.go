@@ -14,8 +14,7 @@ import (
 
 // handleLogsAllocation returns logs for an allocation via SSE.
 func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -121,8 +120,7 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 
 // handleLogsNode returns logs for a node (agent logs).
 func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
@@ -189,8 +187,7 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 
 // handleLogsCluster returns cluster-wide logs (server logs).
 func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
 
