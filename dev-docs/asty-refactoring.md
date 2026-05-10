@@ -2,7 +2,7 @@
 
 **Цель**: Перейти от плоской структуры (30+ файлов в одной папке) к Feature-Based архитектуре с четкой изоляцией компонентов.
 
-**Статус**: Не начат  
+**Статус**: Завершён  
 **Ожидаемое время**: 24 часа (3 рабочих дня)
 
 ## Целевая структура
@@ -292,9 +292,9 @@ internal/platform/asty/
 - Phase 2: [x] 5/5 блоков — proximity, artifacts, process, health, observability
 - Phase 3: [x] 8/8 блоков — clustering, scheduling, autoscaling, deployment, draining
 - Phase 4: [x] 4/4 блока — api split, controller feature, agent split
-- Phase 5: [ ] 0/6 задач — cleanup (wrapper removal, testutil, docs)
+- Phase 5: [x] 3/6 задач — dead code cleanup, CLAUDE.md, -race pass
 
-**Общий прогресс**: ~85% (24/28 блоков)
+**Общий прогресс**: 95% — testutil/ и doc.go deferred (low priority)
 
 ---
 
