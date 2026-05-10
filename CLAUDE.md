@@ -164,19 +164,51 @@ Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from o
 
 ## Key Implementation Files
 
-### Orchestrator Core
-- `agent.go`, `server.go` — lifecycle, mode switching
-- `scheduler.go` — placement logic (geo-diversity, resource constraints)
-- `autoscaler.go` — scaling decisions (traffic + resource metrics)
-- `deployer.go` — rolling updates, canary, auto-revert
-- `state.go` — NATS JetStream KV wrapper (nodes, allocations)
-- `leader.go` — TTL-based leader election
-- `discovery.go` — DNS A-record polling for node discovery
-- `proximity.go` — DC latency matrix for placement
-- `process.go` — raw binary execution (start/stop/signals)
-- `health.go` — HTTP probe scheduler
-- `collector.go` — CPU/Memory from `/proc` filesystem
-- `artifact.go` — tar.gz download + SHA256 verification
+### Feature-Based Architecture (`internal/platform/asty/`)
+
+```
+internal/platform/asty/
+├── core/                          # Shared primitives
+│   ├── config/                    # Config struct + Load() + Validate()
+│   ├── types/                     # Node, ServiceDefinition, Allocation, Events, Commands
+│   └── errors/                    # Typed errors (ErrNotLeader, ErrNodeNotFound)
+├── features/                      # Vertical feature slices
+│   ├── clustering/
+│   │   ├── controller/            # ServiceController + Workqueue (reconciliation engine)
+│   │   ├── discovery/             # DNS node discovery
+│   │   ├── leader/                # TTL-based leader election
+│   │   └── state/                 # ClusterState — NATS KV (nodes, allocations, watch)
+│   ├── scheduling/
+│   │   ├── proximity/             # DC latency matrix
+│   │   └── *.go                   # Scheduler, helpers, placement logic
+│   ├── autoscaling/
+│   │   ├── metrics/               # MetricsStore (RPS timeseries, scaling events)
+│   │   └── autoscaler.go          # Scale-up/down decisions
+│   ├── deployment/
+│   │   ├── artifacts/             # tar.gz download + SHA256 verification
+│   │   ├── deployer.go            # Rolling updates, canary, auto-revert
+│   │   └── loader.go              # .asty file loading
+│   ├── draining/                  # DrainManager with DrainDeps interface
+│   ├── execution/
+│   │   ├── process/               # Process lifecycle (start/stop/signals)
+│   │   └── health/                # HTTP probe scheduler
+│   └── observability/
+│       ├── metrics/               # CPU/Memory collector (platform-specific)
+│       ├── logs/                   # LogBuffer + NATSWriter
+│       └── events/                # EventBuffer (ring buffer)
+├── agent.go, agent_commands.go, agent_lifecycle.go  # Agent entry
+├── server.go                      # Server entry (thin orchestrator)
+├── api_*.go                       # HTTP API handlers (split by domain)
+├── streamhub.go                   # SSE snapshot hub
+└── *.go                           # Backward-compatible type alias wrappers
+```
+
+### Orchestrator Entrypoints
+- `agent.go` + `agent_commands.go` + `agent_lifecycle.go` — process management, NATS commands, heartbeat, metrics
+- `server.go` — leader election, controller wiring, NATS subscriptions
+- `api_setup.go` — HTTP mux + helpers; `api_nodes.go`, `api_services.go`, `api_allocations.go`, `api_autoscaler.go`, `api_logs.go`, `api_stream.go`, `api_status.go`
+- `streamhub.go` — periodic snapshot + SSE fanout
+- `controller.go` / `workqueue.go` — thin aliases to `features/clustering/controller/`
 
 ### Platform Layer
 - `internal/platform/nc/` — NATS client wrapper (JetStream, KV helpers)
