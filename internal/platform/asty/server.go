@@ -109,7 +109,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	// Start proximity validation
-	go s.proximityMatrix.RunValidation(ctx, clusterState)
+	go RunProximityValidation(ctx, s.proximityMatrix, clusterState)
 
 	// Initialize deployer
 	s.deployer = NewDeployer(clusterState, s.nc, s.cfg)

@@ -1,49 +1,8 @@
 package asty
 
-import (
-	"encoding/json"
-	"time"
+import "asty/internal/platform/asty/features/observability/logs"
 
-	"github.com/nats-io/nats.go"
-)
+// Backward-compatible aliases
+type NATSWriter = logs.NATSWriter
 
-// NATSWriter is a zerolog writer that publishes to NATS
-type NATSWriter struct {
-	nc      *nats.Conn
-	subject string
-}
-
-// NewNATSWriter creates a new NATS writer for zerolog
-func NewNATSWriter(nc *nats.Conn, subject string) *NATSWriter {
-	return &NATSWriter{
-		nc:      nc,
-		subject: subject,
-	}
-}
-
-// Write implements io.Writer interface
-func (w *NATSWriter) Write(p []byte) (n int, err error) {
-	if w.nc == nil {
-		return len(p), nil
-	}
-
-	// Parse zerolog JSON
-	var entry map[string]interface{}
-	if err := json.Unmarshal(p, &entry); err != nil {
-		return len(p), nil
-	}
-
-	// Add timestamp field if not present
-	if _, ok := entry["timestamp"]; !ok {
-		entry["timestamp"] = time.Now().Unix()
-	}
-
-	// Re-marshal and publish
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return len(p), nil
-	}
-
-	w.nc.Publish(w.subject, data)
-	return len(p), nil
-}
+var NewNATSWriter = logs.NewNATSWriter

@@ -1,14 +1,14 @@
-package asty
+package proximity
 
 import (
 	"testing"
 )
 
-func TestProximityMatrixLoadFromConfig(t *testing.T) {
-	pm := NewProximityMatrix()
+func TestMatrixLoadFromConfig(t *testing.T) {
+	m := NewMatrix()
 
 	config := "eu-west:us-east:100,eu-west:asia:250,us-east:asia:200"
-	if err := pm.LoadFromConfig(config); err != nil {
+	if err := m.LoadFromConfig(config); err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
 
@@ -28,7 +28,7 @@ func TestProximityMatrixLoadFromConfig(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.dc1+"->"+tt.dc2, func(t *testing.T) {
-			got, gotOK := pm.GetLatency(tt.dc1, tt.dc2)
+			got, gotOK := m.GetLatency(tt.dc1, tt.dc2)
 			if gotOK != tt.wantOK {
 				t.Errorf("GetLatency(%s, %s) gotOK = %v, want %v", tt.dc1, tt.dc2, gotOK, tt.wantOK)
 			}
@@ -39,11 +39,11 @@ func TestProximityMatrixLoadFromConfig(t *testing.T) {
 	}
 }
 
-func TestProximityMatrixGetNearestDatacenter(t *testing.T) {
-	pm := NewProximityMatrix()
-	pm.SetLatency("eu-west", "us-east", 100)
-	pm.SetLatency("eu-west", "asia", 250)
-	pm.SetLatency("us-east", "asia", 200)
+func TestMatrixGetNearestDatacenter(t *testing.T) {
+	m := NewMatrix()
+	m.SetLatency("eu-west", "us-east", 100)
+	m.SetLatency("eu-west", "asia", 250)
+	m.SetLatency("us-east", "asia", 200)
 
 	tests := []struct {
 		name       string
@@ -79,7 +79,7 @@ func TestProximityMatrixGetNearestDatacenter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := pm.GetNearestDatacenter(tt.source, tt.candidates)
+			got := m.GetNearestDatacenter(tt.source, tt.candidates)
 			if got != tt.want {
 				t.Errorf("GetNearestDatacenter(%s, %v) = %s, want %s", tt.source, tt.candidates, got, tt.want)
 			}
@@ -87,11 +87,11 @@ func TestProximityMatrixGetNearestDatacenter(t *testing.T) {
 	}
 }
 
-func TestProximityMatrixSortByProximity(t *testing.T) {
-	pm := NewProximityMatrix()
-	pm.SetLatency("eu-west", "us-east", 100)
-	pm.SetLatency("eu-west", "asia", 250)
-	pm.SetLatency("us-east", "asia", 200)
+func TestMatrixSortByProximity(t *testing.T) {
+	m := NewMatrix()
+	m.SetLatency("eu-west", "us-east", 100)
+	m.SetLatency("eu-west", "asia", 250)
+	m.SetLatency("us-east", "asia", 200)
 
 	tests := []struct {
 		name   string
@@ -121,7 +121,7 @@ func TestProximityMatrixSortByProximity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := pm.SortDatacentersByProximity(tt.source, tt.dcs)
+			got := m.SortDatacentersByProximity(tt.source, tt.dcs)
 			if len(got) != len(tt.want) {
 				t.Errorf("SortDatacentersByProximity() len = %d, want %d", len(got), len(tt.want))
 				return

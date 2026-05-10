@@ -8,56 +8,22 @@ import (
 	"sync"
 	"time"
 
+	"asty/internal/platform/asty/core/types"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
+
+// Type aliases for backward compatibility
+type NodeInfo = types.NodeInfo
+type ServiceAllocation = types.ServiceAllocation
+type ServiceCooldown = types.ServiceCooldown
 
 // ClusterState manages cluster state in NATS JetStream KV
 type ClusterState struct {
 	nc     *nats.Conn
 	js     nats.JetStreamContext
 	bucket nats.KeyValue
-}
-
-// NodeInfo represents information about a cluster node
-type NodeInfo struct {
-	ID         string    `json:"id"`
-	Datacenter string    `json:"datacenter"`
-	IP         string    `json:"ip"`
-	Status     string    `json:"status"` // ready, draining, down
-	CreatedAt  time.Time `json:"created_at"`
-	LastSeen   time.Time `json:"last_seen"`
-
-	// Resources
-	CPUTotal      int   `json:"cpu_total"`       // MHz
-	CPUAvailable  int   `json:"cpu_available"`
-	MemoryTotal   int64 `json:"memory_total"`    // MB
-	MemoryAvailable int64 `json:"memory_available"`
-
-	// Processes
-	Processes []string `json:"processes"` // list of service names
-
-	// Allocations counters (computed, not persisted in KV)
-	AllocationsRunning int `json:"allocations_running"` // Number of running allocations
-	AllocationsPlanned int `json:"allocations_planned"` // Total number of planned allocations
-}
-
-// ServiceAllocation represents a service instance placement
-type ServiceAllocation struct {
-	ID          string    `json:"id"`          // Unique allocation ID
-	ServiceName string    `json:"service_name"`
-	NodeID      string    `json:"node_id"`
-	Status      string    `json:"status"` // pending, running, stopped, failed
-	Version     string    `json:"version"`
-	PID         int       `json:"pid"`           // Process ID (if running)
-	StartedAt   time.Time `json:"started_at"`    // When process started
-	HealthStatus string   `json:"health_status"` // healthy, unhealthy, unknown
-	CPUUsage    int       `json:"cpu_usage"`     // Percentage
-	MemoryUsage int       `json:"memory_usage"`  // MB
-	Restarts             int       `json:"restarts"`              // Total cumulative restarts
-	ConsecutiveFailures  int       `json:"consecutive_failures"`  // Resets on stable run
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // NewClusterState creates a new cluster state manager
@@ -620,13 +586,6 @@ func splitAllocKey(key string) (string, string) {
 	return rest, ""
 }
 
-// ServiceCooldown captures the timestamps of the most recent autoscaler
-// actions for a service. Stored in KV so leader flips don't reset the
-// cooldown window — a freshly elected leader sees the same history.
-type ServiceCooldown struct {
-	LastScaleUp   time.Time `json:"last_scale_up,omitempty"`
-	LastScaleDown time.Time `json:"last_scale_down,omitempty"`
-}
 
 const serviceCooldownKey = "service.%s.cooldown"
 
