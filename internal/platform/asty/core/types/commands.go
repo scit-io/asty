@@ -1,6 +1,9 @@
 package types
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 // Command represents a command sent from server to agent
 type Command struct {
@@ -37,4 +40,81 @@ type CommandResponse struct {
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 	Message string `json:"message,omitempty"`
+}
+
+func MarshalStartCommand(svc *ServiceDefinition) ([]byte, error) {
+	cmd := StartServiceCommand{Service: svc}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Command{Type: "start", Data: data})
+}
+
+func MarshalStopCommand(serviceName string) ([]byte, error) {
+	cmd := StopServiceCommand{ServiceName: serviceName}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Command{Type: "stop", Data: data})
+}
+
+func MarshalGetLogsCommand(serviceName string, lines int, follow bool) ([]byte, error) {
+	cmd := GetLogsCommand{ServiceName: serviceName, Lines: lines, Follow: follow}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Command{Type: "logs", Data: data})
+}
+
+func UnmarshalCommand(data []byte) (*Command, error) {
+	var cmd Command
+	if err := json.Unmarshal(data, &cmd); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal command: %w", err)
+	}
+	return &cmd, nil
+}
+
+func ParseStartCommand(data json.RawMessage) (*StartServiceCommand, error) {
+	var cmd StartServiceCommand
+	if err := json.Unmarshal(data, &cmd); err != nil {
+		return nil, fmt.Errorf("failed to parse start command: %w", err)
+	}
+	return &cmd, nil
+}
+
+func ParseStopCommand(data json.RawMessage) (*StopServiceCommand, error) {
+	var cmd StopServiceCommand
+	if err := json.Unmarshal(data, &cmd); err != nil {
+		return nil, fmt.Errorf("failed to parse stop command: %w", err)
+	}
+	return &cmd, nil
+}
+
+func ParseGetLogsCommand(data json.RawMessage) (*GetLogsCommand, error) {
+	var cmd GetLogsCommand
+	if err := json.Unmarshal(data, &cmd); err != nil {
+		return nil, fmt.Errorf("failed to parse get logs command: %w", err)
+	}
+	return &cmd, nil
+}
+
+func MarshalResponse(success bool, message string, err error) []byte {
+	resp := CommandResponse{Success: success, Message: message}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	data, _ := json.Marshal(resp)
+	return data
+}
+
+func MarshalLogsResponse(logs []string, err error) []byte {
+	resp := LogsResponse{Success: err == nil, Logs: logs}
+	if err != nil {
+		resp.Error = err.Error()
+	}
+	data, _ := json.Marshal(resp)
+	return data
 }

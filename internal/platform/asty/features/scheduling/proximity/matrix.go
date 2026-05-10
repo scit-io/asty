@@ -236,3 +236,28 @@ func removeFromSlice(slice []string, item string) []string {
 	}
 	return result
 }
+
+// NodeLister abstracts cluster state for periodic validation.
+type NodeLister interface {
+	ListNodes() ([]*types.NodeInfo, error)
+}
+
+// RunValidation runs periodic latency validation.
+func RunValidation(ctx context.Context, pm *Matrix, lister NodeLister) {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			nodes, err := lister.ListNodes()
+			if err != nil {
+				log.Error().Err(err).Msg("failed to list nodes for latency validation")
+				continue
+			}
+			pm.ValidateLatencies(ctx, nodes)
+		}
+	}
+}

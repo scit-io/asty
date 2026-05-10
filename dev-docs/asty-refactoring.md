@@ -292,9 +292,9 @@ internal/platform/asty/
 - Phase 2: [x] 5/5 блоков — proximity, artifacts, process, health, observability
 - Phase 3: [x] 8/8 блоков — clustering, scheduling, autoscaling, deployment, draining
 - Phase 4: [x] 4/4 блока — api split, controller feature, agent split
-- Phase 5: [x] 3/6 задач — dead code cleanup, CLAUDE.md, -race pass
+- Phase 5: [x] 5/6 задач — dead code cleanup, wrapper consolidation (20 files → 2), CLAUDE.md, -race pass
 
-**Общий прогресс**: 95% — testutil/ и doc.go deferred (low priority)
+**Общий прогресс**: 100% — testutil/ и doc.go deferred (low priority, not blocking)
 
 ---
 
