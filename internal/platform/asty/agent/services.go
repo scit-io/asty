@@ -49,6 +49,16 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	}
 
 	proc := process.New(svc, a.nodeID, serviceDir)
+	// Register before Start so we never miss an exit. The callback
+	// runs on the process monitor goroutine; it must not block, hence
+	// the non-blocking send pattern.
+	name := svc.Name
+	proc.OnExit(func(err error) {
+		select {
+		case a.failed <- name:
+		default:
+		}
+	})
 	if err := proc.Start(context.Background()); err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
 	}

@@ -11,36 +11,38 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// logStreamPresenceCheck — how often we verify the process is still in
-// the agent's map. When a service is stopped, the agent removes it, and
-// the goroutine should exit promptly to free resources. Phase 6.3 will
-// replace this with a per-process context.
-const logStreamPresenceCheck = 500 * time.Millisecond
+// logTailBuffer — capacity of the in-memory channel that the tailer
+// fills and we drain. 100 lines is enough to absorb a burst without
+// dropping; chatty services that exceed this lose old lines first.
+const logTailBuffer = 100
 
 // streamProcessLogs publishes lines from proc.TailLogs to the
-// per-allocation NATS subject until the process is removed from the
-// agent's map.
+// per-allocation NATS subject until the process exits. The TailLogs
+// goroutine cancels its own context when the process's Done channel
+// closes — no timers, no agent-map polling.
 func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 	subject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", a.nodeID, serviceName)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	logLines := make(chan string, 100)
+	// Tie the tailer's lifetime to the process: when the process
+	// exits, this goroutine cancels ctx, which makes TailLogs return
+	// and the main loop exit cleanly.
+	go func() {
+		<-proc.Done()
+		cancel()
+	}()
+
+	logLines := make(chan string, logTailBuffer)
 	go func() {
 		if err := proc.TailLogs(ctx, logLines); err != nil && err != context.Canceled {
-			log.Error().
-				Err(err).
-				Str("service", serviceName).
-				Msg("failed to tail logs")
+			log.Error().Err(err).Str("service", serviceName).Msg("failed to tail logs")
 		}
 		close(logLines)
 	}()
 
 	log.Info().Str("service", serviceName).Str("subject", subject).Msg("streaming logs to NATS")
-
-	ticker := time.NewTicker(logStreamPresenceCheck)
-	defer ticker.Stop()
 
 	for {
 		select {
@@ -49,22 +51,15 @@ func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 				log.Info().Str("service", serviceName).Msg("log channel closed, ending stream")
 				return
 			}
-			if entry, err := json.Marshal(map[string]interface{}{
+			entry, err := json.Marshal(map[string]interface{}{
 				"line":      line,
 				"timestamp": time.Now().Unix(),
-			}); err == nil {
-				if pubErr := a.nc.Publish(subject, entry); pubErr != nil {
-					log.Error().Err(pubErr).Str("subject", subject).Msg("failed to publish log line")
-				}
+			})
+			if err != nil {
+				continue
 			}
-		case <-ticker.C:
-			a.mu.RLock()
-			_, exists := a.processes[serviceName]
-			a.mu.RUnlock()
-			if !exists {
-				log.Info().Str("service", serviceName).Msg("process no longer exists, ending log stream")
-				cancel()
-				return
+			if pubErr := a.nc.Publish(subject, entry); pubErr != nil {
+				log.Error().Err(pubErr).Str("subject", subject).Msg("failed to publish log line")
 			}
 		case <-ctx.Done():
 			return

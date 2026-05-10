@@ -14,11 +14,6 @@ import (
 // past that, something is wrong and the operator should investigate.
 const drainHealthDeadline = 2 * time.Minute
 
-// drainHealthPoll — fallback polling cadence for the legacy
-// waitForHealthyReplacement path that doesn't know which target node
-// to watch. The other waits use event-driven WatchAllocation.
-const drainHealthPoll = 200 * time.Millisecond
-
 // drainStopMinSlack — the agent's kill_timeout governs how long Stop
 // can run; we add this slack on top before declaring the wait failed.
 const drainStopMinSlack = 10 * time.Second
@@ -68,37 +63,80 @@ func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode str
 	return nil
 }
 
-// waitForHealthyReplacement is the fallback used when placeReplacement
-// couldn't pick a target up-front (no nearest peer eligible). We don't
-// know which node will host the new copy, so we poll every
-// drainHealthPoll until any non-drained node has a "running" copy. The
-// audit doc plans to replace this with event-driven WatchAllocations.
+// waitForHealthyReplacement is used when placeReplacement couldn't
+// pick a target up-front (no nearest peer eligible) and let the
+// controller place the new copy. We don't know which node will host it,
+// so we subscribe to allocation changes service-wide and exit on the
+// first event reporting "running" on a node other than drainedNode.
+//
+// First we check current state — the replacement might already exist
+// before our watcher is set up (NATS Watch replays history but we
+// don't want to depend on that for correctness).
 func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNode string, svc *types.ServiceDefinition) error {
-	deadline := time.After(drainHealthDeadline)
-	ticker := time.NewTicker(drainHealthPoll)
-	defer ticker.Stop()
+	cs := dm.deps.GetClusterState()
+	if dm.healthyReplacementExists(cs, svc.Name, drainedNode) {
+		return nil
+	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-deadline:
+	dctx, cancel := context.WithTimeout(ctx, drainHealthDeadline)
+	defer cancel()
+
+	found := make(chan struct{}, 1)
+	go func() {
+		_ = cs.WatchAllocations(dctx, func(a *types.ServiceAllocation) {
+			if a.ServiceName != svc.Name {
+				return
+			}
+			if a.NodeID == drainedNode {
+				return
+			}
+			if a.Status != "running" {
+				return
+			}
+			select {
+			case found <- struct{}{}:
+			default:
+			}
+		})
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-dctx.Done():
+		if dctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("timeout waiting for healthy replacement")
-		case <-ticker.C:
-			allocs, err := dm.deps.GetClusterState().ListAllocations(svc.Name)
-			if err != nil {
-				continue
-			}
-			for _, alloc := range allocs {
-				if alloc.NodeID == drainedNode {
-					continue
-				}
-				if alloc.Status == "running" {
-					return nil
-				}
-			}
+		}
+		return dctx.Err()
+	case <-found:
+		return nil
+	}
+}
+
+// healthyReplacementExists is the pre-watcher fast path: if the
+// replacement already exists in KV, return immediately without
+// spinning up a watcher.
+func (dm *DrainManager) healthyReplacementExists(cs allocLister, serviceName, drainedNode string) bool {
+	allocs, err := cs.ListAllocations(serviceName)
+	if err != nil {
+		return false
+	}
+	for _, a := range allocs {
+		if a.NodeID == drainedNode {
+			continue
+		}
+		if a.Status == "running" {
+			return true
 		}
 	}
+	return false
+}
+
+// allocLister is the small contract waitForHealthyReplacement needs
+// from cluster state. Defining it locally avoids importing the full
+// state package interface for one method.
+type allocLister interface {
+	ListAllocations(serviceName string) ([]*types.ServiceAllocation, error)
 }
 
 // publishDrainEvent broadcasts the current drain status on the

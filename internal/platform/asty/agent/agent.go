@@ -26,6 +26,14 @@ import (
 // agents can run side-by-side on a dev box without colliding.
 const defaultWorkRoot = "/var/lib/asty"
 
+// failedServicesBufferSize bounds the channel that carries
+// "process exited unexpectedly" notifications from the per-process
+// OnExit callbacks to the restart goroutine. A burst larger than this
+// would mean many simultaneous failures — we drop in that case rather
+// than back-pressure the OnExit callback (which runs on the process
+// monitor goroutine and must not block).
+const failedServicesBufferSize = 64
+
 // Agent manages processes on a single node.
 type Agent struct {
 	cfg    *config.Config
@@ -41,6 +49,11 @@ type Agent struct {
 	clusterState       *state.ClusterState
 
 	workDir string
+
+	// failed receives service names whose process exited unexpectedly.
+	// Populated by per-process OnExit callbacks; drained by
+	// monitorProcesses, which decides whether to restart or give up.
+	failed chan string
 }
 
 // New creates a new Asty agent. The work directory is created on disk
@@ -68,6 +81,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		metricsCollector:   metrics.NewCollector(cfg.EvalInterval),
 		artifactDownloader: artifacts.NewDownloader(),
 		workDir:            workDir,
+		failed:             make(chan string, failedServicesBufferSize),
 	}, nil
 }
 

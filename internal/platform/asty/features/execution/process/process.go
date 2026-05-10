@@ -40,6 +40,14 @@ type Process struct {
 	cancelCtx context.CancelFunc
 
 	logFile *os.File
+
+	// done is closed when the process exits (clean or failed). Letting
+	// callers select on it avoids polling Status() in tight loops.
+	done chan struct{}
+	// onExit, if set, runs on the monitor goroutine after the process
+	// exits. Used by the agent to drive the restart loop without a
+	// scanning ticker.
+	onExit func(err error)
 }
 
 // New creates a new process instance in the StatusStopped state.
@@ -49,7 +57,24 @@ func New(svc *types.ServiceDefinition, nodeID, workDir string) *Process {
 		nodeID:  nodeID,
 		workDir: workDir,
 		status:  StatusStopped,
+		done:    make(chan struct{}),
 	}
+}
+
+// OnExit registers fn to run when the process exits. Must be called
+// before Start. Replaces any previously-set callback.
+func (p *Process) OnExit(fn func(err error)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.onExit = fn
+}
+
+// Done returns a channel that is closed once the process has exited
+// (whether cleanly or as failure). Callers can select on it instead of
+// polling Status(). Cheap to call repeatedly — the channel is created
+// in New.
+func (p *Process) Done() <-chan struct{} {
+	return p.done
 }
 
 // Start launches the process. Absolute commands run via `sh -c` so shell

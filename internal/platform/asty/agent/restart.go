@@ -11,46 +11,35 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// restartPollInterval — how often the agent scans its process map for
-// exited processes that need restarting. Phase 6.3 will replace this
-// with an event-driven OnExit callback from Process.
-const restartPollInterval = 5 * time.Second
-
-// monitorProcesses runs the restart loop until ctx is cancelled.
+// monitorProcesses drains the per-process OnExit channel and reacts on
+// each failure. Pure event-driven: no timers, no polling. The Process
+// monitor goroutine pushes the service name when a process exits with
+// StatusFailed; we decide whether to restart or give up.
 func (a *Agent) monitorProcesses(ctx context.Context) {
-	ticker := time.NewTicker(restartPollInterval)
-	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			a.checkAndRestartFailedProcesses()
+		case name := <-a.failed:
+			if proc := a.lookupFailed(name); proc != nil {
+				a.attemptRestart(name, proc)
+			}
 		}
 	}
 }
 
-// checkAndRestartFailedProcesses finds StatusFailed processes, decides
-// whether they've used up their restart budget, and either marks the
-// allocation permanently failed or flips it back to "pending" so the
-// controller will redispatch it.
-func (a *Agent) checkAndRestartFailedProcesses() {
-	failed := a.collectFailed()
-	for name, proc := range failed {
-		a.attemptRestart(name, proc)
+// lookupFailed re-fetches the Process by name and confirms it is still
+// in StatusFailed. The OnExit callback fires for every exit, including
+// clean Stops; we restart only when the agent has not removed the
+// process and the exit is genuinely a failure.
+func (a *Agent) lookupFailed(name string) *process.Process {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	proc, ok := a.processes[name]
+	if !ok || proc.Status() != process.StatusFailed {
+		return nil
 	}
-}
-
-func (a *Agent) collectFailed() map[string]*process.Process {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	failed := make(map[string]*process.Process)
-	for name, proc := range a.processes {
-		if proc.Status() == process.StatusFailed {
-			failed[name] = proc
-		}
-	}
-	return failed
+	return proc
 }
 
 func (a *Agent) attemptRestart(name string, proc *process.Process) {

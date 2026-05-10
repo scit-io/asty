@@ -23,10 +23,12 @@ const (
 	// history at typical event rates.
 	eventBufferEntries = 10000
 
-	// streamHubInterval — fallback period for the snapshot driver if
-	// no KV-watch event has fired. The reactive path is the debouncer
-	// in streamHub.Run; this only catches missed events.
-	streamHubInterval = 5 * time.Second
+	// streamHubInterval — pure safety-net for missed KV-watch events.
+	// The reactive path (debounced rebuilds on each watcher event) is
+	// what drives normal updates; this fires only if no event has
+	// arrived within the interval. 60 s is a sane "something must be
+	// wrong if no events have happened in a minute" cadence.
+	streamHubInterval = 60 * time.Second
 
 	// resyncMultiplier — controller's safety-net resync runs at
 	// EvalInterval × this factor; with EvalInterval=10 s the resync is
