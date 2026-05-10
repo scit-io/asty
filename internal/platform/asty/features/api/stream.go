@@ -1,26 +1,13 @@
-package asty
+package api
 
 import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
+	autometrics "asty/internal/platform/asty/features/autoscaling/metrics"
 )
-
-// sseSetup writes SSE headers and returns a flusher. On unsupported writers it
-// sends an error response and returns nil.
-func sseSetup(w http.ResponseWriter) http.Flusher {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return nil
-	}
-	return flusher
-}
 
 // sseEvent writes a single SSE event (event: name, data: json, blank line).
 func sseEvent(w http.ResponseWriter, event string, data []byte) {
@@ -40,7 +27,7 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hub := api.server.streamHub
+	hub := api.ctx.StreamHub()
 	snapshots, unsubSnap := hub.Subscribe()
 	defer unsubSnap()
 	drainCh, unsubDrain := hub.SubscribeDrain()
@@ -48,7 +35,7 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 	eventCh, unsubEvent := hub.SubscribeEvents()
 	defer unsubEvent()
 
-	emit := func(snap *clusterSnapshot) {
+	emit := func(snap *types.ClusterSnapshot) {
 		sseEvent(w, "status", mustJSON(map[string]interface{}{
 			"cluster":   snap.Cluster,
 			"services":  map[string]interface{}{"loaded": len(snap.Services)},
@@ -58,7 +45,7 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		sseEvent(w, "services", mustJSON(map[string]interface{}{"services": snap.Services}))
 
 		var totalCPUUsed, totalCPUTotal, totalMemUsed, totalMemTotal, clusterRPS float64
-		ms := api.server.metricsStore
+		ms := api.ctx.MetricsStore()
 		for _, node := range snap.Nodes {
 			if node.Status != "ready" {
 				continue
@@ -79,9 +66,9 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 		}
 		now := snap.Timestamp
 		sseEvent(w, "cluster_metrics", mustJSON(map[string]interface{}{
-			"cpu":    []MetricPoint{{Timestamp: now, Value: clusterCPU}},
-			"memory": []MetricPoint{{Timestamp: now, Value: clusterMem}},
-			"rps":    []MetricPoint{{Timestamp: now, Value: clusterRPS}},
+			"cpu":    []autometrics.MetricPoint{{Timestamp: now, Value: clusterCPU}},
+			"memory": []autometrics.MetricPoint{{Timestamp: now, Value: clusterMem}},
+			"rps":    []autometrics.MetricPoint{{Timestamp: now, Value: clusterRPS}},
 		}))
 		flusher.Flush()
 	}
@@ -136,13 +123,13 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshots, unsub := api.server.streamHub.Subscribe()
+	snapshots, unsub := api.ctx.StreamHub().Subscribe()
 	defer unsub()
 
-	emit := func(snap *clusterSnapshot) {
+	emit := func(snap *types.ClusterSnapshot) {
 		allocs := snap.AllocsByNode[nodeID]
 		if allocs == nil {
-			allocs = []*ServiceAllocation{}
+			allocs = []*types.ServiceAllocation{}
 		}
 		sseEvent(w, "allocations", mustJSON(map[string]interface{}{"allocations": allocs}))
 
@@ -158,12 +145,12 @@ func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		rpsVal := api.server.metricsStore.GetLatestRPS(nodeID)
+		rpsVal := api.ctx.MetricsStore().GetLatestRPS(nodeID)
 		now := snap.Timestamp
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":    []MetricPoint{{Timestamp: now, Value: cpuPct}},
-			"memory": []MetricPoint{{Timestamp: now, Value: memPct}},
-			"rps":    []MetricPoint{{Timestamp: now, Value: rpsVal}},
+			"cpu":    []autometrics.MetricPoint{{Timestamp: now, Value: cpuPct}},
+			"memory": []autometrics.MetricPoint{{Timestamp: now, Value: memPct}},
+			"rps":    []autometrics.MetricPoint{{Timestamp: now, Value: rpsVal}},
 		}))
 		flusher.Flush()
 	}
@@ -206,11 +193,11 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshots, unsub := api.server.streamHub.Subscribe()
+	snapshots, unsub := api.ctx.StreamHub().Subscribe()
 	defer unsub()
 
-	emit := func(snap *clusterSnapshot) {
-		var svcDef *ServiceDefinition
+	emit := func(snap *types.ClusterSnapshot) {
+		var svcDef *types.ServiceDefinition
 		var avgCPU, avgMem float64
 		var running int
 		for _, svc := range snap.Services {
@@ -224,7 +211,7 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 		}
 		allocs := snap.AllocsByService[serviceName]
 		if allocs == nil {
-			allocs = []*ServiceAllocation{}
+			allocs = []*types.ServiceAllocation{}
 		}
 		sseEvent(w, "detail", mustJSON(map[string]interface{}{
 			"service":     svcDef,
@@ -233,9 +220,9 @@ func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
 
 		now := snap.Timestamp
 		sseEvent(w, "metrics", mustJSON(map[string]interface{}{
-			"cpu":               []MetricPoint{{Timestamp: now, Value: avgCPU}},
-			"memory":            []MetricPoint{{Timestamp: now, Value: avgMem}},
-			"allocations_count": []MetricPoint{{Timestamp: now, Value: float64(running)}},
+			"cpu":               []autometrics.MetricPoint{{Timestamp: now, Value: avgCPU}},
+			"memory":            []autometrics.MetricPoint{{Timestamp: now, Value: avgMem}},
+			"allocations_count": []autometrics.MetricPoint{{Timestamp: now, Value: float64(running)}},
 		}))
 		flusher.Flush()
 	}
@@ -278,10 +265,10 @@ func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	snapshots, unsub := api.server.streamHub.Subscribe()
+	snapshots, unsub := api.ctx.StreamHub().Subscribe()
 	defer unsub()
 
-	emit := func(snap *clusterSnapshot) {
+	emit := func(snap *types.ClusterSnapshot) {
 		alloc := snap.AllocByID[allocID]
 		sseEvent(w, "detail", mustJSON(map[string]interface{}{"allocation": alloc}))
 		flusher.Flush()

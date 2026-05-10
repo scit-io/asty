@@ -1,10 +1,12 @@
-package asty
+package api
 
 import (
 	"net/http"
+
+	"asty/internal/platform/asty/core/types"
 )
 
-// handleAllocations returns service allocations
+// handleAllocations returns service allocations.
 func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -15,7 +17,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.URL.Query().Get("node_id")
 
 	if serviceName != "" {
-		allocs, err := api.server.clusterState.ListAllocations(serviceName)
+		allocs, err := api.ctx.ClusterState().ListAllocations(serviceName)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "failed to list allocations", err)
 			return
@@ -30,9 +32,9 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if nodeID != "" {
-		var allAllocs []*ServiceAllocation
-		for _, svc := range api.server.services {
-			allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+		var allAllocs []*types.ServiceAllocation
+		for _, svc := range api.ctx.Services() {
+			allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
 			if err != nil {
 				continue
 			}
@@ -56,7 +58,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAllocationWithID handles /api/v1/allocations/:id and /api/v1/allocations/:id/action
+// handleAllocationWithID handles /api/v1/allocations/:id and /api/v1/allocations/:id/action.
 func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[len("/api/v1/allocations/"):]
 	if path == "" {
@@ -108,9 +110,9 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	services := api.server.services
+	services := api.ctx.Services()
 	for _, svc := range services {
-		allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
 		if err != nil {
 			continue
 		}

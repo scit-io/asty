@@ -1,8 +1,10 @@
-package asty
+package deployment
 
 import (
 	"testing"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
 )
 
 func TestDeploymentPlan(t *testing.T) {
@@ -10,7 +12,7 @@ func TestDeploymentPlan(t *testing.T) {
 		ServiceName:    "test-service",
 		CurrentVersion: "v1.0.0",
 		TargetVersion:  "v1.1.0",
-		Allocations: []*ServiceAllocation{
+		Allocations: []*types.ServiceAllocation{
 			{ServiceName: "test-service", NodeID: "node1", Status: "running", Version: "v1.0.0"},
 			{ServiceName: "test-service", NodeID: "node2", Status: "running", Version: "v1.0.0"},
 			{ServiceName: "test-service", NodeID: "node3", Status: "running", Version: "v1.0.0"},

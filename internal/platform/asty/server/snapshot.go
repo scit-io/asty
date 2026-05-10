@@ -1,10 +1,12 @@
-package asty
+package server
 
 import (
 	"encoding/json"
 	"sort"
 	"sync"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
 
 	"github.com/rs/zerolog/log"
 )
@@ -14,18 +16,18 @@ import (
 // snapshot(). All mutations hold the write lock.
 type allocIndex struct {
 	mu     sync.RWMutex
-	nodes  map[string]*NodeInfo          // nodeID → NodeInfo
-	allocs map[string]*ServiceAllocation // "svc/nodeID" → ServiceAllocation
+	nodes  map[string]*types.NodeInfo
+	allocs map[string]*types.ServiceAllocation
 }
 
 func newAllocIndex() *allocIndex {
 	return &allocIndex{
-		nodes:  make(map[string]*NodeInfo),
-		allocs: make(map[string]*ServiceAllocation),
+		nodes:  make(map[string]*types.NodeInfo),
+		allocs: make(map[string]*types.ServiceAllocation),
 	}
 }
 
-func (idx *allocIndex) onNode(n *NodeInfo) {
+func (idx *allocIndex) onNode(n *types.NodeInfo) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	if n.Status == "deleted" {
@@ -43,7 +45,7 @@ func (idx *allocIndex) hasNode(id string) bool {
 	return ok
 }
 
-func (idx *allocIndex) onAlloc(a *ServiceAllocation) {
+func (idx *allocIndex) onAlloc(a *types.ServiceAllocation) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	k := a.ServiceName + "/" + a.NodeID
@@ -55,15 +57,15 @@ func (idx *allocIndex) onAlloc(a *ServiceAllocation) {
 	}
 }
 
-func (idx *allocIndex) snapshot() (nodes []*NodeInfo, allocs []*ServiceAllocation) {
+func (idx *allocIndex) snapshot() (nodes []*types.NodeInfo, allocs []*types.ServiceAllocation) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	nodes = make([]*NodeInfo, 0, len(idx.nodes))
+	nodes = make([]*types.NodeInfo, 0, len(idx.nodes))
 	for _, n := range idx.nodes {
 		nc := *n
 		nodes = append(nodes, &nc)
 	}
-	allocs = make([]*ServiceAllocation, 0, len(idx.allocs))
+	allocs = make([]*types.ServiceAllocation, 0, len(idx.allocs))
 	for _, a := range idx.allocs {
 		ac := *a
 		allocs = append(allocs, &ac)
@@ -71,52 +73,9 @@ func (idx *allocIndex) snapshot() (nodes []*NodeInfo, allocs []*ServiceAllocatio
 	return
 }
 
-// clusterSnapshot is the immutable per-tick state shared with all subscribers.
-type clusterSnapshot struct {
-	Timestamp int64
-
-	Cluster ClusterStatusPayload
-	Nodes   []*NodeInfo
-
-	Services []ServiceWithUsage
-
-	AllocsByNode    map[string][]*ServiceAllocation
-	AllocsByService map[string][]*ServiceAllocation
-	AllocByID       map[string]*ServiceAllocation
-}
-
-// ClusterStatusPayload is the cluster-level status block published in SSE.
-type ClusterStatusPayload struct {
-	Leader       string `json:"leader"`
-	LeaderIP     string `json:"leader_ip"`
-	IsLeader     bool   `json:"is_leader"`
-	NodesTotal   int    `json:"nodes_total"`
-	NodesHealthy int    `json:"nodes_healthy"`
-}
-
-// ServiceWithUsage extends ServiceDefinition with runtime metrics.
-type ServiceWithUsage struct {
-	*ServiceDefinition
-
-	CurrentCopies      int     `json:"current_copies"`
-	AvgCPUPercent      float64 `json:"avg_cpu_percent"`
-	AvgMemoryPercent   float64 `json:"avg_memory_percent"`
-	AvgCPUMHz          float64 `json:"avg_cpu_mhz"`
-	AvgMemoryMB        float64 `json:"avg_memory_mb"`
-
-	MinCopies          int    `json:"min_copies"`
-	TargetCPU          int    `json:"target_cpu"`
-	TargetMemory       int    `json:"target_memory"`
-	TrafficThreshold   int    `json:"traffic_threshold"`
-	CooldownUpActive   bool   `json:"cooldown_up_active"`
-	CooldownDownActive bool   `json:"cooldown_down_active"`
-	LastAction         string `json:"last_action,omitempty"`
-	LastActionAt       int64  `json:"last_action_at,omitempty"`
-}
-
 // buildSnapshot assembles a complete cluster snapshot from the in-memory
 // allocIndex with no KV reads.
-func (h *streamHub) buildSnapshot() *clusterSnapshot {
+func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 	now := time.Now()
 
 	nodes, rawAllocs := h.idx.snapshot()
@@ -128,9 +87,9 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 		return nodes[i].CreatedAt.Before(nodes[j].CreatedAt)
 	})
 
-	allocsByNode := make(map[string][]*ServiceAllocation)
-	allocsByService := make(map[string][]*ServiceAllocation)
-	allocByID := make(map[string]*ServiceAllocation)
+	allocsByNode := make(map[string][]*types.ServiceAllocation)
+	allocsByService := make(map[string][]*types.ServiceAllocation)
+	allocByID := make(map[string]*types.ServiceAllocation)
 
 	sort.Slice(rawAllocs, func(i, j int) bool {
 		if rawAllocs[i].ServiceName != rawAllocs[j].ServiceName {
@@ -164,18 +123,18 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 		}
 	}
 
-	leader, _ := h.server.leaderElection.GetLeader()
-	leaderNodeID := leader.ID
+	leaderInfo, _ := h.server.leaderElection.GetLeader()
+	leaderNodeID := leaderInfo.ID
 	for _, node := range nodes {
-		if node.IP == leader.IP {
+		if node.IP == leaderInfo.IP {
 			leaderNodeID = node.ID
 			break
 		}
 	}
 
-	cluster := ClusterStatusPayload{
+	cluster := types.ClusterStatusPayload{
 		Leader:       leaderNodeID,
-		LeaderIP:     leader.IP,
+		LeaderIP:     leaderInfo.IP,
 		IsLeader:     h.server.leaderElection.IsLeader(),
 		NodesTotal:   len(nodes),
 		NodesHealthy: healthy,
@@ -183,7 +142,7 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 
 	cfg := h.server.cfg
 	services := h.server.services
-	servicesOut := make([]ServiceWithUsage, 0, len(services))
+	servicesOut := make([]types.ServiceWithUsage, 0, len(services))
 	for _, svc := range services {
 		allocs := allocsByService[svc.Name]
 		var sumCPU, sumMem float64
@@ -227,7 +186,7 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 			}
 		}
 
-		servicesOut = append(servicesOut, ServiceWithUsage{
+		servicesOut = append(servicesOut, types.ServiceWithUsage{
 			ServiceDefinition:  svc,
 			CurrentCopies:      running,
 			AvgCPUPercent:      avgCPUPct,
@@ -245,7 +204,7 @@ func (h *streamHub) buildSnapshot() *clusterSnapshot {
 		})
 	}
 
-	return &clusterSnapshot{
+	return &types.ClusterSnapshot{
 		Timestamp:       now.Unix(),
 		Cluster:         cluster,
 		Nodes:           nodes,

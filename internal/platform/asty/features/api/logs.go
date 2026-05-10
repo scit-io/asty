@@ -1,4 +1,4 @@
-package asty
+package api
 
 import (
 	"encoding/json"
@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"time"
 
+	"asty/internal/platform/asty/core/types"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
 
-// handleLogsAllocation returns logs for an allocation via SSE
+// handleLogsAllocation returns logs for an allocation via SSE.
 func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -30,9 +32,9 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 
 	follow := r.URL.Query().Get("follow") == "true"
 
-	var allocation *ServiceAllocation
-	for _, svc := range api.server.services {
-		allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+	var allocation *types.ServiceAllocation
+	for _, svc := range api.ctx.Services() {
+		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
 		if err != nil {
 			continue
 		}
@@ -53,19 +55,19 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !follow {
-		cmdData, err := MarshalGetLogsCommand(allocation.ServiceName, lines, false)
+		cmdData, err := types.MarshalGetLogsCommand(allocation.ServiceName, lines, false)
 		if err != nil {
 			api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
 			return
 		}
 		subject := fmt.Sprintf("asty.v1.agent.%s.cmd", allocation.NodeID)
-		msg, err := api.server.nc.Request(subject, cmdData, 5*time.Second)
+		msg, err := api.ctx.NATSConn().Request(subject, cmdData, 5*time.Second)
 		if err != nil {
 			log.Error().Err(err).Str("node_id", allocation.NodeID).Msg("failed to request logs from agent")
 			api.writeError(w, http.StatusServiceUnavailable, "failed to retrieve logs from agent", err)
 			return
 		}
-		var logsResp LogsResponse
+		var logsResp types.LogsResponse
 		if err := json.Unmarshal(msg.Data, &logsResp); err != nil {
 			api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
 			return
@@ -90,14 +92,14 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bufKey := "node." + allocation.NodeID + ".svc." + allocation.ServiceName
-	for _, entry := range api.server.logBuffer.GetLast(bufKey, lines) {
+	for _, entry := range api.ctx.LogBuffer().GetLast(bufKey, lines) {
 		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 	flusher.Flush()
 
 	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", allocation.NodeID, allocation.ServiceName)
-	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
+	sub, err := api.ctx.NATSConn().Subscribe(streamSubject, func(msg *nats.Msg) {
 		var entry map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			fmt.Fprintf(w, "data: %s\n\n", msg.Data)
@@ -130,7 +132,7 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err := api.server.clusterState.GetNode(nodeID)
+	_, err := api.ctx.ClusterState().GetNode(nodeID)
 	if err != nil {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
@@ -143,7 +145,7 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 	follow := r.URL.Query().Get("follow") == "true"
 
 	if !follow {
-		history := api.server.logBuffer.GetLast("node."+nodeID, nLines)
+		history := api.ctx.LogBuffer().GetLast("node."+nodeID, nLines)
 		lines := make([]string, len(history))
 		for i, e := range history {
 			lines[i] = e.Line
@@ -159,14 +161,14 @@ func (api *API) handleLogsNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, entry := range api.server.logBuffer.GetLast("node."+nodeID, nLines) {
+	for _, entry := range api.ctx.LogBuffer().GetLast("node."+nodeID, nLines) {
 		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 	flusher.Flush()
 
 	streamSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", nodeID)
-	sub, err := api.server.nc.Subscribe(streamSubject, func(msg *nats.Msg) {
+	sub, err := api.ctx.NATSConn().Subscribe(streamSubject, func(msg *nats.Msg) {
 		var entry map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			return
@@ -199,7 +201,7 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 	follow := r.URL.Query().Get("follow") == "true"
 
 	if !follow {
-		history := api.server.logBuffer.GetLast("cluster", nLines)
+		history := api.ctx.LogBuffer().GetLast("cluster", nLines)
 		lines := make([]string, len(history))
 		for i, e := range history {
 			lines[i] = e.Line
@@ -215,13 +217,13 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, entry := range api.server.logBuffer.GetLast("cluster", nLines) {
+	for _, entry := range api.ctx.LogBuffer().GetLast("cluster", nLines) {
 		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 	flusher.Flush()
 
-	sub, err := api.server.nc.Subscribe("asty.v1.server.logs", func(msg *nats.Msg) {
+	sub, err := api.ctx.NATSConn().Subscribe("asty.v1.server.logs", func(msg *nats.Msg) {
 		var entry map[string]interface{}
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			return
@@ -238,6 +240,22 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 	defer sub.Unsubscribe()
 
 	<-r.Context().Done()
+}
+
+// sseSetup writes SSE headers and returns a flusher. On unsupported writers it
+// sends an error response and returns nil.
+func sseSetup(w http.ResponseWriter) http.Flusher {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return nil
+	}
+	return flusher
 }
 
 // formatLogEntry converts a parsed NATS log JSON entry to a display string.

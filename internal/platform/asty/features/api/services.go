@@ -1,12 +1,14 @@
-package asty
+package api
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+
+	"asty/internal/platform/asty/core/types"
 )
 
-// handleServices returns loaded service definitions
+// handleServices returns loaded service definitions.
 func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -14,12 +16,12 @@ func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 	}
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"services": api.server.services,
-		"count":    len(api.server.services),
+		"services": api.ctx.Services(),
+		"count":    len(api.ctx.Services()),
 	})
 }
 
-// handleServicesWithActions handles /api/v1/services/:name and /api/v1/services/:name/action
+// handleServicesWithActions handles /api/v1/services/:name and /api/v1/services/:name/action.
 func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[len("/api/v1/services/"):]
 	if path == "" {
@@ -71,8 +73,8 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var service *ServiceDefinition
-	for _, svc := range api.server.services {
+	var service *types.ServiceDefinition
+	for _, svc := range api.ctx.Services() {
 		if svc.Name == serviceName {
 			service = svc
 			break
@@ -84,7 +86,7 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	allocs, _ := api.server.clusterState.ListAllocations(serviceName)
+	allocs, _ := api.ctx.ClusterState().ListAllocations(serviceName)
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"service":     service,
@@ -92,7 +94,7 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// handleDeploy initiates a deployment
+// handleDeploy initiates a deployment.
 func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -114,13 +116,13 @@ func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !api.server.leaderElection.IsLeader() {
-		leaderInfo, _ := api.server.leaderElection.GetLeader()
+	if !api.ctx.LeaderElection().IsLeader() {
+		leaderInfo, _ := api.ctx.LeaderElection().GetLeader()
 		api.writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("not leader, current leader: %s", leaderInfo.ID), nil)
 		return
 	}
 
-	status, err := api.server.DeployService(r.Context(), req.Service, req.Version)
+	status, err := api.ctx.DeployService(r.Context(), req.Service, req.Version)
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "deployment failed", err)
 		return
@@ -129,14 +131,14 @@ func (api *API) handleDeploy(w http.ResponseWriter, r *http.Request) {
 	api.writeJSON(w, http.StatusOK, status)
 }
 
-// handleDeployments returns deployment history
+// handleDeployments returns deployment history.
 func (api *API) handleDeployments(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	history := api.server.deployer.GetHistory()
+	history := api.ctx.Deployer().GetHistory()
 
 	api.writeJSON(w, http.StatusOK, map[string]interface{}{
 		"deployments": history,

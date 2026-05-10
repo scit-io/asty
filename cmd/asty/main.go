@@ -9,22 +9,22 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"asty/internal/platform/asty"
+
+	"asty/internal/platform/asty/agent"
+	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/server"
 )
 
 func main() {
-	// Parse flags
 	mode := flag.String("mode", "agent", "Run mode: agent or server")
 	flag.Parse()
 
-	// Setup logging
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Handle shutdown signals
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
@@ -34,10 +34,12 @@ func main() {
 		cancel()
 	}()
 
-	// Load config
-	cfg, err := asty.LoadConfig()
+	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load config")
+	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatal().Err(err).Msg("invalid config")
 	}
 
 	switch *mode {
@@ -50,15 +52,15 @@ func main() {
 	}
 }
 
-func runAgent(ctx context.Context, cfg *asty.Config) {
+func runAgent(ctx context.Context, cfg *config.Config) {
 	log.Info().Msg("starting asty agent")
 
-	agent, err := asty.NewAgent(cfg)
+	a, err := agent.New(cfg)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create agent")
 	}
 
-	if err := agent.Start(ctx); err != nil {
+	if err := a.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("agent failed")
 	}
 
@@ -66,15 +68,15 @@ func runAgent(ctx context.Context, cfg *asty.Config) {
 	log.Info().Msg("agent stopped")
 }
 
-func runServer(ctx context.Context, cfg *asty.Config) {
+func runServer(ctx context.Context, cfg *config.Config) {
 	log.Info().Msg("starting asty server")
 
-	server, err := asty.NewServer(cfg)
+	srv, err := server.New(cfg)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to create server")
 	}
 
-	if err := server.Start(ctx); err != nil {
+	if err := srv.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("server failed")
 	}
 

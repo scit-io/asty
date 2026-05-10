@@ -1,4 +1,4 @@
-package asty
+package agent
 
 import (
 	"context"
@@ -7,10 +7,12 @@ import (
 	"syscall"
 	"time"
 
+	"asty/internal/platform/asty/core/types"
+	"asty/internal/platform/asty/features/execution/process"
+
 	"github.com/rs/zerolog/log"
 )
 
-// publishHeartbeat publishes periodic heartbeat to cluster state
 func (a *Agent) publishHeartbeat(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -31,7 +33,6 @@ func (a *Agent) publishHeartbeat(ctx context.Context) {
 	}
 }
 
-// publishProcessMetrics periodically updates allocation metrics from collector
 func (a *Agent) publishProcessMetrics(ctx context.Context) {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -42,21 +43,21 @@ func (a *Agent) publishProcessMetrics(ctx context.Context) {
 			return
 		case <-ticker.C:
 			a.mu.RLock()
-			procs := make(map[string]*Process, len(a.processes))
+			procs := make(map[string]*process.Process, len(a.processes))
 			for name, proc := range a.processes {
 				procs[name] = proc
 			}
 			a.mu.RUnlock()
 
 			for serviceName, proc := range procs {
-				metrics, ok := a.metricsCollector.GetMetrics(proc.PID())
+				m, ok := a.metricsCollector.GetMetrics(proc.PID())
 				if !ok {
 					continue
 				}
-				cpu := int(metrics.CPUPercent)
-				mem := int(metrics.MemoryMB)
+				cpu := int(m.CPUPercent)
+				mem := int(m.MemoryMB)
 				healthStatus := a.healthChecker.HealthStatusStr(serviceName)
-				err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+				err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 					alloc.CPUUsage = cpu
 					alloc.MemoryUsage = mem
 					if healthStatus != "" {
@@ -72,7 +73,6 @@ func (a *Agent) publishProcessMetrics(ctx context.Context) {
 	}
 }
 
-// monitorProcesses periodically checks for failed processes and restarts them
 func (a *Agent) monitorProcesses(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -87,12 +87,11 @@ func (a *Agent) monitorProcesses(ctx context.Context) {
 	}
 }
 
-// checkAndRestartFailedProcesses checks all processes and restarts failed ones
 func (a *Agent) checkAndRestartFailedProcesses() {
 	a.mu.Lock()
-	failedProcesses := make(map[string]*Process)
+	failedProcesses := make(map[string]*process.Process)
 	for name, proc := range a.processes {
-		if proc.Status() == ProcessStatusFailed {
+		if proc.Status() == process.StatusFailed {
 			failedProcesses[name] = proc
 		}
 	}
@@ -112,7 +111,7 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 			restarts    int
 			consecutive int
 		)
-		err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+		err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			if alloc.ConsecutiveFailures >= maxAttempts {
 				alloc.Status = "failed"
 				giveUp = true
@@ -159,7 +158,7 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 
 		time.Sleep(svc.Restart.GetDelay())
 
-		err = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+		err = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			alloc.Status = "pending"
 			alloc.PID = 0
 			return true
@@ -176,8 +175,7 @@ func (a *Agent) checkAndRestartFailedProcesses() {
 	}
 }
 
-// streamProcessLogs streams process logs to NATS in real-time
-func (a *Agent) streamProcessLogs(serviceName string, proc *Process) {
+func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 	subject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", a.nodeID, serviceName)
 
 	ctx, cancel := context.WithCancel(context.Background())

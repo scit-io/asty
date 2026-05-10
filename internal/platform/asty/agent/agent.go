@@ -1,4 +1,4 @@
-package asty
+package agent
 
 import (
 	"context"
@@ -10,38 +10,38 @@ import (
 	"sync"
 	"time"
 
+	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/core/types"
+	"asty/internal/platform/asty/features/clustering/state"
+	"asty/internal/platform/asty/features/deployment/artifacts"
+	"asty/internal/platform/asty/features/execution/health"
+	"asty/internal/platform/asty/features/execution/process"
+	"asty/internal/platform/asty/features/observability/logs"
+	"asty/internal/platform/asty/features/observability/metrics"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
 
 // Agent manages processes on a single node
 type Agent struct {
-	cfg    *Config
+	cfg    *config.Config
 	nc     *nats.Conn
 	nodeID string
 
-	// Process management
-	processes map[string]*Process // key: service name
+	processes map[string]*process.Process
 	mu        sync.RWMutex
 
-	// Health checks
-	healthChecker *HealthChecker
+	healthChecker      *health.Checker
+	metricsCollector   *metrics.Collector
+	artifactDownloader *artifacts.Downloader
+	clusterState       *state.ClusterState
 
-	// Metrics collection
-	metricsCollector *MetricsCollector
-
-	// Artifact downloader
-	artifactDownloader *ArtifactDownloader
-
-	// Working directory for processes
 	workDir string
-
-	// Cluster state
-	clusterState *ClusterState
 }
 
-// NewAgent creates a new Asty agent
-func NewAgent(cfg *Config) (*Agent, error) {
+// New creates a new Asty agent
+func New(cfg *config.Config) (*Agent, error) {
 	nodeID := cfg.NodeID
 	if nodeID == "" {
 		nodeID = generateNodeID()
@@ -58,10 +58,10 @@ func NewAgent(cfg *Config) (*Agent, error) {
 	return &Agent{
 		cfg:                cfg,
 		nodeID:             nodeID,
-		processes:          make(map[string]*Process),
-		healthChecker:      NewHealthChecker(),
-		metricsCollector:   NewMetricsCollector(cfg.EvalInterval),
-		artifactDownloader: NewArtifactDownloader(),
+		processes:          make(map[string]*process.Process),
+		healthChecker:      health.NewChecker(),
+		metricsCollector:   metrics.NewCollector(cfg.EvalInterval),
+		artifactDownloader: artifacts.NewDownloader(),
 		workDir:            workDir,
 	}, nil
 }
@@ -78,14 +78,14 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	defer a.nc.Close()
 
-	clusterState, err := NewClusterState(a.nc)
+	clusterState, err := state.New(a.nc)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cluster state: %w", err)
 	}
 	a.clusterState = clusterState
 
 	agentSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID)
-	natsWriter := NewNATSWriter(a.nc, agentSubject)
+	natsWriter := logs.NewNATSWriter(a.nc, agentSubject)
 	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
 	go a.healthChecker.Start(ctx)
@@ -115,12 +115,12 @@ func (a *Agent) Start(ctx context.Context) error {
 }
 
 // StartService starts a service process
-func (a *Agent) StartService(svc *ServiceDefinition) error {
+func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	if proc, exists := a.processes[svc.Name]; exists {
-		_ = a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *ServiceAllocation) bool {
+		_ = a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			if alloc.PID == proc.PID() && alloc.Status == "running" {
 				return false
 			}
@@ -144,7 +144,7 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		}
 	}
 
-	proc := NewProcess(svc, a.nodeID, serviceDir)
+	proc := process.New(svc, a.nodeID, serviceDir)
 
 	if err := proc.Start(context.Background()); err != nil {
 		return fmt.Errorf("failed to start process: %w", err)
@@ -169,7 +169,7 @@ func (a *Agent) StartService(svc *ServiceDefinition) error {
 		Msg("service started")
 
 	pid := proc.PID()
-	if err := a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *ServiceAllocation) bool {
+	if err := a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 		alloc.PID = pid
 		alloc.Status = "running"
 		alloc.StartedAt = time.Now()
@@ -190,7 +190,7 @@ func (a *Agent) StopService(serviceName string) error {
 	proc, exists := a.processes[serviceName]
 	if !exists {
 		a.mu.Unlock()
-		_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+		_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			if alloc.Status == "stopped" {
 				return false
 			}
@@ -210,7 +210,7 @@ func (a *Agent) StopService(serviceName string) error {
 		log.Error().Err(err).Str("service", serviceName).Msg("process stop failed")
 	}
 
-	if err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *ServiceAllocation) bool {
+	if err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 		alloc.Status = "stopped"
 		alloc.PID = 0
 		return true
@@ -225,7 +225,6 @@ func (a *Agent) StopService(serviceName string) error {
 	return nil
 }
 
-// stopAllProcesses stops all running processes
 func (a *Agent) stopAllProcesses() {
 	a.mu.RLock()
 	services := make([]string, 0, len(a.processes))
@@ -241,30 +240,7 @@ func (a *Agent) stopAllProcesses() {
 	}
 }
 
-// connectNATS establishes connection to NATS
-func (a *Agent) connectNATS() error {
-	natsURL := fmt.Sprintf("nats://%s:%s", a.cfg.NATSHost, a.cfg.NATSPort)
-
-	opts := []nats.Option{
-		nats.Name("asty-agent-" + a.nodeID),
-	}
-
-	if a.cfg.NATSUser != "" {
-		opts = append(opts, nats.UserInfo(a.cfg.NATSUser, a.cfg.NATSPassword))
-	}
-
-	nc, err := nats.Connect(natsURL, opts...)
-	if err != nil {
-		return err
-	}
-
-	a.nc = nc
-	log.Info().Str("url", natsURL).Msg("connected to NATS")
-	return nil
-}
-
-// getNodeInfo collects current node information
-func (a *Agent) getNodeInfo() *NodeInfo {
+func (a *Agent) getNodeInfo() *types.NodeInfo {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -304,7 +280,7 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 		}
 	}
 
-	return &NodeInfo{
+	return &types.NodeInfo{
 		ID:              a.nodeID,
 		Datacenter:      a.cfg.Datacenter,
 		IP:              nodeIP,
@@ -318,7 +294,27 @@ func (a *Agent) getNodeInfo() *NodeInfo {
 	}
 }
 
-// generateNodeID generates a stable node ID based on hostname
+func (a *Agent) connectNATS() error {
+	natsURL := fmt.Sprintf("nats://%s:%s", a.cfg.NATSHost, a.cfg.NATSPort)
+
+	opts := []nats.Option{
+		nats.Name("asty-agent-" + a.nodeID),
+	}
+
+	if a.cfg.NATSUser != "" {
+		opts = append(opts, nats.UserInfo(a.cfg.NATSUser, a.cfg.NATSPassword))
+	}
+
+	nc, err := nats.Connect(natsURL, opts...)
+	if err != nil {
+		return err
+	}
+
+	a.nc = nc
+	log.Info().Str("url", natsURL).Msg("connected to NATS")
+	return nil
+}
+
 func generateNodeID() string {
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -327,7 +323,6 @@ func generateNodeID() string {
 	return hostname
 }
 
-// getNodeIP returns the primary IP address of the node
 func getNodeIP(natsHost string) string {
 	natsIP := net.ParseIP(natsHost)
 	if natsIP != nil && natsIP.IsLoopback() {
@@ -352,7 +347,6 @@ func getNodeIP(natsHost string) string {
 	return ""
 }
 
-// splitLines splits log data into lines and optionally returns last N lines
 func splitLines(data string, lastN int) []string {
 	if data == "" {
 		return []string{}

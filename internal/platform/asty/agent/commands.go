@@ -1,13 +1,14 @@
-package asty
+package agent
 
 import (
 	"fmt"
+
+	"asty/internal/platform/asty/core/types"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
 
-// subscribeCommands subscribes to agent commands from server
 func (a *Agent) subscribeCommands() error {
 	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", a.nodeID)
 
@@ -23,12 +24,11 @@ func (a *Agent) subscribeCommands() error {
 	return nil
 }
 
-// handleCommand handles incoming commands from server
 func (a *Agent) handleCommand(msg *nats.Msg) {
-	cmd, err := UnmarshalCommand(msg.Data)
+	cmd, err := types.UnmarshalCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to unmarshal command")
-		msg.Respond(MarshalResponse(false, "", err))
+		msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -45,16 +45,15 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 		a.handleLogsCommand(msg, cmd.Data)
 	default:
 		log.Error().Str("type", cmd.Type).Msg("unknown command type")
-		msg.Respond(MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
+		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
 	}
 }
 
-// handleStartCommand handles start service command
 func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
-	startCmd, err := ParseStartCommand(data)
+	startCmd, err := types.ParseStartCommand(data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse start command")
-		msg.Respond(MarshalResponse(false, "", err))
+		msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -64,20 +63,18 @@ func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
 
 	if err := a.StartService(startCmd.Service); err != nil {
 		log.Error().Err(err).Str("service", startCmd.Service.Name).Msg("failed to start service")
-		msg.Respond(MarshalResponse(false, "", err))
+		msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
-	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
+	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
 }
 
-// handleStopCommand acknowledges the stop command immediately and runs the
-// real shutdown asynchronously.
 func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
-	stopCmd, err := ParseStopCommand(data)
+	stopCmd, err := types.ParseStopCommand(data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse stop command")
-		msg.Respond(MarshalResponse(false, "", err))
+		msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -85,7 +82,7 @@ func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 		Str("service", stopCmd.ServiceName).
 		Msg("stopping service")
 
-	msg.Respond(MarshalResponse(true, fmt.Sprintf("service %s stop initiated", stopCmd.ServiceName), nil))
+	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s stop initiated", stopCmd.ServiceName), nil))
 
 	go func() {
 		if err := a.StopService(stopCmd.ServiceName); err != nil {
@@ -94,12 +91,11 @@ func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 	}()
 }
 
-// handleLogsCommand handles get logs command
 func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
-	logsCmd, err := ParseGetLogsCommand(data)
+	logsCmd, err := types.ParseGetLogsCommand(data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse logs command")
-		msg.Respond(MarshalLogsResponse(nil, err))
+		msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
@@ -116,23 +112,23 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
 	if !exists {
 		err := fmt.Errorf("service %s not running", logsCmd.ServiceName)
 		log.Warn().Err(err).Str("service", logsCmd.ServiceName).Msg("service not found")
-		msg.Respond(MarshalLogsResponse(nil, err))
+		msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
 	logData, err := proc.GetLogs(logsCmd.Lines)
 	if err != nil {
 		log.Error().Err(err).Str("service", logsCmd.ServiceName).Msg("failed to get logs")
-		msg.Respond(MarshalLogsResponse(nil, err))
+		msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
-	logs := splitLines(string(logData), logsCmd.Lines)
+	logLines := splitLines(string(logData), logsCmd.Lines)
 
 	log.Debug().
 		Str("service", logsCmd.ServiceName).
-		Int("line_count", len(logs)).
+		Int("line_count", len(logLines)).
 		Msg("logs retrieved")
 
-	msg.Respond(MarshalLogsResponse(logs, nil))
+	msg.Respond(types.MarshalLogsResponse(logLines, nil))
 }

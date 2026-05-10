@@ -1,12 +1,46 @@
-package asty
+package process
 
 import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
 )
+
+// splitLines splits a string into lines, optionally returning only the last N lines.
+func splitLines(data string, lastN int) []string {
+	if data == "" {
+		return []string{}
+	}
+
+	lines := []string{}
+	current := ""
+
+	for _, ch := range data {
+		if ch == '\n' {
+			if current != "" {
+				lines = append(lines, current)
+				current = ""
+			}
+		} else {
+			current += string(ch)
+		}
+	}
+
+	if current != "" {
+		lines = append(lines, current)
+	}
+
+	if lastN > 0 && len(lines) > lastN {
+		return lines[len(lines)-lastN:]
+	}
+
+	return lines
+}
 
 func TestProcessLogs(t *testing.T) {
 	// Create temp directory for test
@@ -17,18 +51,18 @@ func TestProcessLogs(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create service definition that writes logs
-	svc := &ServiceDefinition{
+	svc := &types.ServiceDefinition{
 		Name:    "test-logger",
 		Command: "/bin/sh -c 'echo line1; echo line2; echo line3; sleep 1'",
 		Env:     make(map[string]string),
-		Resources: Resources{
+		Resources: types.Resources{
 			CPU:    100,
 			Memory: 64,
 		},
 	}
 
 	// Create process
-	proc := NewProcess(svc, "test-node", tmpDir)
+	proc := New(svc, "test-node", tmpDir)
 
 	// Start process
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -53,13 +87,13 @@ func TestProcessLogs(t *testing.T) {
 		t.Error("expected logs, got empty string")
 	}
 
-	if !contains(logStr, "line1") {
+	if !strings.Contains(logStr, "line1") {
 		t.Errorf("expected 'line1' in logs, got: %s", logStr)
 	}
-	if !contains(logStr, "line2") {
+	if !strings.Contains(logStr, "line2") {
 		t.Errorf("expected 'line2' in logs, got: %s", logStr)
 	}
-	if !contains(logStr, "line3") {
+	if !strings.Contains(logStr, "line3") {
 		t.Errorf("expected 'line3' in logs, got: %s", logStr)
 	}
 
@@ -134,17 +168,4 @@ func TestSplitLines(t *testing.T) {
 			}
 		})
 	}
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && findSubstring(s, substr))
-}
-
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }

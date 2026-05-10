@@ -1,9 +1,11 @@
-package asty
+package deployment
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"asty/internal/platform/asty/core/types"
 )
 
 func TestLoadServiceDefinition(t *testing.T) {
@@ -59,7 +61,7 @@ restart:
 		t.Errorf("expected name 'test-service', got '%s'", svc.Name)
 	}
 
-	if svc.Type != ServiceTypeService {
+	if svc.Type != types.ServiceTypeService {
 		t.Errorf("expected type 'service', got '%s'", svc.Type)
 	}
 

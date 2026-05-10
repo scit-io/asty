@@ -1,4 +1,4 @@
-package asty
+package server
 
 import (
 	"context"
@@ -7,31 +7,48 @@ import (
 	"sync"
 	"time"
 
+	"asty/internal/platform/asty/core/config"
+	"asty/internal/platform/asty/core/types"
+	"asty/internal/platform/asty/features/autoscaling"
+	autometrics "asty/internal/platform/asty/features/autoscaling/metrics"
+	"asty/internal/platform/asty/features/clustering/controller"
+	"asty/internal/platform/asty/features/clustering/discovery"
+	"asty/internal/platform/asty/features/clustering/leader"
+	"asty/internal/platform/asty/features/clustering/state"
+	"asty/internal/platform/asty/features/deployment"
+	"asty/internal/platform/asty/features/draining"
+	"asty/internal/platform/asty/features/observability/events"
+	"asty/internal/platform/asty/features/observability/logs"
+	"asty/internal/platform/asty/features/scheduling"
+	"asty/internal/platform/asty/features/scheduling/proximity"
+
+	apiPkg "asty/internal/platform/asty/features/api"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
 
-// Server handles scheduling, autoscaling, and orchestration
+// Server handles scheduling, autoscaling, and orchestration.
 type Server struct {
-	cfg    *Config
+	cfg    *config.Config
 	nc     *nats.Conn
 	nodeID string
 
-	clusterState   *ClusterState
-	leaderElection *LeaderElection
-	nodeDiscovery  *NodeDiscovery
-	scheduler      *Scheduler
-	autoscaler     *Autoscaler
-	proximityMatrix *ProximityMatrix
-	deployer       *Deployer
-	serviceLoader  *ServiceLoader
-	services       []*ServiceDefinition
-	api            *API
-	metricsStore   *MetricsStore
-	logBuffer      *LogBuffer
-	eventBuffer    *EventBuffer
-	drainManager   *DrainManager
-	streamHub      *streamHub
+	clusterState    *state.ClusterState
+	leaderElection  *leader.Election
+	nodeDiscovery   *discovery.NodeDiscovery
+	scheduler       *scheduling.Scheduler
+	autoscaler      *autoscaling.Autoscaler
+	proximityMatrix *proximity.Matrix
+	deployer        *deployment.Deployer
+	serviceLoader   *deployment.ServiceLoader
+	services        []*types.ServiceDefinition
+	httpAPI         *apiPkg.API
+	metricsStore    *autometrics.Store
+	logBuffer       *logs.Buffer
+	eventBuffer     *events.Buffer
+	drainManager    *draining.DrainManager
+	streamHub       *streamHub
 
 	// Leadership-scoped goroutines (scheduler/autoscaler) run under leaderCtx,
 	// which is cancelled on loss of leadership. mu guards swaps when leadership
@@ -40,8 +57,8 @@ type Server struct {
 	leaderCancel context.CancelFunc
 }
 
-// NewServer creates a new Asty server
-func NewServer(cfg *Config) (*Server, error) {
+// New creates a new Server.
+func New(cfg *config.Config) (*Server, error) {
 	nodeID := cfg.NodeID
 	if nodeID == "" {
 		nodeID = generateNodeID()
@@ -53,7 +70,7 @@ func NewServer(cfg *Config) (*Server, error) {
 	}, nil
 }
 
-// Start starts the server
+// Start starts the server.
 func (s *Server) Start(ctx context.Context) error {
 	log.Info().
 		Str("node_id", s.nodeID).
@@ -66,7 +83,7 @@ func (s *Server) Start(ctx context.Context) error {
 	defer s.nc.Close()
 
 	// Initialize cluster state
-	clusterState, err := NewClusterState(s.nc)
+	clusterState, err := state.New(s.nc)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cluster state: %w", err)
 	}
@@ -77,44 +94,44 @@ func (s *Server) Start(ctx context.Context) error {
 	if leaderIP == "" {
 		leaderIP = getNodeIP(s.cfg.NATSHost)
 	}
-	leaderElection, err := NewLeaderElection(s.nc, s.nodeID, leaderIP)
+	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP)
 	if err != nil {
 		return fmt.Errorf("failed to initialize leader election: %w", err)
 	}
 	s.leaderElection = leaderElection
 
 	// Initialize node discovery
-	s.nodeDiscovery = NewNodeDiscovery(s.cfg.Domain)
+	s.nodeDiscovery = discovery.New(s.cfg.Domain)
 
 	// Initialize scheduler
-	s.scheduler = NewScheduler(clusterState, s.cfg)
+	s.scheduler = scheduling.NewScheduler(clusterState, s.cfg)
 
 	// Attach NATS writer to zerolog — all server logs stream to UI
-	natsWriter := NewNATSWriter(s.nc, "asty.v1.server.logs")
+	natsWriter := logs.NewNATSWriter(s.nc, "asty.v1.server.logs")
 	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
 	// Initialize metrics store (2h in-memory; hub feeds it, no KV-polling loop).
-	s.metricsStore = NewMetricsStore(2 * time.Hour)
-	s.logBuffer = NewLogBuffer(1000)
-	s.eventBuffer = NewEventBuffer(10000)
+	s.metricsStore = autometrics.NewStore(2 * time.Hour)
+	s.logBuffer = logs.NewBuffer(1000)
+	s.eventBuffer = events.NewBuffer(10000)
 
 	// Initialize autoscaler
-	s.autoscaler = NewAutoscaler(clusterState, s.scheduler, s.cfg, s.metricsStore)
+	s.autoscaler = autoscaling.NewAutoscaler(clusterState, s.scheduler, s.cfg, s.metricsStore)
 
 	// Initialize proximity matrix
-	s.proximityMatrix = NewProximityMatrix()
+	s.proximityMatrix = proximity.NewMatrix()
 	if err := s.proximityMatrix.LoadFromConfig(s.cfg.DCLatency); err != nil {
 		log.Error().Err(err).Msg("failed to load proximity matrix")
 	}
 
 	// Start proximity validation
-	go RunProximityValidation(ctx, s.proximityMatrix, clusterState)
+	go proximity.RunValidation(ctx, s.proximityMatrix, clusterState)
 
 	// Initialize deployer
-	s.deployer = NewDeployer(clusterState, s.nc, s.cfg)
+	s.deployer = deployment.NewDeployer(clusterState, s.nc, deployment.DeployerConfig{})
 
 	// Initialize service loader
-	s.serviceLoader = NewServiceLoader(s.cfg.ServiceDir)
+	s.serviceLoader = deployment.NewServiceLoader(s.cfg.ServiceDir)
 
 	// Load service definitions
 	services, err := s.serviceLoader.LoadAll()
@@ -124,7 +141,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.services = services
 
 	// Initialize drain manager
-	s.drainManager = NewDrainManager(s)
+	s.drainManager = draining.NewDrainManager(s)
 
 	// Subscribe to Gateway RPS metrics
 	s.subscribeGatewayMetrics()
@@ -137,11 +154,11 @@ func (s *Server) Start(ctx context.Context) error {
 	go s.streamHub.Run(ctx)
 
 	// Initialize API server
-	s.api = NewAPI(s, s.cfg.UIAddr)
+	s.httpAPI = apiPkg.New(s, s.cfg.UIAddr)
 
 	// Start API server
 	go func() {
-		if err := s.api.Start(ctx); err != nil {
+		if err := s.httpAPI.Start(ctx); err != nil {
 			log.Error().Err(err).Msg("API server failed")
 		}
 	}()
@@ -168,15 +185,15 @@ func (s *Server) Start(ctx context.Context) error {
 	if s.cfg.DevMode && s.cfg.MockNodes > 0 {
 		log.Info().Int("count", s.cfg.MockNodes).Msg("creating mock nodes (dev mode)")
 		for i := 1; i <= s.cfg.MockNodes; i++ {
-			node := &NodeInfo{
+			node := &types.NodeInfo{
 				ID:              fmt.Sprintf("mock-node-%d", i),
 				Datacenter:      s.cfg.Datacenter,
 				IP:              fmt.Sprintf("192.168.1.%d", i),
 				Status:          "ready",
 				LastSeen:        time.Now(),
-				CPUTotal:        4000,  // 4 cores * 1000 MHz
+				CPUTotal:        4000, // 4 cores * 1000 MHz
 				CPUAvailable:    3500,
-				MemoryTotal:     8192,  // 8 GB
+				MemoryTotal:     8192, // 8 GB
 				MemoryAvailable: 6144,
 				Processes:       []string{},
 			}
@@ -219,7 +236,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 	if resync <= 0 {
 		resync = 60 * time.Second
 	} else {
-		// Resync at 6× EvalInterval (so EvalInterval=10s → resync=60s).
+		// Resync at 6x EvalInterval (so EvalInterval=10s -> resync=60s).
 		// Watchers handle the reactive path; the safety-net resync only
 		// catches drift and drives metric-driven autoscale.
 		resync = resync * 6
@@ -227,7 +244,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 			resync = 5 * time.Minute
 		}
 	}
-	controller := NewServiceController(
+	ctrl := controller.NewServiceController(
 		s.clusterState,
 		s.scheduler,
 		s.autoscaler,
@@ -236,8 +253,8 @@ func (s *Server) startLeaderWork(parent context.Context) {
 		workers,
 		resync,
 	)
-	controller.OnEvent = s.addClusterEvent
-	go controller.Run(leaderCtx)
+	ctrl.OnEvent = s.addClusterEvent
+	go ctrl.Run(leaderCtx)
 }
 
 func (s *Server) stopLeaderWork() {
@@ -251,10 +268,9 @@ func (s *Server) stopLeaderWork() {
 
 // addClusterEvent stores e in the event buffer and fans it out to all active
 // SSE subscribers via the stream hub.
-func (s *Server) addClusterEvent(e ClusterEvent) {
+func (s *Server) addClusterEvent(e types.ClusterEvent) {
 	s.eventBuffer.Add(e)
 	if s.streamHub != nil {
 		s.streamHub.FanoutEvent(e)
 	}
 }
-

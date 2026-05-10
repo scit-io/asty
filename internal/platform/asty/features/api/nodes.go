@@ -1,18 +1,20 @@
-package asty
+package api
 
 import (
 	"encoding/json"
 	"net/http"
+
+	"asty/internal/platform/asty/features/draining"
 )
 
-// handleNodes returns cluster nodes
+// handleNodes returns cluster nodes.
 func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	nodes, err := api.server.clusterState.ListNodes()
+	nodes, err := api.ctx.ClusterState().ListNodes()
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "failed to list nodes", err)
 		return
@@ -22,8 +24,8 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 		running := 0
 		planned := 0
 
-		for _, svc := range api.server.services {
-			allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+		for _, svc := range api.ctx.Services() {
+			allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
 			if err != nil {
 				continue
 			}
@@ -47,7 +49,7 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleNodesWithID handles /api/v1/nodes/:id and /api/v1/nodes/:id/action
+// handleNodesWithID handles /api/v1/nodes/:id and /api/v1/nodes/:id/action.
 func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path[len("/api/v1/nodes/"):]
 	if path == "" {
@@ -105,7 +107,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	node, err := api.server.clusterState.GetNode(nodeID)
+	node, err := api.ctx.ClusterState().GetNode(nodeID)
 	if err != nil {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
@@ -114,8 +116,8 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 	running := 0
 	planned := 0
 
-	for _, svc := range api.server.services {
-		allocs, err := api.server.clusterState.ListAllocations(svc.Name)
+	for _, svc := range api.ctx.Services() {
+		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
 		if err != nil {
 			continue
 		}
@@ -135,7 +137,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 	api.writeJSON(w, http.StatusOK, node)
 }
 
-// handleNodeDrain handles POST /api/v1/nodes/:id/drain
+// handleNodeDrain handles POST /api/v1/nodes/:id/drain.
 func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
 	var req struct {
 		Enable bool `json:"enable"`
@@ -145,7 +147,7 @@ func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID s
 	}
 
 	if !req.Enable {
-		if err := api.server.drainManager.Resume(nodeID); err != nil {
+		if err := api.ctx.DrainManager().Resume(nodeID); err != nil {
 			api.writeError(w, http.StatusBadRequest, "resume failed", err)
 			return
 		}
@@ -157,30 +159,29 @@ func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID s
 		return
 	}
 
-	status, err := api.server.drainManager.Start(nodeID)
+	status, err := api.ctx.DrainManager().Start(nodeID)
 	if err != nil {
-		code := http.StatusBadRequest
 		if status != nil {
 			api.writeJSON(w, http.StatusOK, status)
 			return
 		}
-		api.writeError(w, code, "drain failed", err)
+		api.writeError(w, http.StatusBadRequest, "drain failed", err)
 		return
 	}
 
 	api.writeJSON(w, http.StatusOK, status)
 }
 
-// handleNodeDrainStatus handles GET /api/v1/nodes/:id/drain/status
+// handleNodeDrainStatus handles GET /api/v1/nodes/:id/drain/status.
 func (api *API) handleNodeDrainStatus(w http.ResponseWriter, _ *http.Request, nodeID string) {
-	status := api.server.drainManager.GetStatus(nodeID)
+	status := api.ctx.DrainManager().GetStatus(nodeID)
 	if status == nil {
-		node, err := api.server.clusterState.GetNode(nodeID)
+		node, err := api.ctx.ClusterState().GetNode(nodeID)
 		if err != nil {
 			api.writeError(w, http.StatusNotFound, "node not found", err)
 			return
 		}
-		api.writeJSON(w, http.StatusOK, &DrainStatus{
+		api.writeJSON(w, http.StatusOK, &draining.DrainStatus{
 			NodeID:           nodeID,
 			Status:           node.Status,
 			TotalAllocations: 0,

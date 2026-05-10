@@ -1,4 +1,4 @@
-package asty
+package controller
 
 import (
 	"sync"

@@ -1,4 +1,4 @@
-package asty
+package api
 
 import (
 	"context"
@@ -9,22 +9,19 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// API provides HTTP API endpoints
+// API provides HTTP API endpoints.
 type API struct {
-	server     *Server
+	ctx        ServerContext
 	httpServer *http.Server
 	addr       string
 }
 
-// NewAPI creates a new API server
-func NewAPI(server *Server, addr string) *API {
-	return &API{
-		server: server,
-		addr:   addr,
-	}
+// New creates a new API server.
+func New(ctx ServerContext, addr string) *API {
+	return &API{ctx: ctx, addr: addr}
 }
 
-// Start starts the API server
+// Start starts the API server.
 func (api *API) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
@@ -77,7 +74,7 @@ func (api *API) Start(ctx context.Context) error {
 	return api.httpServer.Shutdown(shutdownCtx)
 }
 
-// writeJSON writes JSON response
+// writeJSON writes JSON response.
 func (api *API) writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -87,7 +84,7 @@ func (api *API) writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	}
 }
 
-// writeError writes JSON error response
+// writeError writes JSON error response.
 func (api *API) writeError(w http.ResponseWriter, status int, message string, err error) {
 	response := map[string]interface{}{
 		"error":  message,
@@ -99,4 +96,14 @@ func (api *API) writeError(w http.ResponseWriter, status int, message string, er
 	}
 
 	api.writeJSON(w, status, response)
+}
+
+// mustJSON marshals v to JSON or returns an empty object on error.
+func mustJSON(v interface{}) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		log.Error().Err(err).Msg("api: marshal failed")
+		return []byte("{}")
+	}
+	return b
 }

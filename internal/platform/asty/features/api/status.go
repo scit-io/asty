@@ -1,4 +1,4 @@
-package asty
+package api
 
 import (
 	"fmt"
@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// handleRoot returns API information
+// handleRoot returns API information.
 func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -47,7 +47,7 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 	api.writeJSON(w, http.StatusOK, response)
 }
 
-// handleHealth returns health status
+// handleHealth returns health status.
 func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -62,16 +62,16 @@ func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	api.writeJSON(w, http.StatusOK, response)
 }
 
-// handleStatus returns cluster status
+// handleStatus returns cluster status.
 func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	nodes, _ := api.server.clusterState.ListNodes()
-	leaderInfo, _ := api.server.leaderElection.GetLeader()
-	isLeader := api.server.leaderElection.IsLeader()
+	nodes, _ := api.ctx.ClusterState().ListNodes()
+	leaderInfo, _ := api.ctx.LeaderElection().GetLeader()
+	isLeader := api.ctx.LeaderElection().IsLeader()
 
 	healthyNodes := 0
 	var leaderNodeID string
@@ -96,19 +96,19 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 			"nodes_healthy": healthyNodes,
 		},
 		"services": map[string]interface{}{
-			"loaded": len(api.server.services),
+			"loaded": len(api.ctx.Services()),
 		},
 	})
 }
 
-// handleMetrics returns Prometheus metrics
+// handleMetrics returns Prometheus metrics.
 func (api *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	nodes, _ := api.server.clusterState.ListNodes()
+	nodes, _ := api.ctx.ClusterState().ListNodes()
 	healthyNodes := 0
 	for _, node := range nodes {
 		if node.Status == "ready" && time.Since(node.LastSeen) < 2*time.Minute {
@@ -127,5 +127,5 @@ func (api *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "\n")
 	fmt.Fprintf(w, "# HELP asty_services_loaded Number of loaded services\n")
 	fmt.Fprintf(w, "# TYPE asty_services_loaded gauge\n")
-	fmt.Fprintf(w, "asty_services_loaded %d\n", len(api.server.services))
+	fmt.Fprintf(w, "asty_services_loaded %d\n", len(api.ctx.Services()))
 }

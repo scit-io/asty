@@ -114,7 +114,7 @@ Environment variables with `A_` prefix:
 
 **Local development with multiple nodes**: Set `A_NODE_IP` and `A_NATS_HOST` to unique loopback IPs (e.g., 127.0.0.2, 127.0.0.3) for each agent.
 
-See `internal/platform/asty/config.go` for full list.
+See `internal/platform/asty/core/config/config.go` for full list.
 
 ### Platform Services
 Environment variables with `A_` prefix:
@@ -200,7 +200,8 @@ internal/platform/asty/
 ├── server.go                      # Server entry (thin orchestrator)
 ├── api_*.go                       # HTTP API handlers (split by domain)
 ├── streamhub.go                   # SSE snapshot hub
-└── *.go                           # Backward-compatible type alias wrappers
+├── compat.go                      # All type/var aliases (single file)
+└── compat_funcs.go                # Helper funcs (LoadConfig, EventBuffer, etc.)
 ```
 
 ### Orchestrator Entrypoints
@@ -208,7 +209,7 @@ internal/platform/asty/
 - `server.go` — leader election, controller wiring, NATS subscriptions
 - `api_setup.go` — HTTP mux + helpers; `api_nodes.go`, `api_services.go`, `api_allocations.go`, `api_autoscaler.go`, `api_logs.go`, `api_stream.go`, `api_status.go`
 - `streamhub.go` — periodic snapshot + SSE fanout
-- `controller.go` / `workqueue.go` — thin aliases to `features/clustering/controller/`
+- `compat.go` + `compat_funcs.go` — backward-compatible aliases (cmd/asty imports `asty.Config`, `asty.NewServer`, etc.)
 
 ### Platform Layer
 - `internal/platform/nc/` — NATS client wrapper (JetStream, KV helpers)

@@ -1,11 +1,9 @@
-//go:build darwin
+//go:build linux
 
-package asty
+package agent
 
 import (
 	"os"
-	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -13,7 +11,6 @@ import (
 )
 
 func detectCPUMHz() int {
-	// Allow override via A_CPU_TOTAL env variable
 	if override := os.Getenv("A_CPU_TOTAL"); override != "" {
 		log.Debug().Str("A_CPU_TOTAL", override).Msg("cpu override env detected")
 		if val, err := strconv.Atoi(override); err == nil && val > 0 {
@@ -24,25 +21,33 @@ func detectCPUMHz() int {
 		}
 	}
 
-	out, err := exec.Command("sysctl", "-n", "hw.cpufrequency").Output()
+	data, err := os.ReadFile("/proc/cpuinfo")
 	if err != nil {
-		out, err = exec.Command("sysctl", "-n", "hw.cpufrequency_max").Output()
-		if err != nil {
-			return runtime.NumCPU() * 2000
+		return 4000
+	}
+
+	var totalMHz float64
+	var cores int
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "cpu MHz") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				mhz, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+				if err == nil {
+					totalMHz += mhz
+					cores++
+				}
+			}
 		}
 	}
 
-	hz, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-	if err != nil {
-		return runtime.NumCPU() * 2000
+	if cores == 0 {
+		return 4000
 	}
-
-	mhzPerCore := int(hz / 1_000_000)
-	return runtime.NumCPU() * mhzPerCore
+	return int(totalMHz)
 }
 
 func detectMemoryMB() int64 {
-	// Allow override via A_MEMORY_TOTAL env variable
 	if override := os.Getenv("A_MEMORY_TOTAL"); override != "" {
 		log.Debug().Str("A_MEMORY_TOTAL", override).Msg("memory override env detected")
 		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
@@ -53,15 +58,22 @@ func detectMemoryMB() int64 {
 		}
 	}
 
-	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
+	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
 		return 8192
 	}
 
-	bytes, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-	if err != nil {
-		return 8192
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "MemTotal:") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				kb, err := strconv.ParseInt(fields[1], 10, 64)
+				if err == nil {
+					return kb / 1024
+				}
+			}
+		}
 	}
 
-	return bytes / (1024 * 1024)
+	return 8192
 }

@@ -1,9 +1,11 @@
-package asty
+package server
 
 import (
 	"context"
 	"sync"
 	"time"
+
+	"asty/internal/platform/asty/core/types"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
@@ -20,10 +22,10 @@ type streamHub struct {
 	idx *allocIndex
 
 	mu       sync.RWMutex
-	snapshot *clusterSnapshot
+	snapshot *types.ClusterSnapshot
 
 	subsMu sync.Mutex
-	subs   map[int]chan *clusterSnapshot
+	subs   map[int]chan *types.ClusterSnapshot
 	nextID int
 
 	drainSubsMu sync.Mutex
@@ -40,7 +42,7 @@ func newStreamHub(server *Server, interval time.Duration) *streamHub {
 		server:    server,
 		interval:  interval,
 		idx:       newAllocIndex(),
-		subs:      make(map[int]chan *clusterSnapshot),
+		subs:      make(map[int]chan *types.ClusterSnapshot),
 		drainSubs: make(map[int]chan []byte),
 		eventSubs: make(map[int]chan []byte),
 	}
@@ -72,15 +74,15 @@ func (h *streamHub) Run(ctx context.Context) {
 	go func() {
 		for ctx.Err() == nil {
 			err := h.server.clusterState.WatchNodesInit(ctx,
-				func(n *NodeInfo) {
+				func(n *types.NodeInfo) {
 					isNew := !h.idx.hasNode(n.ID)
 					isDel := n.Status == "deleted"
 					h.idx.onNode(n)
 					triggerRefresh()
 					if isDel {
-						h.server.addClusterEvent(newEvent("node_leave", "", n.ID, ""))
+						h.server.addClusterEvent(types.NewEvent("node_leave", "", n.ID, ""))
 					} else if isNew {
-						h.server.addClusterEvent(newEvent("node_join", "", n.ID, n.Datacenter))
+						h.server.addClusterEvent(types.NewEvent("node_join", "", n.ID, n.Datacenter))
 					}
 				},
 				func() {
@@ -103,7 +105,7 @@ func (h *streamHub) Run(ctx context.Context) {
 	go func() {
 		for ctx.Err() == nil {
 			err := h.server.clusterState.WatchAllocationsInit(ctx,
-				func(a *ServiceAllocation) { h.idx.onAlloc(a) },
+				func(a *types.ServiceAllocation) { h.idx.onAlloc(a) },
 				func() {
 					select {
 					case allocsReady <- struct{}{}:
@@ -176,14 +178,16 @@ func (h *streamHub) refresh() {
 	h.fanout(snap)
 }
 
-func (h *streamHub) Snapshot() *clusterSnapshot {
+// Snapshot returns the latest cluster snapshot.
+func (h *streamHub) Snapshot() *types.ClusterSnapshot {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.snapshot
 }
 
-func (h *streamHub) Subscribe() (<-chan *clusterSnapshot, func()) {
-	ch := make(chan *clusterSnapshot, 4)
+// Subscribe returns a channel that receives cluster snapshots and an unsubscribe function.
+func (h *streamHub) Subscribe() (<-chan *types.ClusterSnapshot, func()) {
+	ch := make(chan *types.ClusterSnapshot, 4)
 
 	h.subsMu.Lock()
 	id := h.nextID
@@ -205,6 +209,7 @@ func (h *streamHub) Subscribe() (<-chan *clusterSnapshot, func()) {
 	}
 }
 
+// SubscribeDrain returns a channel for drain progress events.
 func (h *streamHub) SubscribeDrain() (<-chan []byte, func()) {
 	ch := make(chan []byte, 16)
 
@@ -224,7 +229,25 @@ func (h *streamHub) SubscribeDrain() (<-chan []byte, func()) {
 	}
 }
 
-func (h *streamHub) fanout(snap *clusterSnapshot) {
+// SubscribeEvents returns a channel for cluster event notifications.
+func (h *streamHub) SubscribeEvents() (<-chan []byte, func()) {
+	ch := make(chan []byte, 16)
+	h.eventSubsMu.Lock()
+	id := h.eventNextID
+	h.eventNextID++
+	h.eventSubs[id] = ch
+	h.eventSubsMu.Unlock()
+	return ch, func() {
+		h.eventSubsMu.Lock()
+		if existing, ok := h.eventSubs[id]; ok {
+			delete(h.eventSubs, id)
+			close(existing)
+		}
+		h.eventSubsMu.Unlock()
+	}
+}
+
+func (h *streamHub) fanout(snap *types.ClusterSnapshot) {
 	h.subsMu.Lock()
 	defer h.subsMu.Unlock()
 	for _, ch := range h.subs {
@@ -246,24 +269,8 @@ func (h *streamHub) fanoutDrain(data []byte) {
 	}
 }
 
-func (h *streamHub) SubscribeEvents() (<-chan []byte, func()) {
-	ch := make(chan []byte, 16)
-	h.eventSubsMu.Lock()
-	id := h.eventNextID
-	h.eventNextID++
-	h.eventSubs[id] = ch
-	h.eventSubsMu.Unlock()
-	return ch, func() {
-		h.eventSubsMu.Lock()
-		if existing, ok := h.eventSubs[id]; ok {
-			delete(h.eventSubs, id)
-			close(existing)
-		}
-		h.eventSubsMu.Unlock()
-	}
-}
-
-func (h *streamHub) FanoutEvent(e ClusterEvent) {
+// FanoutEvent marshals the event and sends to all event subscribers.
+func (h *streamHub) FanoutEvent(e types.ClusterEvent) {
 	data := mustJSON(e)
 	h.eventSubsMu.Lock()
 	defer h.eventSubsMu.Unlock()
