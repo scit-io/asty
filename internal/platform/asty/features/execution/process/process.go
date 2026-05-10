@@ -3,7 +3,6 @@ package process
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +15,7 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Status represents the current state of a process
+// Status represents the current state of a process.
 type Status string
 
 const (
@@ -27,7 +26,7 @@ const (
 	StatusFailed   Status = "failed"
 )
 
-// Process represents a running service instance
+// Process represents a running service instance.
 type Process struct {
 	mu sync.Mutex
 
@@ -43,7 +42,7 @@ type Process struct {
 	logFile *os.File
 }
 
-// New creates a new process instance
+// New creates a new process instance in the StatusStopped state.
 func New(svc *types.ServiceDefinition, nodeID, workDir string) *Process {
 	return &Process{
 		svc:     svc,
@@ -53,7 +52,12 @@ func New(svc *types.ServiceDefinition, nodeID, workDir string) *Process {
 	}
 }
 
-// Start starts the process
+// Start launches the process. Absolute commands run via `sh -c` so shell
+// expansions (env vars, pipes) work; relative commands are resolved
+// against the per-service working directory.
+//
+// Each process gets its own process group (Setpgid) so Stop can signal
+// the whole tree, not just the immediate child.
 func (p *Process) Start(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -61,7 +65,6 @@ func (p *Process) Start(ctx context.Context) error {
 	if p.status == StatusRunning {
 		return fmt.Errorf("process already running")
 	}
-
 	p.status = StatusStarting
 
 	if err := p.setupLogs(); err != nil {
@@ -70,7 +73,6 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	cmdPath := p.svc.Command
-
 	if len(cmdPath) > 0 && cmdPath[0] == '/' {
 		p.cmd = exec.CommandContext(ctx, "sh", "-c", p.svc.Command)
 	} else {
@@ -79,14 +81,11 @@ func (p *Process) Start(ctx context.Context) error {
 	}
 
 	p.cmd.Dir = p.workDir
-
 	p.cmd.Env = os.Environ()
 	for k, v := range p.svc.Env {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, os.ExpandEnv(v)))
 	}
-
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
 	p.cmd.Stdout = p.logFile
 	p.cmd.Stderr = p.logFile
 
@@ -98,7 +97,7 @@ func (p *Process) Start(ctx context.Context) error {
 	p.pid = p.cmd.Process.Pid
 	p.status = StatusRunning
 
-	processCtx, cancel := context.WithCancel(context.Background())
+	monCtx, cancel := context.WithCancel(context.Background())
 	p.cancelCtx = cancel
 
 	log.Info().
@@ -107,12 +106,14 @@ func (p *Process) Start(ctx context.Context) error {
 		Str("workdir", p.workDir).
 		Msg("process started")
 
-	go p.monitor(processCtx)
-
+	go p.monitor(monCtx)
 	return nil
 }
 
-// Stop stops the process gracefully (SIGTERM → wait → SIGKILL)
+// Stop sends SIGTERM, waits up to the service's kill_timeout, then
+// follows up with SIGKILL if the process is still alive. The signal is
+// sent to the process group (negative PID) so children die with the
+// parent.
 func (p *Process) Stop() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -120,13 +121,11 @@ func (p *Process) Stop() error {
 	if p.status != StatusRunning {
 		return nil
 	}
-
 	p.status = StatusStopping
 
 	if p.cancelCtx != nil {
 		p.cancelCtx()
 	}
-
 	log.Info().
 		Str("service", p.svc.Name).
 		Int("pid", p.pid).
@@ -136,9 +135,7 @@ func (p *Process) Stop() error {
 
 	killTimeout := p.svc.GetKillTimeout()
 	done := make(chan error, 1)
-	go func() {
-		done <- p.cmd.Wait()
-	}()
+	go func() { done <- p.cmd.Wait() }()
 
 	select {
 	case <-time.After(killTimeout):
@@ -147,10 +144,8 @@ func (p *Process) Stop() error {
 			Int("pid", p.pid).
 			Dur("timeout", killTimeout).
 			Msg("graceful shutdown timeout, sending SIGKILL")
-
 		syscall.Kill(-p.pid, syscall.SIGKILL)
 		<-done
-
 	case err := <-done:
 		if err != nil && err.Error() != "signal: terminated" {
 			log.Warn().Err(err).Str("service", p.svc.Name).Msg("process exited with error")
@@ -159,163 +154,32 @@ func (p *Process) Stop() error {
 
 	p.status = StatusStopped
 	p.closeLogs()
-
 	log.Info().
 		Str("service", p.svc.Name).
 		Int("pid", p.pid).
 		Msg("process stopped")
-
 	return nil
 }
 
-// Status returns the current process status
+// Status returns the current process status.
 func (p *Process) Status() Status {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.status
 }
 
-// PID returns the process ID
+// PID returns the process ID, or 0 if the process has not started.
 func (p *Process) PID() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.pid
 }
 
-// ServiceDefinition returns the service definition
+// ServiceDefinition returns the service definition this process is
+// running, useful for restart loops that need access to the kill_timeout
+// or restart policy.
 func (p *Process) ServiceDefinition() *types.ServiceDefinition {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.svc
-}
-
-// Context returns a context that is cancelled when the process stops
-func (p *Process) Context() (context.Context, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.cancelCtx == nil {
-		return nil, false
-	}
-	ctx := context.Background()
-	return ctx, true
-}
-
-func (p *Process) monitor(ctx context.Context) {
-	err := p.cmd.Wait()
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	if p.cancelCtx != nil {
-		p.cancelCtx()
-	}
-
-	if p.status == StatusStopping {
-		p.status = StatusStopped
-	} else {
-		p.status = StatusFailed
-		log.Error().
-			Err(err).
-			Str("service", p.svc.Name).
-			Int("pid", p.pid).
-			Msg("process exited unexpectedly")
-	}
-
-	p.closeLogs()
-}
-
-func (p *Process) setupLogs() error {
-	logDir := filepath.Join(p.workDir, "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return err
-	}
-
-	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", p.svc.Name))
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		return err
-	}
-
-	p.logFile = f
-	return nil
-}
-
-func (p *Process) closeLogs() {
-	if p.logFile != nil {
-		p.logFile.Close()
-		p.logFile = nil
-	}
-}
-
-// GetLogs returns the last N lines from the process log file
-func (p *Process) GetLogs(lines int) ([]byte, error) {
-	logPath := filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
-
-	f, err := os.Open(logPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	return io.ReadAll(f)
-}
-
-// GetLogPath returns the path to the log file
-func (p *Process) GetLogPath() string {
-	return filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
-}
-
-// TailLogs streams new log lines as they are written
-func (p *Process) TailLogs(ctx context.Context, lines chan<- string) error {
-	logPath := p.GetLogPath()
-
-	f, err := os.Open(logPath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		return err
-	}
-
-	buf := make([]byte, 4096)
-	remainder := ""
-
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			n, err := f.Read(buf)
-			if err != nil && err != io.EOF {
-				return err
-			}
-
-			if n > 0 {
-				data := remainder + string(buf[:n])
-				linesData := ""
-
-				for i := 0; i < len(data); i++ {
-					if data[i] == '\n' {
-						if linesData != "" {
-							select {
-							case lines <- linesData:
-							case <-ctx.Done():
-								return ctx.Err()
-							}
-							linesData = ""
-						}
-					} else {
-						linesData += string(data[i])
-					}
-				}
-
-				remainder = linesData
-			}
-		}
-	}
 }
