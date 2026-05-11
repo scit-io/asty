@@ -170,57 +170,94 @@ Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from o
 internal/platform/asty/
 ├── core/                          # Shared primitives
 │   ├── config/                    # Config struct + Load() + Validate()
-│   ├── types/                     # Node, ServiceDefinition, Allocation, Events, Commands, Snapshot
-│   └── errors/                    # Typed errors (ErrNotLeader, ErrNodeNotFound)
+│   ├── types/                     # NodeInfo, ServiceDefinition, Allocation, Events,
+│   │                              #   Commands, Snapshot, typed status enums, MustJSON
+│   ├── errors/                    # Typed errors (ErrNotLeader, ErrNodeNotFound)
+│   └── netutil/                   # ConnectNATS, EnsureBucket, Hostname, LocalIPv4
 ├── features/                      # Vertical feature slices
-│   ├── api/                       # HTTP API (ServerContext interface + handlers)
-│   │   ├── context.go             # ServerContext, StreamHub, EventBufferReader interfaces
-│   │   ├── api.go                 # Router setup, New(ctx, uiAddr)
-│   │   ├── nodes.go, services.go, allocations.go, status.go
-│   │   ├── autoscaler.go, logs.go, stream.go
-│   │   └── (handlers access server via ServerContext interface)
+│   ├── api/                       # HTTP API
+│   │   ├── api.go, context.go, method.go     # router, ServerContext, methodGuard
+│   │   ├── nodes.go, services.go             # node & service handlers
+│   │   ├── allocations.go, status.go, autoscaler.go
+│   │   ├── stream.go + stream_{cluster,node,service,allocation}.go
+│   │   └── logs.go + logs_{cluster,node,allocation}.go
 │   ├── clustering/
-│   │   ├── controller/            # ServiceController + Workqueue (reconciliation engine)
+│   │   ├── controller/            # controller.go, reconcile.go, watch.go,
+│   │   │                          #   autoscale.go, workqueue.go
 │   │   ├── discovery/             # DNS node discovery
-│   │   ├── leader/                # TTL-based leader election
-│   │   └── state/                 # ClusterState — NATS KV (nodes, allocations, watch)
+│   │   ├── leader/                # election.go, campaign.go, watch.go
+│   │   └── state/                 # state.go, nodes.go, allocations.go,
+│   │                              #   watch.go (generic watchKV), services.go
 │   ├── scheduling/
-│   │   ├── proximity/             # DC latency matrix
-│   │   └── *.go                   # Scheduler, helpers, placement logic
+│   │   ├── proximity/             # matrix.go, sort.go, validate.go
+│   │   ├── scheduler.go, reconcile.go, candidates.go
+│   │   └── helpers.go             # LiveAllocations, OccupiedNodes, …
 │   ├── autoscaling/
 │   │   ├── metrics/               # MetricsStore (RPS timeseries, scaling events)
-│   │   └── autoscaler.go          # Scale-up/down decisions
+│   │   ├── autoscaler.go          # EvaluateService + ExecuteScalingDecision
+│   │   ├── cooldown.go, scale_up.go, scale_down.go, execute.go
 │   ├── deployment/
 │   │   ├── artifacts/             # tar.gz download + SHA256 verification
-│   │   ├── deployer.go            # Rolling updates, canary, auto-revert
+│   │   ├── deployer.go            # struct + Deploy
+│   │   ├── canary.go, rolling.go, wait.go, history.go
 │   │   └── loader.go              # .asty file loading
 │   ├── draining/                  # DrainManager with DrainDeps interface
+│   │   └── manager.go, run.go, system.go, migrate.go, wait.go
 │   ├── execution/
-│   │   ├── process/               # Process lifecycle (start/stop/signals)
-│   │   └── health/                # HTTP probe scheduler
+│   │   ├── process/               # process.go, monitor.go, logs.go
+│   │   │                          #   (Process.OnExit, Process.Done())
+│   │   └── health/                # checker.go, probe.go
 │   └── observability/
 │       ├── metrics/               # CPU/Memory collector (platform-specific)
-│       ├── logs/                   # LogBuffer + NATSWriter
+│       ├── logs/                  # LogBuffer + NATSWriter
 │       └── events/                # EventBuffer (ring buffer)
 ├── server/                        # Server sub-package
-│   ├── server.go                  # Server struct, New(), Start() — implements api.ServerContext
-│   ├── lifecycle.go               # connectNATS, command dispatch, ServerContext methods
-│   ├── streamhub.go              # StreamHub (implements api.StreamHub interface)
-│   ├── snapshot.go               # buildSnapshot(), allocIndex
-│   └── dispatcher.go            # CommandDispatcher for controller
+│   ├── server.go                  # Server struct + New
+│   ├── boot.go                    # Start (boot sequence)
+│   ├── tunables.go                # metricsRetention, streamHubInterval, …
+│   ├── context.go                 # ServerContext + DrainDeps getters
+│   ├── nats.go, commands.go       # NATS connection + agent RPC
+│   ├── deployment.go              # DeployService (plan builder)
+│   ├── leadership.go              # watchLeadership + leader-scoped work
+│   ├── logbuffer.go, metrics.go   # NATS log/metrics subscriptions
+│   ├── snapshot.go, allocindex.go # ClusterSnapshot builder
+│   └── streamhub*.go              # hub.go, run.go, subs.go (generic
+│                                  #   subscribers[T]), pubsub.go
 └── agent/                         # Agent sub-package
-    ├── agent.go                   # Agent struct, New(), Start(), StartService/StopService
+    ├── agent.go                   # Agent struct + Start
+    ├── services.go                # StartService / StopService
+    ├── nodeinfo.go                # NodeInfo builder
     ├── commands.go                # NATS command handlers (start/stop/getlogs)
-    ├── lifecycle.go               # publishHeartbeat, publishProcessMetrics, monitorProcesses
-    ├── sysinfo_darwin.go          # detectCPUMHz(), detectMemoryMB() for macOS
-    └── sysinfo_linux.go           # detectCPUMHz(), detectMemoryMB() for Linux
+    ├── heartbeat.go               # publishHeartbeat / publishProcessMetrics
+    ├── restart.go                 # Event-driven restart loop (Process.OnExit)
+    ├── logstream.go               # streamProcessLogs (uses Process.Done())
+    ├── sysinfo_darwin.go          # detectCPUMHz / detectMemoryMB for macOS
+    └── sysinfo_linux.go           # detectCPUMHz / detectMemoryMB for Linux
 ```
+
+**File-size rule**: every Go file is under 200 lines (only exception:
+`features/clustering/controller/workqueue.go` at 214 — a cohesive
+k8s-style data structure that doesn't benefit from splitting).
+
+**Status enums**: allocation lifecycle (`AllocPending`, `AllocStarting`,
+`AllocRunning`, `AllocStopped`, `AllocFailed`, `AllocDeleted`) and node
+lifecycle (`NodeReady`, `NodeDraining`, `NodeDrained`, `NodeDown`,
+`NodeDeleted`) live in `core/types` as typed strings — the compiler
+catches stray literals while the JSON wire format stays unchanged.
+
+**Polling vs event-driven**: reactive paths use NATS `KV.Watch` and
+process callbacks (`Process.OnExit`, `Process.Done()`). Polling is
+retained only for: leader TTL refresh (5 s), controller resync safety
+net (60 s), agent heartbeat (5 s), process metrics sampling (10 s),
+HTTP health probes (1 s), TailLogs file polling (100 ms), proximity
+validation (1 h). Each is documented at its definition.
 
 ### Orchestrator Entrypoints
 - `cmd/asty/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package)
 - `server/` — leader election, controller wiring, NATS subscriptions, implements `api.ServerContext`
 - `agent/` — process management, NATS commands, heartbeat, metrics
 - `features/api/` — HTTP API handlers, decoupled from server via `ServerContext` interface
+- `core/netutil/` — shared NATS connect / hostname / KV bucket helpers (agent and server both use them)
 
 ### Platform Layer
 - `internal/platform/nc/` — NATS client wrapper (JetStream, KV helpers)
