@@ -23,7 +23,7 @@ func (api *API) nodeAllocCounts() map[string]struct{ Planned, Running int } {
 		for _, a := range allocs {
 			c := out[a.NodeID]
 			c.Planned++
-			if a.Status == "running" {
+			if a.Status == types.AllocRunning {
 				c.Running++
 			}
 			out[a.NodeID] = c
@@ -89,11 +89,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 			if !methodGuard(w, r, http.MethodPost) {
 				return
 			}
-			api.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"node_id": nodeID,
-				"action":  "pause",
-				"message": "pause initiated (not yet fully implemented)",
-			})
+			api.writeError(w, http.StatusNotImplemented, "node pause is not implemented", nil)
 			return
 		default:
 			api.writeError(w, http.StatusBadRequest, "unknown action", nil)
@@ -161,7 +157,7 @@ func (api *API) handleNodeDrainStatus(w http.ResponseWriter, _ *http.Request, no
 		}
 		api.writeJSON(w, http.StatusOK, &draining.DrainStatus{
 			NodeID:           nodeID,
-			Status:           node.Status,
+			Status:           string(node.Status),
 			TotalAllocations: 0,
 			Migrated:         0,
 			Remaining:        0,

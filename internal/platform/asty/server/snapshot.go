@@ -27,7 +27,7 @@ func newAllocIndex() *allocIndex {
 func (idx *allocIndex) onNode(n *types.NodeInfo) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-	if n.Status == "deleted" {
+	if n.Status == types.NodeDeleted {
 		delete(idx.nodes, n.ID)
 	} else {
 		clone := *n
@@ -46,7 +46,7 @@ func (idx *allocIndex) onAlloc(a *types.ServiceAllocation) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	k := a.ServiceName + "/" + a.NodeID
-	if a.Status == "deleted" {
+	if a.Status == types.AllocDeleted {
 		delete(idx.allocs, k)
 	} else {
 		clone := *a
@@ -108,7 +108,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		running, planned := 0, 0
 		for _, a := range allocsByNode[node.ID] {
 			planned++
-			if a.Status == "running" {
+			if a.Status == types.AllocRunning {
 				running++
 			}
 		}
@@ -145,7 +145,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		var sumCPU, sumMem float64
 		var running int
 		for _, a := range allocs {
-			if a.Status == "running" {
+			if a.Status == types.AllocRunning {
 				sumCPU += float64(a.CPUUsage)
 				sumMem += float64(a.MemoryUsage)
 				running++

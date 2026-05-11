@@ -58,7 +58,7 @@ func (a *Agent) attemptRestart(name string, proc *process.Process) {
 	)
 	err := a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 		if alloc.ConsecutiveFailures >= maxAttempts {
-			alloc.Status = "failed"
+			alloc.Status = types.AllocFailed
 			giveUp = true
 		} else {
 			alloc.Restarts++
@@ -94,7 +94,7 @@ func (a *Agent) attemptRestart(name string, proc *process.Process) {
 	time.Sleep(svc.Restart.GetDelay())
 
 	err = a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-		alloc.Status = "pending"
+		alloc.Status = types.AllocPending
 		alloc.PID = 0
 		return true
 	})

@@ -103,5 +103,8 @@ func LoadServiceDefinition(path string) (*types.ServiceDefinition, error) {
 		return nil, fmt.Errorf("invalid service type: %s", svc.Type)
 	}
 
+	// Cache parsed durations up front so the hot path (heartbeat,
+	// metrics, health checks) doesn't re-parse strings every call.
+	svc.Resolve()
 	return &svc, nil
 }

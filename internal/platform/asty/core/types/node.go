@@ -8,14 +8,39 @@ import "time"
 // tolerates GC pauses and brief NATS reconnects without removing the node.
 const nodeHeartbeatStaleAfter = 2 * time.Minute
 
-// NodeInfo represents information about a cluster node
+// NodeStatus is the operator-visible state of a cluster node. Like
+// AllocationStatus, defined as a typed string so the compiler catches
+// stray literals.
+type NodeStatus string
+
+const (
+	// NodeReady — accepting new allocations.
+	NodeReady NodeStatus = "ready"
+
+	// NodeDraining — actively being emptied by drain; existing
+	// allocations migrate to peers.
+	NodeDraining NodeStatus = "draining"
+
+	// NodeDrained — drain finished; no allocations left.
+	NodeDrained NodeStatus = "drained"
+
+	// NodeDown — heartbeat went stale long enough to be considered
+	// gone. Will not host new allocations.
+	NodeDown NodeStatus = "down"
+
+	// NodeDeleted — synthetic marker emitted by the state-watcher
+	// for KV delete/purge events. Never persisted.
+	NodeDeleted NodeStatus = "deleted"
+)
+
+// NodeInfo represents information about a cluster node.
 type NodeInfo struct {
-	ID         string    `json:"id"`
-	Datacenter string    `json:"datacenter"`
-	IP         string    `json:"ip"`
-	Status     string    `json:"status"` // ready, draining, down
-	CreatedAt  time.Time `json:"created_at"`
-	LastSeen   time.Time `json:"last_seen"`
+	ID         string     `json:"id"`
+	Datacenter string     `json:"datacenter"`
+	IP         string     `json:"ip"`
+	Status     NodeStatus `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastSeen   time.Time  `json:"last_seen"`
 
 	// Resources
 	CPUTotal        int   `json:"cpu_total"`        // MHz
@@ -32,9 +57,9 @@ type NodeInfo struct {
 }
 
 // IsHealthy reports whether the node is currently usable for placement
-// and load reporting: status=="ready" AND its last heartbeat is recent.
+// and load reporting: status==NodeReady AND its last heartbeat is recent.
 // Pass time.Now() at the call site so callers driving large loops (e.g.
 // snapshot builds) can reuse a single timestamp.
 func (n *NodeInfo) IsHealthy(at time.Time) bool {
-	return n.Status == "ready" && at.Sub(n.LastSeen) < nodeHeartbeatStaleAfter
+	return n.Status == NodeReady && at.Sub(n.LastSeen) < nodeHeartbeatStaleAfter
 }

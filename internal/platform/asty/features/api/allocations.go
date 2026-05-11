@@ -74,19 +74,8 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 		}
 
 		switch action {
-		case "restart":
-			api.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"allocation_id": allocID,
-				"action":        "restart",
-				"message":       "restart initiated (not yet fully implemented)",
-			})
-			return
-		case "stop":
-			api.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"allocation_id": allocID,
-				"action":        "stop",
-				"message":       "stop initiated (not yet fully implemented)",
-			})
+		case "restart", "stop":
+			api.writeError(w, http.StatusNotImplemented, "allocation "+action+" is not implemented", nil)
 			return
 		default:
 			api.writeError(w, http.StatusBadRequest, "unknown action", nil)

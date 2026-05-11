@@ -50,10 +50,10 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		memAvail = 0
 	}
 
-	status := "ready"
+	status := types.NodeReady
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
 		switch existing.Status {
-		case "draining", "drained":
+		case types.NodeDraining, types.NodeDrained:
 			status = existing.Status
 		}
 	}

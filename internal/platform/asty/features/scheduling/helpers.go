@@ -6,8 +6,7 @@ import "asty/internal/platform/asty/core/types"
 func OccupiedNodes(allocs []*types.ServiceAllocation) map[string]bool {
 	out := make(map[string]bool, len(allocs))
 	for _, a := range allocs {
-		switch a.Status {
-		case "pending", "starting", "running", "failed":
+		if a.Status.Occupies() {
 			out[a.NodeID] = true
 		}
 	}
@@ -18,8 +17,7 @@ func OccupiedNodes(allocs []*types.ServiceAllocation) map[string]bool {
 func LiveAllocations(allocs []*types.ServiceAllocation) []*types.ServiceAllocation {
 	live := make([]*types.ServiceAllocation, 0, len(allocs))
 	for _, a := range allocs {
-		switch a.Status {
-		case "pending", "starting", "running":
+		if a.Status.IsLive() {
 			live = append(live, a)
 		}
 	}

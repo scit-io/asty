@@ -2,22 +2,74 @@ package types
 
 import "time"
 
-// ServiceAllocation represents a service instance placement
+// AllocationStatus is the lifecycle state of a single service copy on a
+// node. Defined as a typed string so the compiler catches stray
+// literals; the underlying string preserves the existing wire format.
+type AllocationStatus string
+
+const (
+	// AllocPending — record exists in KV but no start command has
+	// been dispatched yet. The controller picks these up.
+	AllocPending AllocationStatus = "pending"
+
+	// AllocStarting — start command dispatched, awaiting agent
+	// confirmation. Stuck-in-starting allocs get reverted to pending
+	// by the controller (see startingStuckAfter).
+	AllocStarting AllocationStatus = "starting"
+
+	// AllocRunning — agent has reported the process as alive.
+	AllocRunning AllocationStatus = "running"
+
+	// AllocStopped — agent reported a clean exit (from a Stop call
+	// or a drain). Not eligible for restart.
+	AllocStopped AllocationStatus = "stopped"
+
+	// AllocFailed — agent reported an unexpected exit. The restart
+	// budget governs whether it's retried or pruned.
+	AllocFailed AllocationStatus = "failed"
+
+	// AllocDeleted — synthetic marker the state-watcher emits for KV
+	// delete/purge events. Never persisted in KV.
+	AllocDeleted AllocationStatus = "deleted"
+)
+
+// ServiceAllocation represents a service instance placement.
 type ServiceAllocation struct {
-	ID           string    `json:"id"`
-	ServiceName  string    `json:"service_name"`
-	NodeID       string    `json:"node_id"`
-	Status       string    `json:"status"` // pending, running, stopped, failed
-	Version      string    `json:"version"`
-	PID          int       `json:"pid"`
-	StartedAt    time.Time `json:"started_at"`
-	HealthStatus string    `json:"health_status"` // healthy, unhealthy, unknown
-	CPUUsage     int       `json:"cpu_usage"`     // Percentage
-	MemoryUsage  int       `json:"memory_usage"`  // MB
-	Restarts            int       `json:"restarts"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                  string           `json:"id"`
+	ServiceName         string           `json:"service_name"`
+	NodeID              string           `json:"node_id"`
+	Status              AllocationStatus `json:"status"`
+	Version             string           `json:"version"`
+	PID                 int              `json:"pid"`
+	StartedAt           time.Time        `json:"started_at"`
+	HealthStatus        string           `json:"health_status"` // healthy, unhealthy, unknown
+	CPUUsage            int              `json:"cpu_usage"`     // percentage
+	MemoryUsage         int              `json:"memory_usage"`  // MB
+	Restarts            int              `json:"restarts"`
+	ConsecutiveFailures int              `json:"consecutive_failures"`
+	CreatedAt           time.Time        `json:"created_at"`
+	UpdatedAt           time.Time        `json:"updated_at"`
+}
+
+// IsLive reports whether the allocation counts toward the desired set
+// for placement decisions (pending, starting, or running).
+func (s AllocationStatus) IsLive() bool {
+	switch s {
+	case AllocPending, AllocStarting, AllocRunning:
+		return true
+	}
+	return false
+}
+
+// Occupies reports whether the allocation should prevent another copy
+// of the same service from being scheduled onto the node. Adds Failed
+// to IsLive because the slot is still owned until pruning catches up.
+func (s AllocationStatus) Occupies() bool {
+	switch s {
+	case AllocPending, AllocStarting, AllocRunning, AllocFailed:
+		return true
+	}
+	return false
 }
 
 // ServiceCooldown captures the timestamps of the most recent autoscaler

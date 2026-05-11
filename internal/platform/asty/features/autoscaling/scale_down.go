@@ -61,7 +61,7 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 func liveRunning(live []*types.ServiceAllocation) []*types.ServiceAllocation {
 	out := make([]*types.ServiceAllocation, 0, len(live))
 	for _, a := range live {
-		if a.Status == "running" && a.PID > 0 {
+		if a.Status == types.AllocRunning && a.PID > 0 {
 			out = append(out, a)
 		}
 	}

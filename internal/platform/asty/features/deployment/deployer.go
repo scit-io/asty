@@ -25,17 +25,17 @@ type DeploymentRecord struct {
 }
 
 // DeploymentPlan describes a deployment.
+//
+// All knobs (MaxParallel, MinHealthyTime, HealthyDeadline, AutoRevert,
+// Canary) live on UpdateStrategy. The deployer reads them from there;
+// the previous duplicated fields on the plan itself were a confusing
+// holdover and have been removed.
 type DeploymentPlan struct {
-	ServiceName     string
-	CurrentVersion  string
-	TargetVersion   string
-	UpdateStrategy  UpdateStrategy
-	Allocations     []*types.ServiceAllocation
-	HealthyDeadline time.Duration
-	MinHealthyTime  time.Duration
-	MaxParallel     int
-	AutoRevert      bool
-	Canary          int
+	ServiceName    string
+	CurrentVersion string
+	TargetVersion  string
+	UpdateStrategy UpdateStrategy
+	Allocations    []*types.ServiceAllocation
 }
 
 // UpdateStrategy defines how to update.
@@ -113,13 +113,13 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		Int("total", status.Total).
 		Msg("starting deployment")
 
-	if plan.Canary > 0 {
+	if plan.UpdateStrategy.Canary > 0 {
 		ok, err := d.deployCanary(ctx, plan, status)
 		if err != nil {
 			return d.failDeployment(status, fmt.Errorf("canary failed: %w", err))
 		}
 		if !ok {
-			if plan.AutoRevert {
+			if plan.UpdateStrategy.AutoRevert {
 				log.Warn().Str("service", plan.ServiceName).Msg("canary unhealthy, reverting")
 				return d.revertDeployment(status, "canary unhealthy")
 			}
@@ -131,7 +131,7 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 
 	status.Phase = "rolling"
 	if err := d.rollingUpdate(ctx, plan, status); err != nil {
-		if plan.AutoRevert {
+		if plan.UpdateStrategy.AutoRevert {
 			log.Warn().Str("service", plan.ServiceName).Err(err).Msg("rolling update failed, reverting")
 			return d.revertDeployment(status, err.Error())
 		}

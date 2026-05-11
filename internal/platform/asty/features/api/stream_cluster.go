@@ -96,7 +96,7 @@ func (api *API) aggregateClusterMetrics(snap *types.ClusterSnapshot) (cpuPct, me
 	var cpuUsed, cpuTotal, memUsed, memTotal float64
 	ms := api.ctx.MetricsStore()
 	for _, node := range snap.Nodes {
-		if node.Status != "ready" {
+		if node.Status != types.NodeReady {
 			continue
 		}
 		cpuUsed += float64(node.CPUTotal - node.CPUAvailable)

@@ -42,7 +42,7 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 		allocs, _ := api.ctx.ClusterState().ListAllocations(svc.Name)
 		running := 0
 		for _, a := range allocs {
-			if a.Status == "running" {
+			if a.Status == types.AllocRunning {
 				running++
 			}
 		}

@@ -169,7 +169,7 @@ func (s *Server) seedDevMockNodes() {
 			ID:              fmt.Sprintf("mock-node-%d", i),
 			Datacenter:      s.cfg.Datacenter,
 			IP:              fmt.Sprintf("192.168.1.%d", i),
-			Status:          "ready",
+			Status:          types.NodeReady,
 			LastSeen:        time.Now(),
 			CPUTotal:        devMockNodeCPUTotal,
 			CPUAvailable:    devMockNodeCPUAvail,

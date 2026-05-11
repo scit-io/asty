@@ -56,7 +56,7 @@ func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*type
 func (as *Autoscaler) findNodeWithTrafficWithoutService(nodes []*types.NodeInfo, live []*types.ServiceAllocation) *types.NodeInfo {
 	hasService := scheduling.NodeIDsOf(live)
 	for _, node := range nodes {
-		if node.Status != "ready" {
+		if node.Status != types.NodeReady {
 			continue
 		}
 		if hasService[node.ID] {
@@ -92,7 +92,7 @@ func (as *Autoscaler) hasGatewayTraffic(node *types.NodeInfo) bool {
 // CPUUsage or MemoryUsage exceeds the configured target.
 func (as *Autoscaler) findOverloadedAlloc(live []*types.ServiceAllocation) *types.ServiceAllocation {
 	for _, alloc := range live {
-		if alloc.Status != "running" || alloc.PID == 0 {
+		if alloc.Status != types.AllocRunning || alloc.PID == 0 {
 			continue
 		}
 		if alloc.CPUUsage > as.cfg.TargetCPU || alloc.MemoryUsage > as.cfg.TargetMemory {

@@ -13,27 +13,27 @@ func TestDeploymentPlan(t *testing.T) {
 		CurrentVersion: "v1.0.0",
 		TargetVersion:  "v1.1.0",
 		Allocations: []*types.ServiceAllocation{
-			{ServiceName: "test-service", NodeID: "node1", Status: "running", Version: "v1.0.0"},
-			{ServiceName: "test-service", NodeID: "node2", Status: "running", Version: "v1.0.0"},
-			{ServiceName: "test-service", NodeID: "node3", Status: "running", Version: "v1.0.0"},
+			{ServiceName: "test-service", NodeID: "node1", Status: types.AllocRunning, Version: "v1.0.0"},
+			{ServiceName: "test-service", NodeID: "node2", Status: types.AllocRunning, Version: "v1.0.0"},
+			{ServiceName: "test-service", NodeID: "node3", Status: types.AllocRunning, Version: "v1.0.0"},
 		},
-		MaxParallel:     1,
-		MinHealthyTime:  10 * time.Second,
-		HealthyDeadline: 3 * time.Minute,
-		AutoRevert:      true,
-		Canary:          1,
+		UpdateStrategy: UpdateStrategy{
+			MaxParallel:     1,
+			MinHealthyTime:  10 * time.Second,
+			HealthyDeadline: 3 * time.Minute,
+			AutoRevert:      true,
+			Canary:          1,
+		},
 	}
 
 	if plan.ServiceName != "test-service" {
 		t.Errorf("expected service name 'test-service', got '%s'", plan.ServiceName)
 	}
-
 	if len(plan.Allocations) != 3 {
 		t.Errorf("expected 3 allocations, got %d", len(plan.Allocations))
 	}
-
-	if plan.Canary != 1 {
-		t.Errorf("expected canary=1, got %d", plan.Canary)
+	if plan.UpdateStrategy.Canary != 1 {
+		t.Errorf("expected canary=1, got %d", plan.UpdateStrategy.Canary)
 	}
 }
 

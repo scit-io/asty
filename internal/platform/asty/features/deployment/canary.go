@@ -15,7 +15,7 @@ import (
 // WatchAllocations event-driven waits.
 const deployHealthPollInterval = 5 * time.Second
 
-// deployCanary updates the first plan.Canary allocations to the target
+// deployCanary updates the first plan.UpdateStrategy.Canary allocations to the target
 // version, then waits until every canary is "running" and stays
 // healthy for plan.MinHealthyTime, capped by plan.HealthyDeadline.
 //
@@ -23,15 +23,15 @@ const deployHealthPollInterval = 5 * time.Second
 // the deadline expired without healthy state, (_, err) on transport
 // or KV errors.
 func (d *Deployer) deployCanary(ctx context.Context, plan *DeploymentPlan, status *DeploymentStatus) (bool, error) {
-	if plan.Canary <= 0 {
+	if plan.UpdateStrategy.Canary <= 0 {
 		return true, nil
 	}
 	log.Info().
 		Str("service", plan.ServiceName).
-		Int("count", plan.Canary).
+		Int("count", plan.UpdateStrategy.Canary).
 		Msg("deploying canary")
 
-	canaryAllocs := plan.Allocations[:min(plan.Canary, len(plan.Allocations))]
+	canaryAllocs := plan.Allocations[:min(plan.UpdateStrategy.Canary, len(plan.Allocations))]
 	for _, alloc := range canaryAllocs {
 		if err := d.markPending(plan, alloc); err != nil {
 			return false, err
@@ -50,7 +50,7 @@ func (d *Deployer) markPending(plan *DeploymentPlan, alloc *types.ServiceAllocat
 	version := plan.TargetVersion
 	return d.clusterState.MutateAllocation(plan.ServiceName, alloc.NodeID, func(a *types.ServiceAllocation) bool {
 		a.Version = version
-		a.Status = "pending"
+		a.Status = types.AllocPending
 		return true
 	})
 }

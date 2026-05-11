@@ -25,7 +25,7 @@ func (d *Deployer) beginRecord(plan *DeploymentPlan) {
 		StartedAt: time.Now(),
 		Progress:  0,
 	}
-	if plan.Canary > 0 {
+	if plan.UpdateStrategy.Canary > 0 {
 		record.Strategy = "canary"
 	}
 	d.addRecord(record)
@@ -54,7 +54,8 @@ func (d *Deployer) updateLastRecord(status string, progress int) {
 	}
 }
 
-// GetHistory returns deployment history, newest-first.
+// GetHistory returns deployment history, newest-first. Capped at
+// historyCap entries.
 func (d *Deployer) GetHistory() []DeploymentRecord {
 	d.mu.Lock()
 	defer d.mu.Unlock()

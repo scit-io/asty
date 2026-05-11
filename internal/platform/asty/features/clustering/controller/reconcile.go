@@ -56,7 +56,7 @@ func (c *ServiceController) dispatchPending(ctx context.Context, svc *types.Serv
 		return
 	}
 	for _, alloc := range allocs {
-		if alloc.Status != "pending" || ctx.Err() != nil {
+		if alloc.Status != types.AllocPending || ctx.Err() != nil {
 			continue
 		}
 		c.dispatchOne(svc, alloc.NodeID)
@@ -69,12 +69,12 @@ func (c *ServiceController) dispatchPending(ctx context.Context, svc *types.Serv
 func (c *ServiceController) unstickStarting(svc *types.ServiceDefinition, allocs []*types.ServiceAllocation) {
 	now := time.Now()
 	for _, alloc := range allocs {
-		if alloc.Status != "starting" || now.Sub(alloc.UpdatedAt) < startingStuckAfter {
+		if alloc.Status != types.AllocStarting || now.Sub(alloc.UpdatedAt) < startingStuckAfter {
 			continue
 		}
 		nodeID := alloc.NodeID
 		_ = c.state.MutateAllocation(svc.Name, nodeID, func(a *types.ServiceAllocation) bool {
-			if a.Status != "starting" || time.Since(a.UpdatedAt) < startingStuckAfter {
+			if a.Status != types.AllocStarting || time.Since(a.UpdatedAt) < startingStuckAfter {
 				return false
 			}
 			log.Warn().
@@ -82,7 +82,7 @@ func (c *ServiceController) unstickStarting(svc *types.ServiceDefinition, allocs
 				Str("node_id", nodeID).
 				Dur("stuck_for", time.Since(a.UpdatedAt)).
 				Msg("alloc stuck in starting, reverting to pending")
-			a.Status = "pending"
+			a.Status = types.AllocPending
 			return true
 		})
 	}
@@ -94,10 +94,10 @@ func (c *ServiceController) unstickStarting(svc *types.ServiceDefinition, allocs
 func (c *ServiceController) dispatchOne(svc *types.ServiceDefinition, nodeID string) {
 	var advanced bool
 	err := c.state.MutateAllocation(svc.Name, nodeID, func(a *types.ServiceAllocation) bool {
-		if a.Status != "pending" {
+		if a.Status != types.AllocPending {
 			return false
 		}
-		a.Status = "starting"
+		a.Status = types.AllocStarting
 		advanced = true
 		return true
 	})
@@ -110,16 +110,16 @@ func (c *ServiceController) dispatchOne(svc *types.ServiceDefinition, nodeID str
 	}
 
 	log.Info().Str("service", svc.Name).Str("node_id", nodeID).Msg("sending start command to agent")
-	if err := c.dispatcher.SendStartCommand(nodeID, svc); err != nil {
+	if err := c.dispatch(nodeID, svc); err != nil {
 		log.Error().Err(err).
 			Str("service", svc.Name).
 			Str("node_id", nodeID).
 			Msg("start command failed")
 		_ = c.state.MutateAllocation(svc.Name, nodeID, func(a *types.ServiceAllocation) bool {
-			if a.Status != "starting" {
+			if a.Status != types.AllocStarting {
 				return false
 			}
-			a.Status = "pending"
+			a.Status = types.AllocPending
 			return true
 		})
 		c.queue.AddRateLimited(svc.Name)
@@ -136,7 +136,7 @@ func (c *ServiceController) pruneFailed(svc *types.ServiceDefinition) {
 	}
 	threshold := svc.Restart.GetAttempts()
 	for _, alloc := range allocs {
-		if alloc.Status != "failed" || alloc.ConsecutiveFailures < threshold {
+		if alloc.Status != types.AllocFailed || alloc.ConsecutiveFailures < threshold {
 			continue
 		}
 		log.Warn().

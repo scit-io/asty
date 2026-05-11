@@ -25,11 +25,11 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 
 	if proc, exists := a.processes[svc.Name]; exists {
 		_ = a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-			if alloc.PID == proc.PID() && alloc.Status == "running" {
+			if alloc.PID == proc.PID() && alloc.Status == types.AllocRunning {
 				return false
 			}
 			alloc.PID = proc.PID()
-			alloc.Status = "running"
+			alloc.Status = types.AllocRunning
 			alloc.StartedAt = time.Now()
 			alloc.ConsecutiveFailures = 0
 			return true
@@ -79,7 +79,7 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	pid := proc.PID()
 	if err := a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 		alloc.PID = pid
-		alloc.Status = "running"
+		alloc.Status = types.AllocRunning
 		alloc.StartedAt = time.Now()
 		alloc.ConsecutiveFailures = 0
 		return true
@@ -101,10 +101,10 @@ func (a *Agent) StopService(serviceName string) error {
 	if !exists {
 		a.mu.Unlock()
 		_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-			if alloc.Status == "stopped" {
+			if alloc.Status == types.AllocStopped {
 				return false
 			}
-			alloc.Status = "stopped"
+			alloc.Status = types.AllocStopped
 			alloc.PID = 0
 			return true
 		})
@@ -121,7 +121,7 @@ func (a *Agent) StopService(serviceName string) error {
 	}
 
 	if err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-		alloc.Status = "stopped"
+		alloc.Status = types.AllocStopped
 		alloc.PID = 0
 		return true
 	}); err != nil {

@@ -2,7 +2,18 @@ package types
 
 import "time"
 
-// ServiceType defines how the service is scheduled
+// Default time-window fallbacks used when a .asty file omits the
+// corresponding field. Promoted to constants so callers can refer to
+// them when comparing intervals.
+const (
+	defaultKillTimeout    = 30 * time.Second
+	defaultHealthInterval = 10 * time.Second
+	defaultHealthTimeout  = 3 * time.Second
+	defaultRestartDelay   = 5 * time.Second
+	defaultRestartTries   = 3
+)
+
+// ServiceType defines how the service is scheduled.
 type ServiceType string
 
 const (
@@ -10,7 +21,13 @@ const (
 	ServiceTypeService ServiceType = "service"
 )
 
-// ServiceDefinition describes a service loaded from .asty file
+// ServiceDefinition describes a service loaded from a .asty file.
+//
+// Duration-typed fields on the file are stored as raw strings (matching
+// the YAML spelling like "10s") plus a pre-parsed time.Duration in the
+// unexported `parsed*` fields. The loader calls Resolve() after
+// unmarshal so the parsed values are ready when the rest of the system
+// reads them via the Get* methods.
 type ServiceDefinition struct {
 	Name        string            `yaml:"name"`
 	Type        ServiceType       `yaml:"type"`
@@ -24,6 +41,11 @@ type ServiceDefinition struct {
 	Logs        Logs              `yaml:"logs"`
 	Update      Update            `yaml:"update"`
 	Restart     Restart           `yaml:"restart"`
+
+	// parsedKillTimeout is set by Resolve(); 0 falls back to default
+	// in GetKillTimeout. Excluded from YAML/JSON so disk format stays
+	// unchanged.
+	parsedKillTimeout time.Duration `yaml:"-" json:"-"`
 }
 
 type Artifact struct {
@@ -36,12 +58,17 @@ type Resources struct {
 	Memory int `yaml:"memory"` // MB
 }
 
+// Health holds the HTTP health-probe configuration plus the
+// pre-parsed durations.
 type Health struct {
 	Type     string `yaml:"type"`
 	Addr     string `yaml:"addr"`
 	Path     string `yaml:"path"`
 	Interval string `yaml:"interval"`
 	Timeout  string `yaml:"timeout"`
+
+	parsedInterval time.Duration `yaml:"-" json:"-"`
+	parsedTimeout  time.Duration `yaml:"-" json:"-"`
 }
 
 type Logs struct {
@@ -57,52 +84,75 @@ type Update struct {
 	AutoRevert       bool   `yaml:"auto_revert"`
 }
 
+// Restart describes the per-service restart policy plus the
+// pre-parsed delay duration.
 type Restart struct {
 	Attempts int    `yaml:"attempts"`
 	Interval string `yaml:"interval"`
 	Delay    string `yaml:"delay"`
+
+	parsedDelay time.Duration `yaml:"-" json:"-"`
 }
 
-// GetKillTimeout parses the kill_timeout field
+// Resolve parses every time-typed string field once and caches the
+// result. Callers (notably the loader) must invoke it after unmarshal;
+// the Get* methods fall back to default values if Resolve was skipped,
+// so behaviour is correct either way — just less efficient.
+func (s *ServiceDefinition) Resolve() {
+	s.parsedKillTimeout = parseDurationOr(s.KillTimeout, defaultKillTimeout)
+	s.Health.parsedInterval = parseDurationOr(s.Health.Interval, defaultHealthInterval)
+	s.Health.parsedTimeout = parseDurationOr(s.Health.Timeout, defaultHealthTimeout)
+	s.Restart.parsedDelay = parseDurationOr(s.Restart.Delay, defaultRestartDelay)
+}
+
+func parseDurationOr(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d == 0 {
+		return fallback
+	}
+	return d
+}
+
+// GetKillTimeout returns the parsed kill_timeout, with default fallback.
 func (s *ServiceDefinition) GetKillTimeout() time.Duration {
-	d, _ := time.ParseDuration(s.KillTimeout)
-	if d == 0 {
-		return 30 * time.Second
+	if s.parsedKillTimeout != 0 {
+		return s.parsedKillTimeout
 	}
-	return d
+	return parseDurationOr(s.KillTimeout, defaultKillTimeout)
 }
 
-// GetInterval parses the health check interval
+// GetInterval returns the parsed health.interval, with default fallback.
 func (h *Health) GetInterval() time.Duration {
-	d, _ := time.ParseDuration(h.Interval)
-	if d == 0 {
-		return 10 * time.Second
+	if h.parsedInterval != 0 {
+		return h.parsedInterval
 	}
-	return d
+	return parseDurationOr(h.Interval, defaultHealthInterval)
 }
 
-// GetTimeout parses the health check timeout
+// GetTimeout returns the parsed health.timeout, with default fallback.
 func (h *Health) GetTimeout() time.Duration {
-	d, _ := time.ParseDuration(h.Timeout)
-	if d == 0 {
-		return 3 * time.Second
+	if h.parsedTimeout != 0 {
+		return h.parsedTimeout
 	}
-	return d
+	return parseDurationOr(h.Timeout, defaultHealthTimeout)
 }
 
-// GetAttempts returns the number of restart attempts
+// GetAttempts returns the configured restart attempt count or the
+// default when zero. No parsing needed — it's already an int.
 func (r *Restart) GetAttempts() int {
 	if r.Attempts <= 0 {
-		return 3
+		return defaultRestartTries
 	}
 	return r.Attempts
 }
 
-// GetDelay parses the restart delay
+// GetDelay returns the parsed restart.delay, with default fallback.
 func (r *Restart) GetDelay() time.Duration {
-	d, _ := time.ParseDuration(r.Delay)
-	if d == 0 {
-		return 5 * time.Second
+	if r.parsedDelay != 0 {
+		return r.parsedDelay
 	}
-	return d
+	return parseDurationOr(r.Delay, defaultRestartDelay)
 }

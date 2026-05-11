@@ -85,7 +85,7 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefi
 func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
 	healthy := make([]*types.NodeInfo, 0, len(nodes))
 	for _, node := range nodes {
-		if node.Status != "ready" {
+		if node.Status != types.NodeReady {
 			continue
 		}
 		if time.Since(node.LastSeen) > nodeStaleAfter {
@@ -119,8 +119,7 @@ func (s *Scheduler) ComputeNodeAllocCounts() map[string]int {
 		return out
 	}
 	for _, a := range all {
-		switch a.Status {
-		case "pending", "starting", "running":
+		if a.Status.IsLive() {
 			out[a.NodeID]++
 		}
 	}
@@ -134,7 +133,7 @@ func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string
 	return s.clusterState.CreateAllocation(&types.ServiceAllocation{
 		ServiceName: svc.Name,
 		NodeID:      nodeID,
-		Status:      "pending",
+		Status:      types.AllocPending,
 		Version:     "latest",
 	})
 }

@@ -11,12 +11,12 @@ import (
 )
 
 // rollingUpdate updates the remaining allocations (after the canary
-// batch, if any) in waves of plan.MaxParallel. Each wave waits for
+// batch, if any) in waves of plan.UpdateStrategy.MaxParallel. Each wave waits for
 // every member to be healthy before the next one starts.
 func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, status *DeploymentStatus) error {
 	startIdx := 0
-	if plan.Canary > 0 {
-		startIdx = min(plan.Canary, len(plan.Allocations))
+	if plan.UpdateStrategy.Canary > 0 {
+		startIdx = min(plan.UpdateStrategy.Canary, len(plan.Allocations))
 		status.Updated = startIdx
 	}
 	remaining := plan.Allocations[startIdx:]
@@ -24,14 +24,14 @@ func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, stat
 	log.Info().
 		Str("service", plan.ServiceName).
 		Int("remaining", len(remaining)).
-		Int("max_parallel", plan.MaxParallel).
+		Int("max_parallel", plan.UpdateStrategy.MaxParallel).
 		Msg("starting rolling update")
 
-	for i := 0; i < len(remaining); i += plan.MaxParallel {
+	for i := 0; i < len(remaining); i += plan.UpdateStrategy.MaxParallel {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		end := min(i+plan.MaxParallel, len(remaining))
+		end := min(i+plan.UpdateStrategy.MaxParallel, len(remaining))
 		batch := remaining[i:end]
 
 		log.Info().
@@ -51,7 +51,7 @@ func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, stat
 
 		// Short pause between batches so observers can see staged
 		// progress; not a correctness requirement.
-		time.Sleep(plan.MinHealthyTime)
+		time.Sleep(plan.UpdateStrategy.MinHealthyTime)
 	}
 	return nil
 }

@@ -37,22 +37,9 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 		}
 
 		if action == "scale" {
-			var req struct {
-				Count int `json:"count"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				api.writeError(w, http.StatusBadRequest, "invalid request body", err)
-				return
-			}
-
-			api.writeJSON(w, http.StatusOK, map[string]interface{}{
-				"service": serviceName,
-				"count":   req.Count,
-				"message": "scaling not yet implemented",
-			})
+			api.writeError(w, http.StatusNotImplemented, "service scale is not implemented", nil)
 			return
 		}
-
 		api.writeError(w, http.StatusNotFound, "unknown action", nil)
 		return
 	}

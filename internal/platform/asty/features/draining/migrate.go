@@ -35,7 +35,7 @@ func (dm *DrainManager) placeReplacement(ctx context.Context, nodeID string, a a
 	if err := dm.deps.GetClusterState().CreateAllocation(&types.ServiceAllocation{
 		ServiceName: a.svc.Name,
 		NodeID:      target.ID,
-		Status:      "pending",
+		Status:      types.AllocPending,
 		Version:     a.alloc.Version,
 	}); err != nil {
 		return false, fmt.Errorf("create replacement allocation failed: %w", err)

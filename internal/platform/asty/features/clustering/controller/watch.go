@@ -18,14 +18,14 @@ const watchRetryDelay = 2 * time.Second
 // watchAllocsToQueue subscribes to allocation changes and enqueues the
 // owning service for re-reconciliation. We track the last seen status
 // per allocation to suppress no-op updates, and the
-// "starting"→"pending" transition that the controller itself causes
-// during dispatchOne rollbacks.
+// AllocStarting→AllocPending transition that the controller itself
+// causes during dispatchOne rollbacks.
 func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 	for ctx.Err() == nil {
-		seen := make(map[string]string)
+		seen := make(map[string]types.AllocationStatus)
 		err := c.state.WatchAllocations(ctx, func(a *types.ServiceAllocation) {
 			id := a.ServiceName + "/" + a.NodeID
-			if a.Status == "deleted" {
+			if a.Status == types.AllocDeleted {
 				delete(seen, id)
 				c.queue.Add(a.ServiceName)
 				return
@@ -33,7 +33,7 @@ func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 			prev, had := seen[id]
 			seen[id] = a.Status
 			if !had || prev != a.Status {
-				if prev == "starting" && a.Status == "pending" {
+				if prev == types.AllocStarting && a.Status == types.AllocPending {
 					return
 				}
 				c.queue.Add(a.ServiceName)
@@ -55,9 +55,9 @@ func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 // changes — node membership affects placement for all services.
 func (c *ServiceController) watchNodesToQueue(ctx context.Context) {
 	for ctx.Err() == nil {
-		seen := make(map[string]string)
+		seen := make(map[string]types.NodeStatus)
 		err := c.state.WatchNodes(ctx, func(n *types.NodeInfo) {
-			if n.Status == "deleted" {
+			if n.Status == types.NodeDeleted {
 				delete(seen, n.ID)
 				c.enqueueAllServices()
 				return

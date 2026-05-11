@@ -12,7 +12,7 @@ func newReadyNode(id, dc string) *types.NodeInfo {
 	return &types.NodeInfo{
 		ID:              id,
 		Datacenter:      dc,
-		Status:          "ready",
+		Status:          types.NodeReady,
 		LastSeen:        time.Now(),
 		CPUAvailable:    1000,
 		MemoryAvailable: 1024,
@@ -152,11 +152,11 @@ func TestTargetCopiesClampedByNodeCount(t *testing.T) {
 
 func TestLiveAllocations(t *testing.T) {
 	allocs := []*types.ServiceAllocation{
-		{NodeID: "n1", Status: "pending"},
-		{NodeID: "n2", Status: "starting"},
-		{NodeID: "n3", Status: "running"},
-		{NodeID: "n4", Status: "stopped"},
-		{NodeID: "n5", Status: "failed"},
+		{NodeID: "n1", Status: types.AllocPending},
+		{NodeID: "n2", Status: types.AllocStarting},
+		{NodeID: "n3", Status: types.AllocRunning},
+		{NodeID: "n4", Status: types.AllocStopped},
+		{NodeID: "n5", Status: types.AllocFailed},
 	}
 	got := LiveAllocations(allocs)
 	if len(got) != 3 {
@@ -174,17 +174,17 @@ func TestSchedulerFilterHealthyNodes(t *testing.T) {
 	scheduler := &Scheduler{cfg: &config.Config{}}
 
 	nodes := []*types.NodeInfo{
-		{ID: "n1", Status: "ready", LastSeen: time.Now()},
-		{ID: "n2", Status: "draining", LastSeen: time.Now()},
-		{ID: "n3", Status: "ready", LastSeen: time.Now().Add(-20 * time.Minute)},
-		{ID: "n4", Status: "ready", LastSeen: time.Now()},
+		{ID: "n1", Status: types.NodeReady, LastSeen: time.Now()},
+		{ID: "n2", Status: types.NodeDraining, LastSeen: time.Now()},
+		{ID: "n3", Status: types.NodeReady, LastSeen: time.Now().Add(-20 * time.Minute)},
+		{ID: "n4", Status: types.NodeReady, LastSeen: time.Now()},
 	}
 	healthy := scheduler.FilterHealthyNodes(nodes)
 	if len(healthy) != 2 {
 		t.Errorf("expected 2 healthy nodes, got %d", len(healthy))
 	}
 	for _, n := range healthy {
-		if n.Status != "ready" {
+		if n.Status != types.NodeReady {
 			t.Errorf("non-ready node leaked through: %s (%s)", n.ID, n.Status)
 		}
 		if time.Since(n.LastSeen) > nodeStaleAfter {

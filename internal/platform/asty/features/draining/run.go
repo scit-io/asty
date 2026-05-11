@@ -97,13 +97,13 @@ func (dm *DrainManager) recordError(op *drainOp, name string, err error) {
 // migrated or dismantled). It flips the node status to "drained" and
 // publishes the final progress event.
 func (dm *DrainManager) completeNodeDrain(nodeID string, op *drainOp) {
-	if node, err := dm.deps.GetClusterState().GetNode(nodeID); err == nil && node.Status == "draining" {
-		node.Status = "drained"
+	if node, err := dm.deps.GetClusterState().GetNode(nodeID); err == nil && node.Status == types.NodeDraining {
+		node.Status = types.NodeDrained
 		_ = dm.deps.GetClusterState().UpdateNode(node)
 	}
 
 	dm.mu.Lock()
-	op.status.Status = "drained"
+	op.status.Status = string(types.NodeDrained)
 	op.status.CurrentAllocation = ""
 	op.status.Remaining = 0
 	finalStatus := op.status

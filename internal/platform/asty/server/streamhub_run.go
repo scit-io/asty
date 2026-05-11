@@ -97,7 +97,7 @@ func (h *streamHub) watchNodes(ctx context.Context, ready chan<- struct{}, trigg
 		err := h.server.clusterState.WatchNodesInit(ctx,
 			func(n *types.NodeInfo) {
 				isNew := !h.idx.hasNode(n.ID)
-				isDel := n.Status == "deleted"
+				isDel := n.Status == types.NodeDeleted
 				h.idx.onNode(n)
 				triggerRefresh()
 				switch {

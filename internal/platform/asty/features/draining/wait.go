@@ -28,7 +28,7 @@ func (dm *DrainManager) waitForStopped(ctx context.Context, nodeID string, svc *
 		if alloc == nil {
 			return true
 		}
-		return alloc.Status == "stopped" || alloc.Status == "failed"
+		return alloc.Status == types.AllocStopped || alloc.Status == types.AllocFailed
 	})
 	if err != nil {
 		return err
@@ -49,7 +49,7 @@ func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode str
 	defer cancel()
 
 	err := dm.deps.GetClusterState().WatchAllocation(dctx, svc.Name, targetNode, func(alloc *types.ServiceAllocation) bool {
-		return alloc != nil && alloc.Status == "running"
+		return alloc != nil && alloc.Status == types.AllocRunning
 	})
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNo
 			if a.NodeID == drainedNode {
 				return
 			}
-			if a.Status != "running" {
+			if a.Status != types.AllocRunning {
 				return
 			}
 			select {
@@ -125,7 +125,7 @@ func (dm *DrainManager) healthyReplacementExists(cs allocLister, serviceName, dr
 		if a.NodeID == drainedNode {
 			continue
 		}
-		if a.Status == "running" {
+		if a.Status == types.AllocRunning {
 			return true
 		}
 	}

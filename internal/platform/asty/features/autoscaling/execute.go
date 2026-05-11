@@ -21,7 +21,7 @@ func (as *Autoscaler) executeScaleUp(d *ScalingDecision, svc *types.ServiceDefin
 	alloc := &types.ServiceAllocation{
 		ServiceName: svc.Name,
 		NodeID:      d.TargetNode,
-		Status:      "pending",
+		Status:      types.AllocPending,
 		Version:     "latest",
 	}
 	if err := as.clusterState.CreateAllocation(alloc); err != nil {

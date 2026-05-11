@@ -26,8 +26,8 @@ type allocWatcher interface {
 
 // waitForBatchHealth blocks until either:
 //   - every allocation in batch has been status="running" continuously
-//     for plan.MinHealthyTime (returns true), or
-//   - plan.HealthyDeadline elapses without that condition (returns false).
+//     for plan.UpdateStrategy.MinHealthyTime (returns true), or
+//   - plan.UpdateStrategy.HealthyDeadline elapses without that condition (returns false).
 //
 // It reacts to KV change events instead of polling — this is the path
 // the audit's Phase 6.3 requires. Falls back gracefully when the state
@@ -44,7 +44,7 @@ func (d *Deployer) waitForBatchHealth(ctx context.Context, batch []*types.Servic
 // accessor doesn't support watching (tests with stubs). Kept here for
 // safety; the real implementation always takes the event-driven path.
 func (d *Deployer) waitForBatchHealthPolling(ctx context.Context, batch []*types.ServiceAllocation, plan *DeploymentPlan) bool {
-	deadline := time.Now().Add(plan.HealthyDeadline)
+	deadline := time.Now().Add(plan.UpdateStrategy.HealthyDeadline)
 	healthyFor := time.Duration(0)
 
 	for time.Now().Before(deadline) {
@@ -54,7 +54,7 @@ func (d *Deployer) waitForBatchHealthPolling(ctx context.Context, batch []*types
 		case <-time.After(deployHealthPollInterval):
 			if d.checkAllocationsHealth(batch) {
 				healthyFor += deployHealthPollInterval
-				if healthyFor >= plan.MinHealthyTime {
+				if healthyFor >= plan.UpdateStrategy.MinHealthyTime {
 					return true
 				}
 			} else {
@@ -70,7 +70,7 @@ func (d *Deployer) waitForBatchHealthPolling(ctx context.Context, batch []*types
 // testable without a Deployer instance.
 func waitBatchEventDriven(ctx context.Context, w allocWatcher, batch []*types.ServiceAllocation, plan *DeploymentPlan) bool {
 	keys := batchKeys(batch)
-	tracker := newHealthTracker(keys, plan.MinHealthyTime)
+	tracker := newHealthTracker(keys, plan.UpdateStrategy.MinHealthyTime)
 
 	// Seed with current state — events that arrived before we started
 	// watching are still reflected in KV reads.
@@ -85,7 +85,7 @@ func waitBatchEventDriven(ctx context.Context, w allocWatcher, batch []*types.Se
 		tracker.markHealthyNow()
 	}
 
-	deadlineCtx, cancel := context.WithTimeout(ctx, plan.HealthyDeadline)
+	deadlineCtx, cancel := context.WithTimeout(ctx, plan.UpdateStrategy.HealthyDeadline)
 	defer cancel()
 
 	updates := make(chan struct{}, 1)
@@ -131,20 +131,20 @@ func waitBatchEventDriven(ctx context.Context, w allocWatcher, batch []*types.Se
 // batch has stayed healthy continuously for minHealthyTime.
 type healthTracker struct {
 	mu             sync.Mutex
-	statuses       map[string]string
+	statuses       map[string]types.AllocationStatus
 	healthyAt      time.Time
 	minHealthyTime time.Duration
 }
 
 func newHealthTracker(keys map[string]bool, minHealthyTime time.Duration) *healthTracker {
-	statuses := make(map[string]string, len(keys))
+	statuses := make(map[string]types.AllocationStatus, len(keys))
 	for k := range keys {
 		statuses[k] = ""
 	}
 	return &healthTracker{statuses: statuses, minHealthyTime: minHealthyTime}
 }
 
-func (t *healthTracker) update(key, status string) {
+func (t *healthTracker) update(key string, status types.AllocationStatus) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.statuses[key] = status
@@ -173,7 +173,7 @@ func (t *healthTracker) healthy() bool {
 
 func (t *healthTracker) allRunningLocked() bool {
 	for _, s := range t.statuses {
-		if s != "running" {
+		if s != types.AllocRunning {
 			return false
 		}
 	}
@@ -229,7 +229,7 @@ func (d *Deployer) checkAllocationsHealth(allocs []*types.ServiceAllocation) boo
 		if err != nil {
 			return false
 		}
-		if current.Status != "running" {
+		if current.Status != types.AllocRunning {
 			return false
 		}
 	}

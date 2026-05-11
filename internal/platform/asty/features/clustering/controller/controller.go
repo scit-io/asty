@@ -25,11 +25,11 @@ const (
 // value is informative; the workqueue itself enforces the schedule.
 const failureLimitDefault = 8
 
-// CommandDispatcher abstracts the agent RPC. The controller doesn't
-// import server/ directly to avoid a cycle.
-type CommandDispatcher interface {
-	SendStartCommand(nodeID string, svc *types.ServiceDefinition) error
-}
+// SendStartCommand is the agent RPC the controller uses to ask an
+// agent to start a service. Defined as a function type (not an
+// interface with a single method) so callers can pass a method value
+// directly without writing a wrapper struct.
+type SendStartCommand func(nodeID string, svc *types.ServiceDefinition) error
 
 // ServiceController is the leader-side reconciliation engine.
 type ServiceController struct {
@@ -37,7 +37,7 @@ type ServiceController struct {
 	scheduler  *scheduling.Scheduler
 	autoscaler *autoscaling.Autoscaler
 	services   []*types.ServiceDefinition
-	dispatcher CommandDispatcher
+	dispatch   SendStartCommand
 
 	queue       *Workqueue
 	workers     int
@@ -55,7 +55,7 @@ func NewServiceController(
 	sched *scheduling.Scheduler,
 	as *autoscaling.Autoscaler,
 	services []*types.ServiceDefinition,
-	dispatcher CommandDispatcher,
+	dispatch SendStartCommand,
 	workers int,
 	resyncEvery time.Duration,
 ) *ServiceController {
@@ -70,7 +70,7 @@ func NewServiceController(
 		scheduler:    sched,
 		autoscaler:   as,
 		services:     services,
-		dispatcher:   dispatcher,
+		dispatch:     dispatch,
 		queue:        NewWorkqueue(),
 		workers:      workers,
 		resyncEvery:  resyncEvery,

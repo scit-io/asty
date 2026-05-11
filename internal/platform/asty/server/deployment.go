@@ -58,11 +58,6 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 			AutoRevert:       svc.Update.AutoRevert,
 			Canary:           1,
 		},
-		HealthyDeadline: healthyDeadline,
-		MinHealthyTime:  minHealthy,
-		MaxParallel:     svc.Update.MaxParallel,
-		AutoRevert:      svc.Update.AutoRevert,
-		Canary:          1,
 	}
 
 	return s.deployer.Deploy(ctx, plan)

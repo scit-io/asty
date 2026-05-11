@@ -73,7 +73,7 @@ func (cs *ClusterState) nodeWatchHandlers(onChange func(*types.NodeInfo)) (
 		onChange(&node)
 	}
 	deleted := func(key string) {
-		onChange(&types.NodeInfo{ID: keySuffix(key, "node."), Status: "deleted"})
+		onChange(&types.NodeInfo{ID: keySuffix(key, "node."), Status: types.NodeDeleted})
 	}
 	return upsert, deleted
 }
@@ -92,7 +92,7 @@ func (cs *ClusterState) allocWatchHandlers(onChange func(*types.ServiceAllocatio
 	}
 	deleted := func(key string) {
 		svc, node := splitAllocKey(key)
-		onChange(&types.ServiceAllocation{ServiceName: svc, NodeID: node, Status: "deleted"})
+		onChange(&types.ServiceAllocation{ServiceName: svc, NodeID: node, Status: types.AllocDeleted})
 	}
 	return upsert, deleted
 }

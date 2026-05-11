@@ -81,23 +81,23 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node not found: %w", err)
 	}
-	if node.Status == "down" {
+	if node.Status == types.NodeDown {
 		return nil, fmt.Errorf("node %s is down", nodeID)
 	}
-	if node.Status == "drained" {
+	if node.Status == types.NodeDrained {
 		return nil, fmt.Errorf("node %s is already drained", nodeID)
 	}
 
 	allocs := dm.collectAllocs(nodeID)
 
-	node.Status = "draining"
+	node.Status = types.NodeDraining
 	if err := dm.deps.GetClusterState().UpdateNode(node); err != nil {
 		return nil, fmt.Errorf("failed to update node status: %w", err)
 	}
 
 	status := DrainStatus{
 		NodeID:           nodeID,
-		Status:           "draining",
+		Status:           string(types.NodeDraining),
 		TotalAllocations: len(allocs),
 		Migrated:         0,
 		Remaining:        len(allocs),
@@ -105,9 +105,9 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 	}
 
 	if len(allocs) == 0 {
-		node.Status = "drained"
+		node.Status = types.NodeDrained
 		_ = dm.deps.GetClusterState().UpdateNode(node)
-		status.Status = "drained"
+		status.Status = string(types.NodeDrained)
 		dm.publishDrainEvent(status)
 		return &status, nil
 	}
@@ -136,11 +136,11 @@ func (dm *DrainManager) Resume(nodeID string) error {
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
 	}
-	if node.Status != "draining" && node.Status != "drained" {
+	if node.Status != types.NodeDraining && node.Status != types.NodeDrained {
 		return fmt.Errorf("node %s is not draining (status: %s)", nodeID, node.Status)
 	}
 
-	node.Status = "ready"
+	node.Status = types.NodeReady
 	node.LastSeen = time.Now()
 	if err := dm.deps.GetClusterState().UpdateNode(node); err != nil {
 		return fmt.Errorf("failed to update node status: %w", err)
@@ -170,7 +170,7 @@ func (dm *DrainManager) collectAllocs(nodeID string) []allocOnNode {
 		if err != nil {
 			continue
 		}
-		if alloc.Status == "running" || alloc.Status == "pending" || alloc.Status == "starting" {
+		if alloc.Status.IsLive() {
 			allocs = append(allocs, allocOnNode{svc: svc, alloc: alloc})
 		}
 	}

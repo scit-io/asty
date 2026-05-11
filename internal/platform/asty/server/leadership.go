@@ -58,7 +58,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 		s.scheduler,
 		s.autoscaler,
 		s.services,
-		serverDispatcher{s},
+		s.sendStartCommand,
 		s.cfg.ControllerWorkers,
 		resync,
 	)
