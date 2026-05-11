@@ -1,0 +1,53 @@
+# deployments/envs/dev/config.asty
+#
+# Asty configuration for local dev (one or more nodes on loopback).
+# Loaded via `asty -config <path>`; env vars (A_*) override
+# individual fields — useful for per-node overrides in start.sh
+# (A_NODE_ID, A_NODE_IP, A_NATS_PORT, A_UI_ADDR).
+#
+# Secrets stay in dev.vars and arrive as env vars: A_NATS_USER,
+# A_NATS_PASSWORD, A_TOKEN.
+
+domain: dev.local
+datacenter: dc1
+log_level: debug
+dev_mode: false
+
+nats:
+  host: 127.0.0.1
+  port: "4222"
+
+autoscale:
+  min_copies: 3
+  target_cpu: 75
+  target_memory: 75
+  traffic_rps_threshold: 5
+
+ui:
+  addr: 127.0.0.1:4747
+
+agent:
+  work_dir: /tmp/asty-dev/work
+  service_dir: ./deployments/envs/dev
+
+gateway:
+  enabled: true
+  # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
+  # start.sh overrides A_HTTP_ADDR / A_GATEWAY_METRICS_ADDR per node.
+  # Without those overrides every agent would race for the same :80 /
+  # 127.0.0.1:8081 and all but the first would fail with
+  # "address already in use".
+  http:
+    addr: ":80"
+  metrics_addr: "127.0.0.1:8081"
+  allowed_hosts:
+    - "localhost:3000"
+    - "localhost:5173"
+  rate_limit:
+    rate: 100
+    burst: 200
+    auth_path_prefix: "/v1/auth/"
+    auth_rate: 5
+    auth_burst: 10
+    max_ws_conns: 1000
+    max_ips: 100000

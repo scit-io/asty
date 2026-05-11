@@ -20,7 +20,7 @@ func newReadyNode(id, dc string) *types.NodeInfo {
 }
 
 func TestReconcileSystemAddsToAllNodes(t *testing.T) {
-	cfg := &config.Config{MinCopies: 3, ReservedCPU: 100, ReservedMemory: 250}
+	cfg := &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 3}, Resources: config.ResourcesConfig{ReservedCPU: 100, ReservedMemory: 250}}
 	scheduler := &Scheduler{cfg: cfg}
 
 	nodes := []*types.NodeInfo{
@@ -50,7 +50,7 @@ func TestReconcileSystemAddsToAllNodes(t *testing.T) {
 }
 
 func TestPickCandidatesStableTiebreak(t *testing.T) {
-	cfg := &config.Config{MinCopies: 2, ReservedCPU: 100, ReservedMemory: 250}
+	cfg := &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 2}, Resources: config.ResourcesConfig{ReservedCPU: 100, ReservedMemory: 250}}
 	scheduler := &Scheduler{cfg: cfg}
 
 	nodes := []*types.NodeInfo{
@@ -80,7 +80,7 @@ func TestPickCandidatesStableTiebreak(t *testing.T) {
 }
 
 func TestPickCandidatesGeoSpread(t *testing.T) {
-	cfg := &config.Config{MinCopies: 3, ReservedCPU: 100, ReservedMemory: 250}
+	cfg := &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 3}, Resources: config.ResourcesConfig{ReservedCPU: 100, ReservedMemory: 250}}
 	scheduler := &Scheduler{cfg: cfg}
 
 	nodes := []*types.NodeInfo{
@@ -109,7 +109,7 @@ func TestPickCandidatesGeoSpread(t *testing.T) {
 }
 
 func TestPickCandidatesPacking(t *testing.T) {
-	cfg := &config.Config{MinCopies: 1, ReservedCPU: 100, ReservedMemory: 250}
+	cfg := &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 1}, Resources: config.ResourcesConfig{ReservedCPU: 100, ReservedMemory: 250}}
 	scheduler := &Scheduler{cfg: cfg}
 
 	nodes := []*types.NodeInfo{
@@ -138,7 +138,7 @@ func TestPickCandidatesPacking(t *testing.T) {
 }
 
 func TestTargetCopiesClampedByNodeCount(t *testing.T) {
-	scheduler := &Scheduler{cfg: &config.Config{MinCopies: 3}}
+	scheduler := &Scheduler{cfg: &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 3}}}
 	if got := scheduler.targetCopies(2); got != 2 {
 		t.Errorf("expected 2 (clamped), got %d", got)
 	}
@@ -194,7 +194,7 @@ func TestSchedulerFilterHealthyNodes(t *testing.T) {
 }
 
 func TestSchedulerHasResources(t *testing.T) {
-	cfg := &config.Config{ReservedCPU: 100, ReservedMemory: 250}
+	cfg := &config.Config{Resources: config.ResourcesConfig{ReservedCPU: 100, ReservedMemory: 250}}
 	scheduler := &Scheduler{cfg: cfg}
 	node := &types.NodeInfo{CPUAvailable: 500, MemoryAvailable: 512}
 

@@ -49,15 +49,15 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 
 		var cooldown types.CooldownStatus
 		if cd, err := api.ctx.ClusterState().GetServiceCooldown(svc.Name); err == nil {
-			cooldown = cd.Status(now, cfg.CooldownUp, cfg.CooldownDown)
+			cooldown = cd.Status(now, cfg.Autoscale.CooldownUp, cfg.Autoscale.CooldownDown)
 		}
 
 		servicesStatus[svc.Name] = map[string]interface{}{
 			"current_copies":       running,
-			"min_copies":           cfg.MinCopies,
-			"target_cpu":           cfg.TargetCPU,
-			"target_memory":        cfg.TargetMemory,
-			"traffic_threshold":    cfg.TrafficRPSThreshold,
+			"min_copies":           cfg.Autoscale.MinCopies,
+			"target_cpu":           cfg.Autoscale.TargetCPU,
+			"target_memory":        cfg.Autoscale.TargetMemory,
+			"traffic_threshold":    cfg.Autoscale.TrafficRPSThreshold,
 			"cooldown_up_active":   cooldown.UpActive,
 			"cooldown_down_active": cooldown.DownActive,
 			"last_action":          cooldown.LastAction,

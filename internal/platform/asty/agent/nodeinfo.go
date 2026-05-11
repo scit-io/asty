@@ -35,7 +35,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 
 	nodeIP := a.cfg.NodeIP
 	if nodeIP == "" {
-		nodeIP = netutil.LocalIPv4(a.cfg.NATSHost)
+		nodeIP = netutil.LocalIPv4(a.cfg.NATS.Host)
 	}
 
 	cpuTotal := detectCPUMHz()

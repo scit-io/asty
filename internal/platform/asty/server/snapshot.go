@@ -163,7 +163,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 
 		var cooldown types.CooldownStatus
 		if cd, err := h.server.clusterState.GetServiceCooldown(svc.Name); err == nil {
-			cooldown = cd.Status(now, cfg.CooldownUp, cfg.CooldownDown)
+			cooldown = cd.Status(now, cfg.Autoscale.CooldownUp, cfg.Autoscale.CooldownDown)
 		}
 
 		servicesOut = append(servicesOut, types.ServiceWithUsage{
@@ -173,10 +173,10 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			AvgMemoryPercent:   avgMemPct,
 			AvgCPUMHz:          avgCPUMHz,
 			AvgMemoryMB:        avgMemMB,
-			MinCopies:          cfg.MinCopies,
-			TargetCPU:          cfg.TargetCPU,
-			TargetMemory:       cfg.TargetMemory,
-			TrafficThreshold:   cfg.TrafficRPSThreshold,
+			MinCopies:          cfg.Autoscale.MinCopies,
+			TargetCPU:          cfg.Autoscale.TargetCPU,
+			TargetMemory:       cfg.Autoscale.TargetMemory,
+			TrafficThreshold:   cfg.Autoscale.TrafficRPSThreshold,
 			CooldownUpActive:   cooldown.UpActive,
 			CooldownDownActive: cooldown.DownActive,
 			LastAction:         cooldown.LastAction,

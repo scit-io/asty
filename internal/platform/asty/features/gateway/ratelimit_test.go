@@ -6,14 +6,16 @@ import (
 	"testing"
 	"time"
 
+	"asty/internal/platform/asty/core/config"
+
 	"github.com/rs/zerolog"
 )
 
-func newTestRL(maxIPs int) *rl {
-	return &rl{
+func newTestRL(maxIPs int) *rateLimiter {
+	return &rateLimiter{
 		general: newIPTable(),
 		auth:    newIPTable(),
-		cfg: RateLimitConfig{
+		cfg: config.GatewayRateLimitConfig{
 			Rate:      100,
 			Burst:     10,
 			AuthRate:  5,

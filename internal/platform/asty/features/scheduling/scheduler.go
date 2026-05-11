@@ -34,11 +34,11 @@ type Scheduler struct {
 }
 
 // NewScheduler builds a scheduler with the proximity matrix loaded
-// from cfg.DCLatency. A bad matrix string is logged but not fatal:
+// from cfg.Autoscale.DCLatency. A bad matrix string is logged but not fatal:
 // scheduling falls back to round-robin order across DCs in that case.
 func NewScheduler(clusterState *state.ClusterState, cfg *config.Config) *Scheduler {
 	pm := proximity.NewMatrix()
-	if err := pm.LoadFromConfig(cfg.DCLatency); err != nil {
+	if err := pm.LoadFromConfig(cfg.Autoscale.DCLatency); err != nil {
 		log.Error().Err(err).Msg("failed to load proximity matrix")
 	}
 	return &Scheduler{
@@ -104,8 +104,8 @@ func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInf
 // reserving the per-node overhead (ReservedCPU/ReservedMemory) for the
 // agent itself.
 func (s *Scheduler) hasResources(node *types.NodeInfo, required types.Resources) bool {
-	cpuFree := node.CPUAvailable - s.cfg.ReservedCPU
-	memFree := node.MemoryAvailable - int64(s.cfg.ReservedMemory)
+	cpuFree := node.CPUAvailable - s.cfg.Resources.ReservedCPU
+	memFree := node.MemoryAvailable - int64(s.cfg.Resources.ReservedMemory)
 	return cpuFree >= required.CPU && memFree >= int64(required.Memory)
 }
 
@@ -141,7 +141,7 @@ func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string
 // targetCopies caps MinCopies at the number of healthy nodes — we can't
 // schedule more copies than we have nodes.
 func (s *Scheduler) targetCopies(healthyNodes int) int {
-	target := s.cfg.MinCopies
+	target := s.cfg.Autoscale.MinCopies
 	if target < 1 {
 		target = 1
 	}

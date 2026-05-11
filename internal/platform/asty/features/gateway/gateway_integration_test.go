@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,8 @@ import (
 	"time"
 
 	"asty/internal/middleware"
+	"asty/internal/platform/asty/core/config"
 	"asty/internal/platform/metrics"
-	"asty/internal/platform/nc"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
@@ -24,7 +25,8 @@ import (
 	"github.com/rs/zerolog"
 )
 
-// safeBuf — thread-safe writer для перехвата логов из Gateway/Recover-горутин.
+// safeBuf is a thread-safe writer used to capture logs from gateway/
+// Recover goroutines.
 type safeBuf struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -42,10 +44,37 @@ func (s *safeBuf) String() string {
 	return s.buf.String()
 }
 
-// TestIntegration_HTTPToNATSRoundTrip проверяет полный путь:
-// HTTP-клиент → Gateway → NATS Request → backend-подписчик → NATS Reply →
-// Gateway → HTTP-ответ. Embedded NATS-сервер (RunRandClientPortServer)
-// поднимается в test-процессе, без внешних зависимостей.
+// newTestGateway builds a Gateway pointed at conn with the supplied
+// config. The caller must invoke the returned cancel func when done.
+func newTestGateway(t *testing.T, conn *nats.Conn, cfg config.GatewayConfig, log zerolog.Logger) (*Gateway, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	gw, err := New(ctx, conn, cfg, log)
+	if err != nil {
+		cancel()
+		t.Fatalf("gateway New: %v", err)
+	}
+	return gw, cancel
+}
+
+// defaultTestCfg is a small set of sane defaults; tests can override
+// any field with a literal.
+func defaultTestCfg() config.GatewayConfig {
+	return config.GatewayConfig{
+		Enabled: true,
+		HTTP: config.GatewayHTTPConfig{
+			NATSRequestTimeout: 2 * time.Second,
+			NATSRetryDelay:     50 * time.Millisecond,
+		},
+		RateLimit: config.GatewayRateLimitConfig{
+			Rate: 1000, Burst: 100, MaxIPs: 100, MaxWSConns: 100,
+		},
+	}
+}
+
+// TestIntegration_HTTPToNATSRoundTrip verifies the full path:
+// HTTP client → Gateway → NATS Request → backend subscriber → NATS Reply
+// → Gateway → HTTP response.
 func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -57,10 +86,7 @@ func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 	defer conn.Close()
 
 	sub, err := conn.Subscribe("api.v1.echo.ping", func(m *nats.Msg) {
-		resp := &nats.Msg{
-			Header: nats.Header{},
-			Data:   []byte(`{"echo":"` + string(m.Data) + `"}`),
-		}
+		resp := &nats.Msg{Header: nats.Header{}, Data: []byte(`{"echo":"` + string(m.Data) + `"}`)}
 		resp.Header.Set("X-Custom", "value")
 		_ = m.RespondMsg(resp)
 	})
@@ -72,23 +98,8 @@ func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 		t.Fatalf("nats flush: %v", err)
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{
-			NATSRequestTimeout: 2 * time.Second,
-			NATSRetryDelay:     50 * time.Millisecond,
-		},
-		RateLimit: RateLimitConfig{
-			Rate:       1000,
-			Burst:      100,
-			MaxIPs:     100,
-			MaxWSConns: 100,
-		},
-	}
-	gw := New(client, cfg, zerolog.New(io.Discard), stop)
+	gw, cancel := newTestGateway(t, conn, defaultTestCfg(), zerolog.New(io.Discard))
+	defer cancel()
 
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
@@ -115,7 +126,6 @@ func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 	if string(body) != `{"echo":"hello"}` {
 		t.Errorf("body = %q, want %q", string(body), `{"echo":"hello"}`)
 	}
-
 	if got := resp.Header.Get("X-Custom"); got != "value" {
 		t.Errorf("X-Custom header = %q, want value", got)
 	}
@@ -124,9 +134,9 @@ func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIntegration_MetricsCounterIncrements проверяет, что HTTP-запрос через
-// Gateway инкрементирует gateway_http_requests_total и метрика отдаётся через
-// /metrics endpoint в Prometheus-формате.
+// TestIntegration_MetricsCounterIncrements checks that an HTTP request
+// through the gateway increments gateway_http_requests_total and the
+// metric is exposed on /metrics in Prometheus format.
 func TestIntegration_MetricsCounterIncrements(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -148,20 +158,8 @@ func TestIntegration_MetricsCounterIncrements(t *testing.T) {
 		t.Fatalf("nats flush: %v", err)
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{
-			NATSRequestTimeout: 2 * time.Second,
-			NATSRetryDelay:     50 * time.Millisecond,
-		},
-		RateLimit: RateLimitConfig{
-			Rate: 1000, Burst: 100, MaxIPs: 100, MaxWSConns: 100,
-		},
-	}
-	gw := New(client, cfg, zerolog.New(io.Discard), stop)
+	gw, cancel := newTestGateway(t, conn, defaultTestCfg(), zerolog.New(io.Discard))
+	defer cancel()
 
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
@@ -169,7 +167,6 @@ func TestIntegration_MetricsCounterIncrements(t *testing.T) {
 	metricsSrv := httptest.NewServer(promhttp.Handler())
 	defer metricsSrv.Close()
 
-	// Baseline: счётчик глобальный, другие тесты могли его увеличить.
 	baseline := testutil.ToFloat64(metrics.HTTPRequestsTotal.WithLabelValues("echo", "ping", "200"))
 
 	resp, err := http.Post(httpSrv.URL+"/v1/echo/ping", "application/json", strings.NewReader(`{}`))
@@ -209,10 +206,10 @@ func TestIntegration_MetricsCounterIncrements(t *testing.T) {
 	}
 }
 
-// TestIntegration_MetricsUnknownService проверяет защиту от cardinality bomb
-// (P-M10): запрос на несуществующий subject (`/v1/{rand}/{rand}`) после исчерпания
-// retry получает ErrNoResponders → метки сворачиваются в `service="unknown",
-// method="unknown"`, а оригинальные foo/bar в timeseries не попадают.
+// TestIntegration_MetricsUnknownService guards the cardinality bomb:
+// a request to a non-existent subject (/v1/{rand}/{rand}) gets
+// ErrNoResponders after the retry window and is recorded under
+// service="unknown",method="unknown".
 func TestIntegration_MetricsUnknownService(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -223,20 +220,11 @@ func TestIntegration_MetricsUnknownService(t *testing.T) {
 	}
 	defer conn.Close()
 
-	stop := make(chan struct{})
-	defer close(stop)
+	cfg := defaultTestCfg()
+	cfg.HTTP.NATSRequestTimeout = 200 * time.Millisecond
+	gw, cancel := newTestGateway(t, conn, cfg, zerolog.New(io.Discard))
+	defer cancel()
 
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{
-			NATSRequestTimeout: 200 * time.Millisecond,
-			NATSRetryDelay:     50 * time.Millisecond,
-		},
-		RateLimit: RateLimitConfig{
-			Rate: 1000, Burst: 100, MaxIPs: 100, MaxWSConns: 100,
-		},
-	}
-	gw := New(client, cfg, zerolog.New(io.Discard), stop)
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
 
@@ -262,7 +250,6 @@ func TestIntegration_MetricsUnknownService(t *testing.T) {
 	if gotFoo-baselineFoo != 0 {
 		t.Errorf("HTTPRequestsTotal{service=foo,method=bar,status=503} delta = %v, want 0 (cardinality bomb)", gotFoo-baselineFoo)
 	}
-
 	gotNATSUnknown := testutil.ToFloat64(metrics.NATSRequestAttemptsTotal.WithLabelValues("unknown", "no_responders"))
 	if gotNATSUnknown-baselineNATSUnknown < 1 {
 		t.Errorf("NATSRequestAttemptsTotal{service=unknown,outcome=no_responders} delta = %v, want >= 1", gotNATSUnknown-baselineNATSUnknown)
@@ -273,8 +260,9 @@ func TestIntegration_MetricsUnknownService(t *testing.T) {
 	}
 }
 
-// TestIntegration_MetricsRateLimitRejected проверяет, что счётчик
-// gateway_rate_limit_rejected_total инкрементируется при срабатывании лимита.
+// TestIntegration_MetricsRateLimitRejected verifies that the
+// gateway_rate_limit_rejected_total counter advances when the limit
+// fires.
 func TestIntegration_MetricsRateLimitRejected(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -285,26 +273,17 @@ func TestIntegration_MetricsRateLimitRejected(t *testing.T) {
 	}
 	defer conn.Close()
 
-	stop := make(chan struct{})
-	defer close(stop)
+	cfg := defaultTestCfg()
+	cfg.HTTP.NATSRequestTimeout = time.Second
+	cfg.RateLimit = config.GatewayRateLimitConfig{Rate: 0.1, Burst: 1, MaxIPs: 10, MaxWSConns: 10}
+	gw, cancel := newTestGateway(t, conn, cfg, zerolog.New(io.Discard))
+	defer cancel()
 
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{NATSRequestTimeout: time.Second},
-		RateLimit: RateLimitConfig{
-			Rate:       0.1,
-			Burst:      1,
-			MaxIPs:     10,
-			MaxWSConns: 10,
-		},
-	}
-	gw := New(client, cfg, zerolog.New(io.Discard), stop)
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
 
 	baseline := testutil.ToFloat64(metrics.RateLimitRejectedTotal.WithLabelValues("general"))
 
-	// Burst=1 — первый запрос проходит rate-check, второй сразу отклоняется.
 	for range 2 {
 		resp, _ := http.Get(httpSrv.URL + "/v1/echo/ping")
 		if resp != nil {
@@ -318,10 +297,9 @@ func TestIntegration_MetricsRateLimitRejected(t *testing.T) {
 	}
 }
 
-// TestIntegration_PanicPropagatesRequestID проверяет полный путь обработки
-// паника через Gateway и middleware.Recover: HTTP-клиент → Gateway генерирует
-// X-Request-Id → проксирует в NATS → handler паникует → Recover возвращает
-// 500 с тем же request id, и оба слоя логируют его.
+// TestIntegration_PanicPropagatesRequestID drives a request that
+// panics in the backend through Gateway + middleware.Recover and
+// confirms X-Request-Id flows end-to-end and into both log streams.
 func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -338,9 +316,7 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	sub, err := conn.QueueSubscribe(
 		"api.v1.boom.panic",
 		"boom",
-		middleware.Recover(log, func(msg *nats.Msg) {
-			panic("integration boom")
-		}),
+		middleware.Recover(log, func(msg *nats.Msg) { panic("integration boom") }),
 	)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -350,20 +326,8 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 		t.Fatalf("flush: %v", err)
 	}
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{
-			NATSRequestTimeout: 2 * time.Second,
-			NATSRetryDelay:     50 * time.Millisecond,
-		},
-		RateLimit: RateLimitConfig{
-			Rate: 1000, Burst: 100, MaxIPs: 100, MaxWSConns: 100,
-		},
-	}
-	gw := New(client, cfg, log, stop)
+	gw, cancel := newTestGateway(t, conn, defaultTestCfg(), log)
+	defer cancel()
 
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
@@ -392,7 +356,6 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	}
 
 	logStr := logBuf.String()
-	// Recover логирует req=<id>, Gateway логирует req=<id> в Info-строках.
 	pattern := regexp.MustCompile(`"req":"` + regexp.QuoteMeta(reqID) + `"`)
 	if !pattern.MatchString(logStr) {
 		t.Errorf("log missing request ID %q, got: %s", reqID, logStr)
@@ -402,8 +365,8 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	}
 }
 
-// TestIntegration_HealthEndpoint проверяет health-check Gateway:
-// возвращает 200 при подключённом NATS и 503 при разрыве соединения.
+// TestIntegration_HealthEndpoint exercises the /health endpoint:
+// 200 while NATS is connected, 503 once the connection is closed.
 func TestIntegration_HealthEndpoint(t *testing.T) {
 	srv := natsserver.RunRandClientPortServer()
 	defer srv.Shutdown()
@@ -414,17 +377,11 @@ func TestIntegration_HealthEndpoint(t *testing.T) {
 	}
 	defer conn.Close()
 
-	stop := make(chan struct{})
-	defer close(stop)
-
-	client := &nc.PlatformClient{Conn: conn}
-	cfg := Config{
-		HTTP: HTTPConfig{NATSRequestTimeout: time.Second},
-		RateLimit: RateLimitConfig{
-			Rate: 100, Burst: 10, MaxIPs: 100, MaxWSConns: 100,
-		},
-	}
-	gw := New(client, cfg, zerolog.New(io.Discard), stop)
+	cfg := defaultTestCfg()
+	cfg.HTTP.NATSRequestTimeout = time.Second
+	cfg.RateLimit = config.GatewayRateLimitConfig{Rate: 100, Burst: 10, MaxIPs: 100, MaxWSConns: 100}
+	gw, cancel := newTestGateway(t, conn, cfg, zerolog.New(io.Discard))
+	defer cancel()
 
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
@@ -438,10 +395,6 @@ func TestIntegration_HealthEndpoint(t *testing.T) {
 		t.Errorf("connected health status = %d, want 200", resp.StatusCode)
 	}
 
-	// 503-ветка: рвём NATS и проверяем, что Gateway отдаёт disconnected.
-	// Без этой части регрессия в `handleHealth` (например, инверсия
-	// IsConnected) тестом не ловится — Nomad-self-healing молча перестанет
-	// работать, deploy продолжит крутить «healthy» без подсветки проблемы.
 	conn.Close()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) && conn.IsConnected() {

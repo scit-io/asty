@@ -85,7 +85,7 @@ func (as *Autoscaler) hasGatewayTraffic(node *types.NodeInfo) bool {
 	for _, p := range points {
 		sum += p.Value
 	}
-	return sum/float64(len(points)) >= float64(as.cfg.TrafficRPSThreshold)
+	return sum/float64(len(points)) >= float64(as.cfg.Autoscale.TrafficRPSThreshold)
 }
 
 // findOverloadedAlloc returns the first running allocation whose
@@ -95,7 +95,7 @@ func (as *Autoscaler) findOverloadedAlloc(live []*types.ServiceAllocation) *type
 		if alloc.Status != types.AllocRunning || alloc.PID == 0 {
 			continue
 		}
-		if alloc.CPUUsage > as.cfg.TargetCPU || alloc.MemoryUsage > as.cfg.TargetMemory {
+		if alloc.CPUUsage > as.cfg.Autoscale.TargetCPU || alloc.MemoryUsage > as.cfg.Autoscale.TargetMemory {
 			return alloc
 		}
 	}

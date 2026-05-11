@@ -52,14 +52,14 @@ func (s *Server) startLeaderWork(parent context.Context) {
 	leaderCtx, cancel := context.WithCancel(parent)
 	s.leaderCancel = cancel
 
-	resync := computeResync(s.cfg.EvalInterval)
+	resync := computeResync(s.cfg.Autoscale.EvalInterval)
 	ctrl := controller.NewServiceController(
 		s.clusterState,
 		s.scheduler,
 		s.autoscaler,
 		s.services,
 		s.sendStartCommand,
-		s.cfg.ControllerWorkers,
+		s.cfg.Autoscale.ControllerWorkers,
 		resync,
 	)
 	ctrl.OnEvent = s.addClusterEvent

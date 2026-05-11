@@ -6,8 +6,8 @@ import "asty/internal/platform/asty/core/netutil"
 // over core/netutil — agent does the same so they share startup options.
 func (s *Server) connectNATS() error {
 	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
-		Host: s.cfg.NATSHost, Port: s.cfg.NATSPort,
-		User: s.cfg.NATSUser, Password: s.cfg.NATSPassword,
+		Host: s.cfg.NATS.Host, Port: s.cfg.NATS.Port,
+		User: s.cfg.NATS.User, Password: s.cfg.NATS.Password,
 	}, "asty-server-"+s.nodeID)
 	if err != nil {
 		return err

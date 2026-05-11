@@ -20,7 +20,7 @@ const idleFloorDivisor = 2
 // half of the scale-up target. The chosen victim is the alloc on the
 // most-crowded DC (preserves geo-diversity).
 func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*types.ServiceAllocation) *ScalingDecision {
-	floor := as.cfg.MinCopies
+	floor := as.cfg.Autoscale.MinCopies
 	if floor < 1 {
 		floor = 1
 	}
@@ -34,8 +34,8 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	}
 
 	avgCPU, avgMem := averageUsage(running)
-	cpuFloor := as.cfg.TargetCPU / idleFloorDivisor
-	memFloor := as.cfg.TargetMemory / idleFloorDivisor
+	cpuFloor := as.cfg.Autoscale.TargetCPU / idleFloorDivisor
+	memFloor := as.cfg.Autoscale.TargetMemory / idleFloorDivisor
 	if avgCPU > cpuFloor || avgMem > memFloor {
 		return nil
 	}

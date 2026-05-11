@@ -16,9 +16,9 @@ func (as *Autoscaler) inCooldown(service string) bool {
 	if !ok {
 		return false
 	}
-	cd := as.cfg.CooldownDown
-	if as.cfg.CooldownUp > cd {
-		cd = as.cfg.CooldownUp
+	cd := as.cfg.Autoscale.CooldownDown
+	if as.cfg.Autoscale.CooldownUp > cd {
+		cd = as.cfg.Autoscale.CooldownUp
 	}
 	return time.Since(last) < cd
 }

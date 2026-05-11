@@ -17,6 +17,7 @@ import (
 
 func main() {
 	mode := flag.String("mode", "agent", "Run mode: agent or server")
+	configPath := flag.String("config", "", "Path to config.asty (default: ./config.asty)")
 	flag.Parse()
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
@@ -34,7 +35,7 @@ func main() {
 		cancel()
 	}()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load config")
 	}

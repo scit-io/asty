@@ -65,7 +65,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		nodeID = netutil.Hostname()
 	}
 
-	workDir := filepath.Join(cfg.WorkDir, nodeID)
+	workDir := filepath.Join(cfg.Agent.WorkDir, nodeID)
 	if workDir == nodeID {
 		workDir = filepath.Join(defaultWorkRoot, nodeID)
 	}
@@ -78,7 +78,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		nodeID:             nodeID,
 		processes:          make(map[string]*process.Process),
 		healthChecker:      health.NewChecker(),
-		metricsCollector:   metrics.NewCollector(cfg.EvalInterval),
+		metricsCollector:   metrics.NewCollector(cfg.Autoscale.EvalInterval),
 		artifactDownloader: artifacts.NewDownloader(),
 		workDir:            workDir,
 		failed:             make(chan string, failedServicesBufferSize),
@@ -96,8 +96,8 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent starting")
 
 	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
-		Host: a.cfg.NATSHost, Port: a.cfg.NATSPort,
-		User: a.cfg.NATSUser, Password: a.cfg.NATSPassword,
+		Host: a.cfg.NATS.Host, Port: a.cfg.NATS.Port,
+		User: a.cfg.NATS.User, Password: a.cfg.NATS.Password,
 	}, "asty-agent-"+a.nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -125,6 +125,10 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.publishHeartbeat(ctx)
 	go a.publishProcessMetrics(ctx)
 	go a.monitorProcesses(ctx)
+
+	if err := a.runGateway(ctx); err != nil {
+		return fmt.Errorf("failed to start gateway: %w", err)
+	}
 
 	log.Info().
 		Str("node_id", a.nodeID).

@@ -79,7 +79,7 @@ func (s *Server) initInfra() error {
 
 	leaderIP := s.cfg.NodeIP
 	if leaderIP == "" {
-		leaderIP = netutil.LocalIPv4(s.cfg.NATSHost)
+		leaderIP = netutil.LocalIPv4(s.cfg.NATS.Host)
 	}
 	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP)
 	if err != nil {
@@ -106,13 +106,13 @@ func (s *Server) initFeatures(ctx context.Context) {
 	s.autoscaler = autoscaling.NewAutoscaler(s.clusterState, s.scheduler, s.cfg, s.metricsStore)
 
 	s.proximityMatrix = proximity.NewMatrix()
-	if err := s.proximityMatrix.LoadFromConfig(s.cfg.DCLatency); err != nil {
+	if err := s.proximityMatrix.LoadFromConfig(s.cfg.Autoscale.DCLatency); err != nil {
 		log.Error().Err(err).Msg("failed to load proximity matrix")
 	}
 	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState)
 
 	s.deployer = deployment.NewDeployer(s.clusterState, s.nc, deployment.DeployerConfig{})
-	s.serviceLoader = deployment.NewServiceLoader(s.cfg.ServiceDir)
+	s.serviceLoader = deployment.NewServiceLoader(s.cfg.Agent.ServiceDir)
 	services, err := s.serviceLoader.LoadAll()
 	if err != nil {
 		log.Error().Err(err).Msg("failed to load service definitions")
@@ -131,7 +131,7 @@ func (s *Server) initFeatures(ctx context.Context) {
 // startAPI launches the HTTP API in a goroutine and returns immediately.
 // The API runs until ctx is cancelled and logs its own shutdown errors.
 func (s *Server) startAPI(ctx context.Context) error {
-	s.httpAPI = apiPkg.New(s, s.cfg.UIAddr)
+	s.httpAPI = apiPkg.New(s, s.cfg.UI.Addr)
 	go func() {
 		if err := s.httpAPI.Start(ctx); err != nil {
 			log.Error().Err(err).Msg("API server failed")

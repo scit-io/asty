@@ -218,25 +218,18 @@ start_asty() {
   [[ -n "$nats_host_port" ]] || die "не удалось определить host-порт NATS"
   info "NATS host-порт: $nats_host_port"
 
-  # Экспортируем общие переменные для Asty
-  export A_NATS_HOST="127.0.0.1"
-  export A_NATS_USER="${A_NATS_USER:-}"
-  export A_NATS_PASSWORD="${A_NATS_PASSWORD:-}"
-  export A_DOMAIN="${A_DOMAIN:-dev.local}"
-  export A_TOKEN="${A_TOKEN:-dev-token-secret}"
-  export A_LOG_LEVEL="${A_LOG_LEVEL:-debug}"
-  export A_DATACENTER="${A_DATACENTER:-dc1}"
-  export A_MIN_COPIES="${A_MIN_COPIES:-2}"
-  export A_TARGET_CPU="${A_TARGET_CPU:-75}"
-  export A_TARGET_MEMORY="${A_TARGET_MEMORY:-75}"
-  export A_TRAFFIC_RPS_THRESHOLD="${A_TRAFFIC_RPS_THRESHOLD:-5}"
-  export A_WORK_DIR="${A_WORK_DIR:-$DATA_BASE/work}"
-  export A_SERVICE_DIR="${A_SERVICE_DIR:-${SCRIPT_DIR}}"
-  export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"     # 1 CPU @ 2.20 GHz
-  export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}" # 466 MiB
+  # Asty reads $SCRIPT_DIR/config.asty via -config; we only export the
+  # per-node and secret bits that have to be runtime-different per node
+  # (NodeID/IP/Ports) or kept out of the checked-in YAML (secrets).
+  local config_file="$SCRIPT_DIR/config.asty"
+
+  # sudo (agent) needs A_CPU_TOTAL/A_MEMORY_TOTAL from the parent
+  # environment; sudo -E preserves them.
+  export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"
+  export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}"
 
   # Каждая нода запускает server + agent, все цепляются к одному NATS endpoint.
-  # sudo нужен для bind на порт 80 (gateway)
+  # sudo нужен для bind на порт 80 (gateway).
   for ((i=1; i<=nodes; i++)); do
     local addr="127.0.0.$i"
     local server_log="/tmp/asty-dev-server-$i.log"
@@ -244,21 +237,29 @@ start_asty() {
     local ui_port=$((4747 + i - 1))
     mkdir -p "$DATA_BASE/node$i"
 
-    A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" A_UI_ADDR="$addr:$ui_port" \
-      "$BIN_DIR/asty" -mode server >> "$server_log" 2>&1 &
+    # Per-node loopback binds for gateway so N agents on one host
+    # don't collide on a shared port. Gateway HTTP serves traffic, the
+    # metrics endpoint is internal — both bind 127.0.0.$i.
+    local gw_addr="$addr:80"
+    local gw_metrics="$addr:8081"
+
+    A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
+      A_UI_ADDR="$addr:$ui_port" A_WORK_DIR="$DATA_BASE/work" \
+      "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
     local server_pid=$!
     echo "$server_pid" >> "$PID_FILE"
 
     sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
-      "$BIN_DIR/asty" -mode agent >> "$agent_log" 2>&1 &
+      A_WORK_DIR="$DATA_BASE/work" \
+      A_HTTP_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
+      "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"
 
     info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | server PID=$server_pid | agent PID=$agent_pid"
     info "  Логи: $server_log | $agent_log"
-    # Даём время на подключение к NATS и инициализацию JetStream KV bucket.
-    # Без паузы все агенты создают bucket одновременно и JetStream
-    # не успевает подтвердить stream — "nats: no response from stream".
+    # Pause so JetStream confirms the KV bucket before the next agent
+    # races to (re)create it — without it: "nats: no response from stream".
     sleep 0.5
   done
 }
@@ -306,6 +307,7 @@ print_status() {
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
   info "Asty UI:    http://localhost:4747 (нода 1)"
+  info "Gateway:    http://127.0.0.1:80 (нода 1)"
   info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"
   info ""

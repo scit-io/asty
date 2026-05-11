@@ -33,7 +33,8 @@ The project consists of two main parts:
 go build -o asty ./cmd/asty
 
 # Build all services (orchestrator + microservices)
-go build -o bin/ ./cmd/asty ./cmd/gateway ./cmd/xauth ./cmd/xhttp ./cmd/xws
+# Gateway is embedded into the asty binary — no separate cmd/gateway.
+go build -o bin/ ./cmd/asty ./cmd/xauth ./cmd/xhttp ./cmd/xws
 
 # Using Makefile
 make build      # Build asty binary only
@@ -50,7 +51,7 @@ go test ./...
 
 # Run specific package tests
 go test ./internal/platform/asty -v
-go test ./internal/services/gateway -v
+go test ./internal/platform/asty/features/gateway -v
 
 # Run single test
 go test ./internal/platform/asty -v -run TestScheduler
@@ -66,7 +67,7 @@ go test -race ./...
 
 **Each node runs two processes:**
 - `asty -mode server` — participates in leader election, active leader handles scheduling and autoscaling
-- `asty -mode agent` — manages local processes, executes commands from server
+- `asty -mode agent` — manages local processes, executes commands from server. The HTTP gateway runs inside this process (`features/gateway/`), reusing the agent's NATS connection; `gateway.enabled: false` in config.asty disables it on a given node.
 
 **Leader election:** All servers participate in election via NATS KV. Only one server is active (leader) at any time. When leader fails, remaining servers automatically elect a new leader. This provides high availability with no single point of failure.
 
@@ -79,7 +80,7 @@ Asty deploys services as **raw binaries** (not containers), similar to Nomad's `
 - Agent downloads binaries from URLs with checksum verification
 - Process lifecycle: start → health check → run → graceful shutdown (SIGTERM → SIGKILL)
 - Two service types:
-  - `type: system` — one copy per node (e.g., Gateway)
+  - `type: system` — one copy per node (currently only platform demos; the HTTP gateway is no longer a `.asty` service — it lives inside the agent binary)
   - `type: service` — autoscaled based on load (e.g., xauth, xhttp)
 
 ### Locality-Aware Autoscaling
@@ -102,7 +103,7 @@ HTTP Client → Gateway (:80) → NATS (127.0.0.1:4222) → [xhttp | xauth | xws
                                                     NATS KV (xhttp cache, xauth tokens)
 ```
 
-- **Gateway** (`internal/services/gateway/`) — sole HTTP entry point, proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
+- **Gateway** (`internal/platform/asty/features/gateway/`) — sole HTTP entry point, embedded in the asty agent process; proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
 - **xauth** (`internal/services/xauth/`) — JWT authentication (HMAC-SHA256), refresh token revocation in NATS KV
 - **xhttp** (`internal/services/xhttp/`) — demo CRUD with PostgreSQL + NATS KV cache
 - **xws** (`internal/services/xws/`) — WebSocket session manager
@@ -112,32 +113,37 @@ All inter-service communication is NATS Pub/Sub. No service-to-service HTTP call
 ## Configuration
 
 ### Orchestrator (Asty)
-Environment variables with `A_` prefix:
-- `A_DOMAIN` — DNS for node discovery (required)
-- `A_DATACENTER` — datacenter name (default: dc1)
-- `A_NODE_ID` — explicit node ID (default: auto-generated from hostname)
-- `A_NODE_IP` — explicit node IP address (default: auto-detected; for loopback NATS connections uses A_NATS_HOST)
-- `A_NATS_HOST`, `A_NATS_PORT` — NATS connection (default: 127.0.0.1:4222)
-- `A_NATS_USER`, `A_NATS_PASSWORD` — NATS auth
-- `A_LOG_LEVEL` — zerolog level (debug/info/warn/error)
-- `A_MIN_COPIES` — minimum service replicas (default: 3)
-- `A_TARGET_CPU`, `A_TARGET_MEMORY` — autoscaling thresholds (default: 75%)
-- `A_TRAFFIC_RPS_THRESHOLD` — sustained RPS to trigger scale-up (default: 5)
-- `A_CPU_TOTAL` — override total CPU MHz (default: auto-detect from system)
-- `A_MEMORY_TOTAL` — override total Memory MB (default: auto-detect from system)
+Asty (server and agent) reads its configuration from a YAML file via the `-config` flag:
 
-**Local development with multiple nodes**: Set `A_NODE_IP` and `A_NATS_HOST` to unique loopback IPs (e.g., 127.0.0.2, 127.0.0.3) for each agent.
+```
+asty -mode server -config /etc/asty/config.asty
+asty -mode agent  -config /etc/asty/config.asty
+```
 
-See `internal/platform/asty/core/config/config.go` for full list.
+Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `ui:`, `agent:`, `gateway:`). Sample: `deployments/envs/dev/config.asty`.
+
+**Env-var overrides** (loaded after YAML; `A_` prefix) — useful for per-node values and secrets:
+
+- `A_DOMAIN`, `A_TOKEN` — required outside `dev_mode`
+- `A_DATACENTER`, `A_NODE_ID`, `A_NODE_IP`, `A_LOG_LEVEL`
+- `A_NATS_HOST`, `A_NATS_PORT`, `A_NATS_USER`, `A_NATS_PASSWORD`
+- `A_MIN_COPIES`, `A_TARGET_CPU`, `A_TARGET_MEMORY`, `A_TRAFFIC_RPS_THRESHOLD`, `A_EVAL_INTERVAL`, `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`
+- `A_UI_ADDR`, `A_WORK_DIR`, `A_SERVICE_DIR`
+- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` — override auto-detected node capacity
+
+**Gateway-specific env vars** (override fields under `gateway:`):
+- `A_GATEWAY_ENABLED` — toggle the embedded gateway on the local node
+- `A_HTTP_ADDR`, `A_HTTP_READ_TIMEOUT`, `A_HTTP_WRITE_TIMEOUT`, `A_HTTP_IDLE_TIMEOUT`
+- `A_ALLOWED_HOSTS` — comma-separated CORS origins
+- `A_GATEWAY_AUTH_RATE_PREFIX`, `A_GATEWAY_RATE_LIMIT`, `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`, `A_GATEWAY_TRUSTED_PROXY`
+- `A_GATEWAY_METRICS_ADDR` — Prometheus `/metrics` listener (default `127.0.0.1:8081`)
+
+**Local development with multiple nodes**: `start.sh` exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_NATS_PORT`, `A_UI_ADDR`, `A_WORK_DIR` on top of the shared `config.asty`.
+
+Authoritative struct layout: `internal/platform/asty/core/config/config.go` (+ `gateway.go`, `env.go`, `load.go`).
 
 ### Platform Services
-Environment variables with `A_` prefix:
-- `A_NATS_HOST`, `A_NATS_PORT` — local NATS (always 127.0.0.1:4222)
-- `A_NATS_USER`, `A_NATS_PASSWORD`
-- `A_ALLOWED_HOSTS` — comma-separated CORS origins for Gateway
-- `A_LOG_LEVEL` — zerolog level
-
-Demo services (xauth, xhttp, xws) use `X_` prefix (e.g., `X_AUTH_PASSWORD`, `X_HTTP_DATABASE_URL`). These are examples only and will be replaced by real business services.
+Demo services (xauth, xhttp, xws) keep their `A_` and `X_` env vars: `A_NATS_HOST`/`A_NATS_PORT` for the local NATS, `A_LOG_LEVEL` for zerolog, and `X_*` for service-specific tunables (`X_AUTH_PASSWORD`, `X_HTTP_DATABASE_URL`, …). These are examples only and will be replaced by real business services.
 
 ## Service Definition Format
 
@@ -221,6 +227,16 @@ internal/platform/asty/
 │   │   ├── process/               # process.go, monitor.go, logs.go
 │   │   │                          #   (Process.OnExit, Process.Done())
 │   │   └── health/                # checker.go, probe.go
+│   ├── gateway/                   # embedded HTTP/WS entry point (runs
+│   │                              #   inside the agent process)
+│   │   ├── gateway.go             # Gateway struct + New + Handler
+│   │   ├── routing.go             # CORS middleware + /v1/ router
+│   │   ├── http.go                # HTTP → NATS Request-Reply
+│   │   ├── websocket.go           # WS bridge to NATS Pub/Sub
+│   │   ├── wssession.go           # ws coordination primitives
+│   │   ├── ratelimit.go           # per-IP token-bucket + LRU
+│   │   ├── middleware.go          # rate-limit middleware + realIP
+│   │   └── errors.go              # NATS error → HTTP status mapping
 │   └── observability/
 │       ├── metrics/               # CPU/Memory collector (platform-specific)
 │       ├── logs/                  # LogBuffer + NATSWriter
@@ -239,6 +255,7 @@ internal/platform/asty/
 │                                  #   subscribers[T]), pubsub.go
 └── agent/                         # Agent sub-package
     ├── agent.go                   # Agent struct + Start
+    ├── gateway.go                 # runGateway + serveGateway + metrics server
     ├── services.go                # StartService / StopService
     ├── nodeinfo.go                # NodeInfo builder
     ├── commands.go                # NATS command handlers (start/stop/getlogs)

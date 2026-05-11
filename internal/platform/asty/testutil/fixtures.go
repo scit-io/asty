@@ -9,24 +9,30 @@ import (
 
 func NewTestConfig() *config.Config {
 	return &config.Config{
-		DevMode:             true,
-		Domain:              "test.local",
-		Datacenter:          "dc1",
-		NodeID:              "test-node-1",
-		NodeIP:              "127.0.0.1",
-		NATSHost:            "127.0.0.1",
-		NATSPort:            "4222",
-		MinCopies:           3,
-		TargetCPU:           75,
-		TargetMemory:        75,
-		TrafficRPSThreshold: 5,
-		TrafficWindow:       30 * time.Second,
-		CooldownUp:          60 * time.Second,
-		CooldownDown:        120 * time.Second,
-		EvalInterval:        10 * time.Second,
-		ReservedCPU:         100,
-		ReservedMemory:      250,
-		ControllerWorkers:   2,
+		DevMode:    true,
+		Domain:     "test.local",
+		Datacenter: "dc1",
+		NodeID:     "test-node-1",
+		NodeIP:     "127.0.0.1",
+		NATS: config.NATSConfig{
+			Host: "127.0.0.1",
+			Port: "4222",
+		},
+		Autoscale: config.AutoscaleConfig{
+			MinCopies:           3,
+			TargetCPU:           75,
+			TargetMemory:        75,
+			TrafficRPSThreshold: 5,
+			TrafficWindow:       30 * time.Second,
+			CooldownUp:          60 * time.Second,
+			CooldownDown:        120 * time.Second,
+			EvalInterval:        10 * time.Second,
+			ControllerWorkers:   2,
+		},
+		Resources: config.ResourcesConfig{
+			ReservedCPU:    100,
+			ReservedMemory: 250,
+		},
 	}
 }
 
