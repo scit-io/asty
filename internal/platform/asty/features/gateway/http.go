@@ -111,24 +111,21 @@ func (gw *Gateway) readBody(w http.ResponseWriter, r *http.Request, reqID, subje
 	return body, true
 }
 
-// buildRequestMsg builds the NATS message with the standard set of
-// headers gateway sends downstream.
+// buildRequestMsg forwards all HTTP headers into the NATS message.
+// Gateway is a transparent proxy — it does not interpret or filter
+// headers. Services decide what they need.
 func buildRequestMsg(subject string, body []byte, reqID, ip string, r *http.Request) *nats.Msg {
 	msg := nats.NewMsg(subject)
 	msg.Data = body
+
+	for key, values := range r.Header {
+		for _, v := range values {
+			msg.Header.Add(key, v)
+		}
+	}
+
 	msg.Header.Set("X-Real-IP", ip)
 	msg.Header.Set("X-Request-Id", reqID)
-
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		msg.Header.Set("Authorization", auth)
-	}
-	// HTTP/1.1 through a proxy/middlebox may arrive with several Cookie
-	// headers (RFC 6265 §5.4 doesn't forbid it). r.Header.Get returns
-	// only the first — backend would lose part of the cookies. Values +
-	// Join with "; " collects everything into a single string.
-	if cookies := strings.Join(r.Header.Values("Cookie"), "; "); cookies != "" {
-		msg.Header.Set("Cookie", cookies)
-	}
 	return msg
 }
 
