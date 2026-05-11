@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"asty/internal/platform/metrics"
+	"asty/internal/platform/asty/features/gateway/metrics"
 
 	"github.com/nats-io/nats.go"
 )

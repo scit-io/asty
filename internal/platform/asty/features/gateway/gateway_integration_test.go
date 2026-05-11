@@ -14,9 +14,10 @@ import (
 	"testing"
 	"time"
 
-	"asty/internal/middleware"
+	"runtime/debug"
+
 	"asty/internal/platform/asty/core/config"
-	"asty/internal/platform/metrics"
+	"asty/internal/platform/asty/features/gateway/metrics"
 
 	natsserver "github.com/nats-io/nats-server/v2/test"
 	"github.com/nats-io/nats.go"
@@ -316,7 +317,7 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	sub, err := conn.QueueSubscribe(
 		"api.v1.boom.panic",
 		"boom",
-		middleware.Recover(log, func(msg *nats.Msg) { panic("integration boom") }),
+		testRecover(log, func(msg *nats.Msg) { panic("integration boom") }),
 	)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -418,5 +419,34 @@ func TestIntegration_HealthEndpoint(t *testing.T) {
 	}
 	if string(body) != `{"status":"error","nats":"disconnected"}` {
 		t.Errorf("disconnected body = %q, want %q", string(body), `{"status":"error","nats":"disconnected"}`)
+	}
+}
+
+// testRecover wraps a NATS handler with panic recovery — test-only
+// equivalent of the production middleware used by backend services.
+func testRecover(log zerolog.Logger, next nats.MsgHandler) nats.MsgHandler {
+	return func(msg *nats.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				event := log.Error().
+					Str("subject", msg.Subject).
+					Interface("panic", r).
+					Str("stack", string(debug.Stack()))
+				if reqID := msg.Header.Get("X-Request-Id"); reqID != "" {
+					event = event.Str("req", reqID)
+				}
+				event.Msg("panic in handler")
+
+				if msg.Reply == "" {
+					return
+				}
+				out := nats.NewMsg(msg.Reply)
+				out.Header.Set("Content-Type", "application/json")
+				out.Header.Set("Status", "500")
+				out.Data = []byte(`{"error":"internal server error"}`)
+				_ = msg.RespondMsg(out)
+			}
+		}()
+		next(msg)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"asty/internal/platform/metrics"
+	"asty/internal/platform/asty/features/gateway/metrics"
 )
 
 // middlewareRateLimit applies per-IP rate limiting to /v1/ routes.

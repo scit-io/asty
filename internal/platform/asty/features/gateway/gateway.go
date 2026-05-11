@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"asty/internal/platform/asty/core/config"
-	"asty/utils"
 
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
@@ -43,7 +42,7 @@ type Gateway struct {
 	nats         *nats.Conn
 	cfg          config.GatewayConfig
 	upgrader     websocket.Upgrader
-	allowedHosts utils.AllowedHostSet
+	allowedHosts allowedHostSet
 	rl           *rateLimiter
 	log          zerolog.Logger
 
@@ -58,7 +57,7 @@ type Gateway struct {
 // owns the gateway's lifetime: when it is cancelled, in-flight WS
 // sessions terminate and the gateway's own context is released.
 func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, log zerolog.Logger) (*Gateway, error) {
-	hosts, err := utils.ParseAllowedHosts(log, joinHosts(cfg.AllowedHosts))
+	hosts, err := parseAllowedHosts(log, cfg.AllowedHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +74,7 @@ func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, log ze
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return hosts.Allows(log, r.Header.Get("Origin"))
+			return hosts.allows(log, r.Header.Get("Origin"))
 		},
 	}
 	return gw, nil
@@ -124,15 +123,3 @@ func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"status":"error","nats":"disconnected"}`))
 }
 
-// joinHosts turns the config slice back into a CSV string for the
-// existing utils.ParseAllowedHosts. Cheap; runs once at startup.
-func joinHosts(hosts []string) string {
-	if len(hosts) == 0 {
-		return ""
-	}
-	out := hosts[0]
-	for _, h := range hosts[1:] {
-		out += "," + h
-	}
-	return out
-}
