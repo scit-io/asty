@@ -2,6 +2,20 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Coding rules (read first)
+
+Conventions established in the Phase-6 refactor of the asty package live in `.claude/coding-rules/`. Read the topic file that matches the work at hand before editing Go code under the asty package root:
+
+- `.claude/coding-rules/README.md` — index of all rules.
+- `.claude/coding-rules/file-layout.md` — ≤200-line cap, within-package vs sub-package splits.
+- `.claude/coding-rules/code-idioms.md` — stdlib over handwritten, named constants, typed enums.
+- `.claude/coding-rules/concurrency.md` — event-driven defaults, acceptable polling list.
+- `.claude/coding-rules/architecture.md` — core/features/server/agent split, interfaces at boundaries.
+- `.claude/coding-rules/testing.md` — race tests, `testutil/` fixtures.
+- `.claude/coding-rules/clarity.md` — write so non-developers can follow.
+
+Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *may shift* between refactors — never hard-code it. Look for the directory containing `core/`, `features/`, `server/`, `agent/`.
+
 ## Project Overview
 
 **Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. It replaces Nomad with a simpler, integrated solution that combines scheduling, autoscaling, and deployment in a single binary.

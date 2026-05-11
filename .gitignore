@@ -41,7 +41,7 @@ Thumbs.db
 /dist/
 /build/
 
-.claude/
-CLAUDE.md
+#.claude/
+#CLAUDE.md
 ui/node_modules
 ui/dist
