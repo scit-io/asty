@@ -21,26 +21,30 @@ Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *m
 **Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. It replaces Nomad with a simpler, integrated solution that combines scheduling, autoscaling, and deployment in a single binary.
 
 The project consists of two main parts:
-1. **Asty orchestrator** (`internal/platform/asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API (no built-in UI).
-2. **Platform services** (`internal/services/`, `cmd/`) — microservices that Asty deploys (Gateway, xauth, xhttp, xws)
+1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui).
+2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite).
 
-**Monitoring:** Asty exposes only HTTP JSON API. For Web UI monitoring, use **ui** (separate React application in `ui/` directory).
+**Monitoring:** Asty exposes HTTP JSON API at `:4747`. Web UI (`asty/web/`) connects to it for cluster monitoring.
+**Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
 ## Build Commands
 
 ```bash
 # Build orchestrator only
-go build -o asty ./cmd/asty
+make build        # → bin/asty
 
-# Build all services (orchestrator + microservices)
-# Gateway is embedded into the asty binary — no separate cmd/gateway.
-go build -o bin/ ./cmd/asty ./cmd/xauth ./cmd/xhttp ./cmd/xws
+# Build demo services
+make build-demo   # → bin/xauth, bin/xhttp, bin/xws
 
-# Using Makefile
-make build      # Build asty binary only
-make test       # Run all tests
-make run-agent  # Run in agent mode
-make run-server # Run in server mode
+# Build everything
+make build-all
+
+# Run tests
+make test
+
+# Run modes
+make run-agent    # Run in agent mode
+make run-server   # Run in server mode
 ```
 
 ## Testing
@@ -50,12 +54,12 @@ make run-server # Run in server mode
 go test ./...
 
 # Run specific package tests
-go test ./internal/platform/asty -v
-go test ./internal/platform/asty/features/gateway -v
+go test ./asty/internal/features/gateway -v
+go test ./asty/internal/features/scheduling -v
 
 # Run single test
-go test ./internal/platform/asty -v -run TestScheduler
-go test ./internal/platform/asty -v -run TestProximity
+go test ./asty/internal/features/scheduling -v -run TestScheduler
+go test ./asty/internal/features/scheduling/proximity -v -run TestProximity
 
 # With race detector
 go test -race ./...
@@ -103,10 +107,10 @@ HTTP Client → Gateway (:80) → NATS (127.0.0.1:4222) → [xhttp | xauth | xws
                                                     NATS KV (xhttp cache, xauth tokens)
 ```
 
-- **Gateway** (`internal/platform/asty/features/gateway/`) — sole HTTP entry point, embedded in the asty agent process; proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
-- **xauth** (`internal/services/xauth/`) — JWT authentication (HMAC-SHA256), refresh token revocation in NATS KV
-- **xhttp** (`internal/services/xhttp/`) — demo CRUD with PostgreSQL + NATS KV cache
-- **xws** (`internal/services/xws/`) — WebSocket session manager
+- **Gateway** (`asty/internal/features/gateway/`) — sole HTTP entry point, embedded in the asty agent process; proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
+- **xauth** (`demo/internal/xauth/`) — JWT authentication (HMAC-SHA256), refresh token revocation in NATS KV. Uses `nats.go/micro` directly.
+- **xhttp** (`demo/internal/xhttp/`) — demo CRUD with PostgreSQL + NATS KV cache. Uses `nats.go/micro` directly.
+- **xws** (`demo/internal/xws/`) — WebSocket session manager. Uses raw `nats.go` (pub/sub, not request-reply).
 
 All inter-service communication is NATS Pub/Sub. No service-to-service HTTP calls.
 
@@ -147,7 +151,7 @@ Demo services (xauth, xhttp, xws) keep their `A_` and `X_` env vars: `A_NATS_HOS
 
 ## Service Definition Format
 
-`.asty` files in `services/` directory define deployments. Key fields:
+`.asty` files in `deployments/` directory define deployments. Key fields:
 ```yaml
 name: service-name
 type: system | service      # system = 1 per node; service = autoscaled
@@ -159,6 +163,12 @@ artifact:
 command: ./binary [args]
 user: root | nobody
 env: { KEY: "value" }
+
+kv:                           # KV buckets provisioned by server before start
+  - bucket: my_bucket
+    history: 1
+    ttl: 24h                  # optional
+    replicas: 3               # 0 or omitted = auto (min(cluster_size, 3))
 
 resources:
   cpu: 200      # MHz
@@ -184,10 +194,10 @@ Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from o
 
 ## Key Implementation Files
 
-### Feature-Based Architecture (`internal/platform/asty/`)
+### Feature-Based Architecture (`asty/internal/`)
 
 ```
-internal/platform/asty/
+asty/internal/
 ├── core/                          # Shared primitives
 │   ├── config/                    # Config struct + Load() + Validate()
 │   ├── types/                     # NodeInfo, ServiceDefinition, Allocation, Events,
@@ -284,43 +294,31 @@ HTTP health probes (1 s), TailLogs file polling (100 ms), proximity
 validation (1 h). Each is documented at its definition.
 
 ### Orchestrator Entrypoints
-- `cmd/asty/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package)
-- `server/` — leader election, controller wiring, NATS subscriptions, implements `api.ServerContext`
-- `agent/` — process management, NATS commands, heartbeat, metrics
-- `features/api/` — HTTP API handlers, decoupled from server via `ServerContext` interface
-- `core/netutil/` — shared NATS connect / hostname / KV bucket helpers (agent and server both use them)
+- `asty/cmd/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package)
+- `asty/internal/server/` — leader election, controller wiring, NATS subscriptions, implements `api.ServerContext`
+- `asty/internal/agent/` — process management, NATS commands, heartbeat, metrics
+- `asty/internal/features/api/` — HTTP API handlers, decoupled from server via `ServerContext` interface
+- `asty/internal/core/netutil/` — shared NATS connect / hostname / KV bucket helpers (agent and server both use them)
 
-### Platform Layer
-- `internal/platform/nc/` — NATS client wrapper (JetStream, KV helpers)
-- `internal/platform/logger/` — zerolog factory with service name
-- `internal/platform/metrics/` — Prometheus metrics (HTTP, NATS, WebSocket)
-- `internal/middleware/` — NATS message middleware (recover, JWT auth)
-- `utils/` — reply helpers, env parsing, CORS validation, cookie handling
-
-### Services
-Gateway is the only production component. x-services (xauth, xhttp, xws) are demos showing platform usage patterns.
+### Demo Services (`demo/`)
+Demo services use `nats.go/micro` directly — no platform SDK, no shared middleware.
+- `demo/cmd/{xauth,xhttp,xws}/main.go` — standalone entry points
+- `demo/internal/{xauth,xhttp,xws}/` — handlers, config, business logic
+- KV buckets are provisioned by the server at deploy time (declared in `.asty` files)
+- Services connect to pre-existing buckets via `js.KeyValue(ctx, os.Getenv("A_KV_..."))`
 
 ## Development Workflow
 
 1. Modify code
 2. Run tests: `go test ./...` or `make test`
-3. Build: `make build` (orchestrator only) or `go build -o bin/ ./cmd/...` (all services)
+3. Build: `make build` (orchestrator only) or `make build-all` (everything)
 4. Run locally: `make run-agent` or `make run-server`
 
 ### Adding New Service
-1. Create `internal/services/myservice/` with config.go, handlers.go
-2. Create `cmd/myservice/main.go` — load config, connect NATS, register handlers
-3. Create `services/myservice.asty` — deployment definition
-4. Asty will download and run the binary on target nodes
-
-## Integration with platform.go
-
-This project was initially split from `../platform.go`. Common code:
-- `internal/platform/nc/`, `logger/`, `metrics/` — copied 1:1
-- `internal/services/` and `cmd/` for Gateway, xauth, xhttp, xws — copied 1:1
-- Import paths changed from `platform/` to `asty/`
-
-If updating shared code (nc, logger, metrics), consider syncing changes back to platform.go if applicable.
+1. Create `demo/internal/myservice/` with config.go, handlers.go
+2. Create `demo/cmd/myservice/main.go` — connect NATS, `micro.AddService`, register endpoints
+3. Create `deployments/envs/dev/myservice.asty` — deployment definition with `kv:` section if needed
+4. Asty server provisions KV buckets and deploys the binary to target nodes
 
 ## Important Notes
 
@@ -331,6 +329,7 @@ If updating shared code (nc, logger, metrics), consider syncing changes back to 
 - **Gateway is critical** — it's the only HTTP entry point; deployed as `type: system` (one per node)
 - **Geo-diversity matters** — autoscaler prioritizes spreading services across DCs
 - **Bot traffic is filtered** — autoscaler counts only validated RPS from Gateway (authenticated, rate-limited)
+- **KV buckets are server-managed** — declared in `.asty` `kv:` section, provisioned at deploy time with auto-replicas and degradation logic. Services just connect to the ready bucket via env var.
 
 ## Technical Documentation
 

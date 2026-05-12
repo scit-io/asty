@@ -384,32 +384,64 @@ func withRecover(handler micro.Handler) micro.Handler {
 
 ---
 
-## Порядок выполнения
+## Чеклист
 
-### Фаза 1: перенос файлов (механический)
+### Фаза 1: перенос оркестратора в `asty/`
 
-1. `mkdir -p asty/cmd asty/internal`
-2. `mv internal/platform/asty/* asty/internal/`
-3. `mv cmd/asty/main.go asty/cmd/main.go`
-4. `mv utils/hosts.go asty/internal/features/gateway/hosts.go`
-5. `mkdir -p demo/cmd demo/internal`
-6. `mv cmd/xauth cmd/xhttp cmd/xws demo/cmd/`
-7. `mv internal/services/* demo/internal/`
-8. Починить import paths
-9. `go build ./...`
+- [x] `mkdir -p asty/cmd asty/internal`
+- [x] `mv internal/platform/asty/* asty/internal/`
+- [x] `mv cmd/asty/main.go asty/cmd/main.go`
+- [x] `mv utils/hosts.go asty/internal/features/gateway/hosts.go`
+- [x] Починить import paths в asty/
+- [x] `go build ./asty/...`
 
-### Фаза 2: переписать demo на nats.go/micro
+### Фаза 2: перенос демо-сервисов в `demo/`
 
-1. Переписать demo/cmd/xauth/main.go
-2. Адаптировать handlers: `*nats.Msg` → `micro.Request`
-3. Аналогично xhttp, xws
-4. `go build ./demo/...`
+- [x] `mkdir -p demo/cmd demo/internal`
+- [x] `mv cmd/xauth cmd/xhttp cmd/xws demo/cmd/`
+- [x] `mv internal/services/* demo/internal/`
+- [x] Починить import paths в demo/
+- [x] `go build ./demo/...`
 
-### Фаза 3: удаление
+### Фаза 3: KV creation в server
 
-1. Удалить `internal/platform/nc/`, `internal/platform/logger/`, `internal/middleware/`, `utils/`
-2. Удалить пустые `cmd/`, `internal/services/`
-3. `go build ./...` && `go test ./...`
+- [x] Добавить секцию `kv:` в ServiceDefinition parser (поля: bucket, history, ttl, replicas)
+- [x] Перенести логику `initKV` из `internal/platform/nc/client.go` в server
+- [x] Server: при деплое создаёт бакеты до старта сервиса
+- [x] Server: auto-replicas через `DiscoveredServers()` когда replicas=0
+- [x] Server: деградация R при err_code=10005, Error-лог при деградации ≥2
+- [x] Agent: пробрасывает `A_KV_{BUCKET_NAME}` env в процесс сервиса
+- [x] Обновить `.asty` файлы демо-сервисов (добавить секцию `kv:`)
+
+### Фаза 4: переписать demo на `nats.go/micro`
+
+- [x] Переписать `demo/cmd/xauth/main.go` на `micro.AddService` + `AddEndpoint`
+- [x] Адаптировать xauth handlers: `*nats.Msg` → `micro.Request`
+- [x] Переписать `demo/cmd/xhttp/main.go`
+- [x] Адаптировать xhttp handlers
+- [x] Переписать `demo/cmd/xws/main.go`
+- [x] Адаптировать xws handlers
+- [x] KV: сервисы подключаются к готовому bucket через `js.KeyValue(ctx, os.Getenv("A_KV_..."))`
+- [x] `go build ./demo/...`
+- [x] `go test ./demo/...`
+
+### Фаза 5: удаление старого кода
+
+- [x] Удалить `internal/platform/nc/`
+- [x] Удалить `internal/platform/logger/`
+- [x] Удалить `internal/middleware/`
+- [x] Удалить `utils/`
+- [x] Удалить пустые `cmd/xauth/`, `cmd/xhttp/`, `cmd/xws/`
+- [x] Удалить `internal/services/`
+- [x] `go build ./...`
+- [x] `go test ./...`
+
+### Фаза 6: финализация
+
+- [x] Обновить Makefile (пути к бинарникам)
+- [x] Обновить CLAUDE.md
+- [x] Обновить deployments/
+- [ ] Документировать конвенции для сервисов (subject naming, response protocol, cookie parsing)
 
 ---
 

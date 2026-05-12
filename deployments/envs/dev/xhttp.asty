@@ -23,6 +23,10 @@ env:
   X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"
   X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
 
+kv:
+  - bucket: xhttp_cache
+    history: 1
+
 resources:
   cpu: 150       # MHz
   memory: 64     # MB

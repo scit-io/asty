@@ -29,6 +29,10 @@ env:
   X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"
   X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
 
+kv:
+  - bucket: authms_refresh_tokens
+    history: 1
+
 resources:
   cpu: 100       # MHz
   memory: 32     # MB

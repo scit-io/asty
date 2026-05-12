@@ -156,10 +156,11 @@ build_binaries() {
   mkdir -p "$BIN_DIR"
   cd "$ROOT_DIR"
 
-  shopt -s nullglob
-  for dir in cmd/*/; do
-    svc="${dir%/}"; svc="${svc#cmd/}"
-    go build -o "$BIN_DIR/$svc" "./cmd/$svc"
+  go build -o "$BIN_DIR/asty" ./asty/cmd
+  info "✓ asty"
+
+  for svc in xauth xhttp xws; do
+    go build -o "$BIN_DIR/$svc" "./demo/cmd/$svc"
     info "✓ $svc"
   done
 }

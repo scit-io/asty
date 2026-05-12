@@ -29,6 +29,11 @@ env:
   X_HEALTH_ADDR: "${ASTY_HEALTH_ADDR}"
   A_LOG_LEVEL: "${A_LOG_LEVEL}"
 
+kv:
+  - bucket: authms_refresh_tokens
+    history: 1
+    replicas: 3
+
 resources:
   cpu: 100       # MHz
   memory: 32     # MB
