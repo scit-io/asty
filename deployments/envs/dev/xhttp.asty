@@ -21,7 +21,6 @@ env:
   A_LOG_LEVEL: "${A_LOG_LEVEL}"
   X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"
   X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"
-  X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
 
 kv:
   - bucket: xhttp_cache
@@ -32,8 +31,8 @@ resources:
   memory: 64     # MB
 
 health:
-  type: http
-  path: /health
+  type: nats
+  subject: $SRV.PING.xhttp
   interval: 10s
   timeout: 3s
 

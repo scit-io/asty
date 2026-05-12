@@ -35,6 +35,10 @@ func main() {
 		queue          = "xws"
 	)
 
+	nc.Subscribe("xws.ping", func(msg *nats.Msg) {
+		msg.Respond([]byte("ok"))
+	})
+
 	_, err = nc.QueueSubscribe(connectSubject, queue, func(msg *nats.Msg) {
 		defer func() {
 			if r := recover(); r != nil {

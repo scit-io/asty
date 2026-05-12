@@ -20,15 +20,14 @@ env:
   A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
   A_LOG_LEVEL: "${A_LOG_LEVEL}"
   X_WS_INACTIVITY_TIMEOUT: "${X_WS_INACTIVITY_TIMEOUT}"
-  X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
 
 resources:
   cpu: 100       # MHz
   memory: 48     # MB
 
 health:
-  type: http
-  path: /health
+  type: nats
+  subject: xws.ping
   interval: 10s
   timeout: 3s
 

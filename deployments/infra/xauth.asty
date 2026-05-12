@@ -26,7 +26,6 @@ env:
   X_AUTH_COOKIE_DOMAIN: "${X_AUTH_COOKIE_DOMAIN}"
   X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"
   X_AUTH_COOKIE_SAMESITE: "${X_AUTH_COOKIE_SAMESITE}"
-  X_HEALTH_ADDR: "${ASTY_HEALTH_ADDR}"
   A_LOG_LEVEL: "${A_LOG_LEVEL}"
 
 kv:
@@ -39,8 +38,8 @@ resources:
   memory: 32     # MB
 
 health:
-  type: http
-  path: /healthz
+  type: nats
+  subject: $SRV.PING.xauth
   interval: 10s
   timeout: 3s
 

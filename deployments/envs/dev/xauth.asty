@@ -27,7 +27,6 @@ env:
   X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"
   X_AUTH_ACCESS_TTL: "${X_AUTH_ACCESS_TTL}"
   X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"
-  X_HEALTH_ADDR: "${X_HEALTH_ADDR}"
 
 kv:
   - bucket: authms_refresh_tokens
@@ -38,8 +37,8 @@ resources:
   memory: 32     # MB
 
 health:
-  type: http
-  path: /health
+  type: nats
+  subject: $SRV.PING.xauth
   interval: 10s
   timeout: 3s
 
