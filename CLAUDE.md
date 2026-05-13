@@ -27,13 +27,28 @@ The project consists of two main parts:
 **Monitoring:** Asty exposes HTTP JSON API at `:4747`. Web UI (`asty/web/`) connects to it for cluster monitoring.
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
-## Toolchain
+## Toolchain & dependencies
 
-**Go 1.26.3** (the latest stable as of this revision). The pinned
-version lives in `go.mod`; Go's toolchain system auto-downloads it if
-the local install is older, so contributors don't need to upgrade
-manually. Track the upstream releases at https://go.dev/dl/ and bump
-the `go.mod` directive when a new stable lands.
+**Always run on the latest stable releases** — Go, Go modules, and npm
+packages alike. The pinned versions are not a stability floor; they're
+the current latest at the time of the last bump. When a new release
+lands upstream, update the pin and re-run the build/test suite.
+
+**Go:** **1.26.3** at the time of writing. Pinned via `go.mod`. Go's
+toolchain system auto-downloads the version named in `go.mod` if the
+local install is older, so contributors don't need to upgrade
+manually. Track releases at https://go.dev/dl/.
+
+**Go modules:** `go get -u ./... && go mod tidy` walks every direct
+and indirect dep to the latest in-range minor/patch. Major bumps
+(`v2` → `v3` import paths) need manual handling.
+
+**npm packages:** each web project (`asty/web/`, `demo/web/`,
+`docs/`) maintains its own `package.json`. `npm update` inside each
+honours the `^`/`~` ranges; a major bump beyond the range is flagged
+by `npm outdated` and must be done deliberately (e.g. Tailwind 3 → 4
+needs a config-and-class migration, not just a version line). Surface
+those to the user before applying.
 
 ## Build Commands
 
