@@ -107,6 +107,17 @@ When user says "приступай к выполнению .audit/<file>.md" or 
 8. **Mark + commit** only after explicit approval. Commit message describes the task.
 9. **Next task**: next `[ ]` in section; if none, take any `[~]`s in section; if section empty, next section. If plan empty, tell user audit is done.
 
+### Coupling exception
+
+If the clean solution to task A naturally extends into task B (same new
+package, same file, same refactor pattern, splitting forces creating
+throwaway structure or leaves obviously incomplete work), surface the
+coupling in the brief and offer a variant that does both under one
+approval and one commit. Don't artificially decompose tightly-coupled
+tasks just to honour the audit's numbering — that produces churn and
+worse code organisation. Only split when the two halves can stand alone
+with no shared scaffolding.
+
 ### Anti-patterns for this mode
 
 - Don't batch tasks.
