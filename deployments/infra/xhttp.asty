@@ -1,9 +1,13 @@
-# xhttp service — demo CRUD with PostgreSQL + NATS KV cache
-# Type: service — autoscaled by Asty
-# User: asty — non-privileged user
+# xhttp — CRUD data service.
+# Provides create/read/update/delete operations backed by PostgreSQL.
+# Uses a NATS KV cache in front of the database to reduce query load —
+# cache entries expire after X_HTTP_CACHE_TTL.
+# Validates access tokens using the same secret as xauth.
+#
+# Environment: PRODUCTION
 
 name: xhttp
-type: service
+type: service       # Autoscaled by Asty
 
 artifact:
   url: https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/xhttp_linux_${ARCH}.tar.gz
@@ -11,26 +15,26 @@ artifact:
 
 command: ./xhttp
 user: asty
-kill_timeout: 10s
+kill_timeout: 10s   # DB connections close quickly, no need for a long grace period
 
 env:
-  A_NATS_HOST: "127.0.0.1"
-  A_NATS_PORT: "4222"
-  A_NATS_USER: "${A_NATS_USER}"
-  A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
-  A_LOG_LEVEL: "${A_LOG_LEVEL}"
-  X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"
-  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"
-  X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"
+  X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"       # PostgreSQL connection string
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"     # Shared with xauth — verifies incoming JWTs
+  X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"            # Cache entry lifetime (e.g. "30s")
 
+# Cache bucket. Stores serialized query results keyed by request parameters.
+# history: 1 means only the latest value is kept — stale cache entries are just overwritten.
+# 3 replicas: cache loss isn't fatal (DB is source of truth), but replicas prevent
+# cold-start storms when a NATS node restarts.
 kv:
   - bucket: xhttp_cache
     history: 1
     replicas: 3
 
+# Resource reservations for the scheduler.
 resources:
-  cpu: 100       # MHz
-  memory: 64     # MB
+  cpu: 100          # MHz reserved
+  memory: 64        # MB — higher than xauth due to PostgreSQL connection pool and row buffering
 
 health:
   type: nats
@@ -40,8 +44,9 @@ health:
 
 logs:
   max_files: 5
-  max_file_size: 10  # MB
+  max_file_size: 10
 
+# One at a time — keeps read capacity stable during deploys.
 update:
   max_parallel: 1
   min_healthy_time: 10s

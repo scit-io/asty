@@ -1,0 +1,152 @@
+package scheduling
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"asty/asty/internal/core/config"
+	"asty/asty/internal/core/types"
+	"asty/asty/internal/features/clustering/state"
+	"asty/asty/internal/features/scheduling/proximity"
+
+	"github.com/rs/zerolog/log"
+)
+
+// nodeStaleAfter — heartbeat-age threshold beyond which a node is
+// excluded from scheduling. Distinct from NodeInfo.IsHealthy (2 min) by
+// design: scheduling tolerates a longer lag because moving allocations
+// is more expensive than skipping a stats refresh.
+const nodeStaleAfter = 10 * time.Minute
+
+// Placement is a scheduling decision: place ServiceName on NodeID.
+type Placement struct {
+	ServiceName string
+	NodeID      string
+	Resources   types.Resources
+}
+
+// Scheduler maintains the baseline placement for services.
+type Scheduler struct {
+	clusterState    *state.ClusterState
+	cfg             *config.Config
+	proximityMatrix *proximity.Matrix
+}
+
+// NewScheduler builds a scheduler with the proximity matrix loaded
+// from cfg.Autoscale.DCLatency. A bad matrix string is logged but not fatal:
+// scheduling falls back to round-robin order across DCs in that case.
+func NewScheduler(clusterState *state.ClusterState, cfg *config.Config) *Scheduler {
+	pm := proximity.NewMatrix()
+	if err := pm.LoadFromConfig(cfg.Autoscale.DCLatency); err != nil {
+		log.Error().Err(err).Msg("failed to load proximity matrix")
+	}
+	return &Scheduler{
+		clusterState:    clusterState,
+		cfg:             cfg,
+		proximityMatrix: pm,
+	}
+}
+
+// ReconcileService brings the service's running set in line with the
+// configured target. System services get one copy per healthy node;
+// regular services get MinCopies copies spread across DCs and packed
+// onto the busiest nodes (good for cache locality, bad for blast
+// radius — that's a deliberate trade-off).
+func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefinition) error {
+	allocs, err := s.clusterState.ListAllocations(svc.Name)
+	if err != nil {
+		return fmt.Errorf("failed to list allocations: %w", err)
+	}
+	nodes, err := s.clusterState.ListNodes()
+	if err != nil {
+		return fmt.Errorf("failed to list nodes: %w", err)
+	}
+	healthy := s.FilterHealthyNodes(nodes)
+	if len(healthy) == 0 {
+		return fmt.Errorf("no healthy nodes available")
+	}
+
+	live := LiveAllocations(allocs)
+	occupied := OccupiedNodes(allocs)
+
+	switch svc.Type {
+	case types.ServiceTypeSystem:
+		return s.reconcileSystem(svc, healthy, occupied)
+	case types.ServiceTypeService:
+		nodeAllocCounts := s.ComputeNodeAllocCounts()
+		return s.reconcileRegular(svc, healthy, live, occupied, nodeAllocCounts)
+	default:
+		return fmt.Errorf("unknown service type: %s", svc.Type)
+	}
+}
+
+// FilterHealthyNodes keeps only ready nodes with recent heartbeats.
+func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
+	healthy := make([]*types.NodeInfo, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Status != types.NodeReady {
+			continue
+		}
+		if time.Since(node.LastSeen) > nodeStaleAfter {
+			log.Warn().
+				Str("node_id", node.ID).
+				Time("last_seen", node.LastSeen).
+				Msg("node stale, excluding from scheduling")
+			continue
+		}
+		healthy = append(healthy, node)
+	}
+	return healthy
+}
+
+// hasResources reports whether a node has enough free CPU/Memory after
+// reserving the per-node overhead (ReservedCPU/ReservedMemory) for the
+// agent itself.
+func (s *Scheduler) hasResources(node *types.NodeInfo, required types.Resources) bool {
+	cpuFree := node.CPUAvailable - s.cfg.Resources.ReservedCPU
+	memFree := node.MemoryAvailable - int64(s.cfg.Resources.ReservedMemory)
+	return cpuFree >= required.CPU && memFree >= int64(required.Memory)
+}
+
+// ComputeNodeAllocCounts returns per-node count of live allocations
+// across every service. Used by PickCandidates to prefer "warm" nodes
+// (more cache hits) when other tie-breakers are equal.
+func (s *Scheduler) ComputeNodeAllocCounts() map[string]int {
+	out := make(map[string]int)
+	all, err := s.clusterState.ListAllAllocations()
+	if err != nil {
+		return out
+	}
+	for _, a := range all {
+		if a.Status.IsLive() {
+			out[a.NodeID]++
+		}
+	}
+	return out
+}
+
+// createAllocation writes a fresh "pending" allocation to KV. The
+// controller picks it up via WatchAllocations and dispatches a start
+// command to the target agent.
+func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string) error {
+	return s.clusterState.CreateAllocation(&types.ServiceAllocation{
+		ServiceName: svc.Name,
+		NodeID:      nodeID,
+		Status:      types.AllocPending,
+		Version:     "latest",
+	})
+}
+
+// targetCopies caps MinCopies at the number of healthy nodes — we can't
+// schedule more copies than we have nodes.
+func (s *Scheduler) targetCopies(healthyNodes int) int {
+	target := s.cfg.Autoscale.MinCopies
+	if target < 1 {
+		target = 1
+	}
+	if target > healthyNodes {
+		target = healthyNodes
+	}
+	return target
+}

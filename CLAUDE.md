@@ -139,7 +139,7 @@ Without `-config`, the default `./config.asty` is consulted and a missing file i
 - `A_GATEWAY_ENABLED` — toggle the embedded gateway on the local node
 - `A_HTTP_ADDR`, `A_HTTP_READ_TIMEOUT`, `A_HTTP_WRITE_TIMEOUT`, `A_HTTP_IDLE_TIMEOUT`
 - `A_ALLOWED_HOSTS` — comma-separated CORS origins
-- `A_GATEWAY_AUTH_RATE_PREFIX`, `A_GATEWAY_RATE_LIMIT`, `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`, `A_GATEWAY_TRUSTED_PROXY`
+- `A_GATEWAY_RATE_LIMIT`, `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`, `A_GATEWAY_TRUSTED_PROXY`
 - `A_GATEWAY_METRICS_ADDR` — Prometheus `/metrics` listener (default `127.0.0.1:8081`)
 
 **Local development with multiple nodes**: `start.sh` exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_NATS_PORT`, `A_UI_ADDR`, `A_WORK_DIR` on top of the shared `config.asty`.

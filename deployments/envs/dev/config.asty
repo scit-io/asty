@@ -1,53 +1,72 @@
-# deployments/envs/dev/config.asty
+# Asty configuration — LOCAL DEV environment.
 #
-# Asty configuration for local dev (one or more nodes on loopback).
-# Loaded via `asty -config <path>`; env vars (A_*) override
-# individual fields — useful for per-node overrides in start.sh
-# (A_NODE_ID, A_NODE_IP, A_NATS_PORT, A_UI_ADDR).
+# Loaded via `asty -mode server -config <path>` or `asty -mode agent -config <path>`.
+# Every field here can be overridden per-node via A_* env vars (useful in start.sh
+# when running multiple agents on loopback with different ports).
 #
-# Secrets stay in dev.vars and arrive as env vars: A_NATS_USER,
-# A_NATS_PASSWORD, A_TOKEN.
+# Secrets (A_NATS_USER, A_NATS_PASSWORD, A_TOKEN) are NOT stored here —
+# they live in dev.vars and are exported by start.sh into the process env.
 
+# Cluster identity.
+# domain is used in NATS subject namespacing and API authentication.
+# In dev_mode: false it must be set (validation will reject empty).
 domain: dev.local
 datacenter: dc1
 log_level: debug
 dev_mode: false
 
+# NATS connection for both server and agent.
+# In dev, start.sh overrides A_NATS_PORT per node so multiple agents
+# can coexist on the same machine without port conflicts.
 nats:
   host: 127.0.0.1
   port: "4222"
 
+# Autoscaler thresholds.
+# The controller evaluates these every eval_interval (default 10s) and
+# decides whether to scale up/down based on CPU, memory, and traffic RPS.
 autoscale:
-  min_copies: 3
-  target_cpu: 75
-  target_memory: 75
-  traffic_rps_threshold: 5
+  min_copies: 3                  # Floor for scale-down. Should match the number of DCs
+                                 # so each DC always has at least one local instance.
+  target_cpu: 75                 # Scale up if average CPU exceeds 75%
+  target_memory: 75              # Scale up if average memory exceeds 75%
+  traffic_rps_threshold: 5       # Scale up if validated RPS sustained above this
 
+# HTTP API for the Web UI and CLI monitoring.
+# Each node exposes this read-only API; the Web UI at asty/web/ connects here.
 ui:
   addr: 127.0.0.1:4747
 
+# Agent-specific paths.
+# work_dir: where per-service subdirectories are created (binaries, logs, state).
+# service_dir: where .asty service definition files are loaded from.
 agent:
   work_dir: /tmp/asty-dev/work
   service_dir: ./deployments/envs/dev
 
+# Embedded HTTP gateway configuration.
+# The gateway runs inside the agent process — it's the sole HTTP entry point
+# for all client traffic. It translates HTTP requests into NATS request-reply
+# and upgrades WebSocket connections to NATS pub/sub.
 gateway:
   enabled: true
   # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
   # start.sh overrides A_HTTP_ADDR / A_GATEWAY_METRICS_ADDR per node.
   # Without those overrides every agent would race for the same :80 /
-  # 127.0.0.1:8081 and all but the first would fail with
-  # "address already in use".
+  # 127.0.0.1:8081 and all but the first would fail with "address already in use".
   http:
     addr: ":80"
   metrics_addr: "127.0.0.1:8081"
+  # CORS: which origins are allowed to call the gateway.
+  # In dev — local Vite dev servers for the Web UI and demo frontend.
   allowed_hosts:
     - "localhost:3000"
     - "localhost:5173"
+  # General rate limiting — applies to all /v1/ routes.
+  # Path-specific limits (brute-force defense, write throttling) are declared
+  # by each service in its .asty file under rate_limit: section.
   rate_limit:
-    rate: 100
-    burst: 200
-    auth_path_prefix: "/v1/auth/"
-    auth_rate: 5
-    auth_burst: 10
-    max_ws_conns: 1000
-    max_ips: 100000
+    rate: 100                    # Requests per second per IP
+    burst: 200                   # Burst allowance above steady rate
+    max_ws_conns: 1000           # Max concurrent WebSocket connections cluster-wide
+    max_ips: 100000              # Max tracked IPs in the rate limiter LRU

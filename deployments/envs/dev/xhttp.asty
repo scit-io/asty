@@ -1,34 +1,36 @@
-# xhttp service — HTTP CRUD demo with PostgreSQL
-# Type: service — autoscaled based on load
-# Dev version: uses pre-built local binary
+# xhttp — CRUD data service.
+# Provides create/read/update/delete operations backed by PostgreSQL.
+# Uses a NATS KV cache in front of the database to reduce query load —
+# cache entries expire after X_HTTP_CACHE_TTL.
+# Validates access tokens using the same secret as xauth.
+#
+# Environment: LOCAL DEV
 
 name: xhttp
-type: service
+type: service       # Autoscaled by Asty
 
 artifact:
-  url: local
-  checksum: ""
+  url: local        # Skip download — binary already exists in the work directory
 
 command: ./xhttp
 user: nobody
-kill_timeout: 10s
+kill_timeout: 10s   # DB connections close quickly, no need for a long grace period
 
 env:
-  A_NATS_HOST: "${A_NATS_HOST}"
-  A_NATS_PORT: "${A_NATS_PORT}"
-  A_NATS_USER: "${A_NATS_USER}"
-  A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
-  A_LOG_LEVEL: "${A_LOG_LEVEL}"
-  X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"
-  X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"
+  X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"       # PostgreSQL connection string
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"     # Shared with xauth — verifies incoming JWTs
+  X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"            # Cache entry lifetime (e.g. "30s")
 
+# Cache bucket. Stores serialized query results keyed by request parameters.
+# history: 1 means only the latest value is kept — stale cache entries are just overwritten.
 kv:
   - bucket: xhttp_cache
     history: 1
 
+# Resource reservations for the scheduler.
 resources:
-  cpu: 150       # MHz
-  memory: 64     # MB
+  cpu: 100          # MHz reserved
+  memory: 64        # MB — higher than xauth due to PostgreSQL connection pool and row buffering
 
 health:
   type: nats
@@ -38,10 +40,10 @@ health:
 
 logs:
   max_files: 5
-  max_file_size: 10  # MB
+  max_file_size: 10
 
 update:
-  max_parallel: 2
+  max_parallel: 2       # Faster feedback in dev
   min_healthy_time: 10s
   healthy_deadline: 3m
   progress_deadline: 10m

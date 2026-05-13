@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Asty — Microservices Orchestrator with Locality-Aware Autoscaling</title>
+    <title>Scit — Microservices Orchestrator with Locality-Aware Autoscaling</title>
     <style>
         * {
             margin: 0;
@@ -287,7 +287,7 @@
 <body>
     <header>
         <div class="container">
-            <h1>Asty</h1>
+            <h1>Scit</h1>
             <p>Microservices Orchestrator with Locality-Aware Autoscaling</p>
         </div>
     </header>
@@ -295,7 +295,7 @@
     <div class="container">
         <div class="hero">
             <h2>Your Services. Where Your Users Are.</h2>
-            <p>Asty places service instances on nodes closest to real traffic. Requests stay local. Latency stays low. Resources stay efficient.</p>
+            <p>Scit places service instances on nodes closest to real traffic. Requests stay local. Latency stays low. Resources stay efficient.</p>
             <div class="architecture">
                 <span class="comment">/* request flow */</span><br>
                 Client <span class="arrow">&rarr;</span> LB (geo) <span class="arrow">&rarr;</span> <span class="node">Gateway :80</span> <span class="arrow">&rarr;</span> NATS <span class="arrow">&rarr;</span> <span class="node">Service</span> <span class="comment">// same node</span>
@@ -347,7 +347,7 @@
                 <div class="benefit-icon">&#x1F4C8;</div>
                 <div class="benefit-text">
                     <h3>Gateway Drives Placement</h3>
-                    <p>Gateway runs on every node and reports validated traffic metrics. When real user traffic exceeds the threshold on a node without services, Asty places instances there automatically.</p>
+                    <p>Gateway runs on every node and reports validated traffic metrics. When real user traffic exceeds the threshold on a node without services, Scit places instances there automatically.</p>
                 </div>
             </div>
 
@@ -396,12 +396,12 @@
             <h2>Add a Node in One Command</h2>
             <p>From bare server to running cluster member in under a minute.</p>
             <div class="code-block">
-                <span class="prompt">$</span> wget -qO- https://get.asty.dev/setup.sh | \<br>
+                <span class="prompt">$</span> wget -qO- https://get.scit.io/setup.sh | \<br>
                 &nbsp;&nbsp;<span class="flag">A_DOMAIN</span>=nodes.example.com \<br>
                 &nbsp;&nbsp;<span class="flag">A_DATACENTER</span>=eu-west \<br>
                 &nbsp;&nbsp;bash<br>
                 <br>
-                <span class="comment"># installs NATS + Asty, joins cluster via DNS, starts accepting traffic</span>
+                <span class="comment"># installs NATS + Scit, joins cluster via DNS, starts accepting traffic</span>
             </div>
         </div>
 
@@ -414,7 +414,7 @@
 
     <footer>
         <div class="container">
-            <p>&copy; 2026 Asty — Locality-Aware Microservices Orchestrator</p>
+            <p>&copy; 2026 Scit — Locality-Aware Microservices Orchestrator</p>
         </div>
     </footer>
 </body>

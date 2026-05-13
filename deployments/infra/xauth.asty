@@ -1,60 +1,88 @@
-# xauth service — JWT authentication with HttpOnly cookies and NATS KV
-# Type: service — managed by autoscaler (locality-aware placement)
+# xauth — JWT authentication service.
+# Handles login, token refresh, logout, and token validation.
+# Tokens are stored as HttpOnly cookies; revoked refresh tokens
+# are tracked in a NATS KV bucket to prevent reuse.
+#
+# Environment: PRODUCTION
+# Binary is downloaded from GitHub Releases with SHA256 verification.
 
 name: xauth
-type: service
+type: service       # Autoscaled by Asty (multiple copies, load-based placement)
 
+# Artifact is a tar.gz archive from GitHub Releases.
+# Checksum is verified before extraction — protects against corrupted downloads
+# and supply-chain tampering.
 artifact:
   url: https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/xauth_linux_${ARCH}.tar.gz
-  checksum: ${CHECKSUM}
+  checksum: ${CHECKSUM}    # Expected SHA256 hash, set at deploy time
 
 command: ./xauth
-user: asty
-kill_timeout: 30s
+user: asty          # Dedicated non-root user for production (principle of least privilege)
+kill_timeout: 30s   # SIGTERM → wait 30s → SIGKILL. Gives time to finish in-flight requests.
 
 env:
-  A_NATS_HOST: "127.0.0.1"
-  A_NATS_PORT: "4222"
-  A_NATS_USER: "${A_NATS_USER}"
-  A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
-  X_AUTH_USERNAME: "${X_AUTH_USERNAME}"
-  X_AUTH_PASSWORD: "${X_AUTH_PASSWORD}"
-  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"
-  X_AUTH_REFRESH_SECRET: "${X_AUTH_REFRESH_SECRET}"
-  X_AUTH_ACCESS_TTL: "${X_AUTH_ACCESS_TTL}"
-  X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"
-  X_AUTH_COOKIE_DOMAIN: "${X_AUTH_COOKIE_DOMAIN}"
-  X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"
-  X_AUTH_COOKIE_SAMESITE: "${X_AUTH_COOKIE_SAMESITE}"
-  A_LOG_LEVEL: "${A_LOG_LEVEL}"
+  X_AUTH_USERNAME: "${X_AUTH_USERNAME}"               # Accepted login username
+  X_AUTH_PASSWORD: "${X_AUTH_PASSWORD}"               # Accepted login password
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"     # HMAC-SHA256 key for access tokens (short-lived)
+  X_AUTH_REFRESH_SECRET: "${X_AUTH_REFRESH_SECRET}"   # HMAC-SHA256 key for refresh tokens (long-lived)
+  X_AUTH_COOKIE_DOMAIN: "${X_AUTH_COOKIE_DOMAIN}"     # Cookie Domain attribute (empty = current host)
+  X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"     # Cookie Secure flag (true in prod — requires HTTPS)
+  X_AUTH_COOKIE_SAMESITE: "${X_AUTH_COOKIE_SAMESITE}" # Cookie SameSite policy (strict in prod)
+  X_AUTH_ACCESS_TTL: "${X_AUTH_ACCESS_TTL}"           # Access token lifetime, e.g. "15m"
+  X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"         # Refresh token lifetime, e.g. "168h"
 
+# KV bucket for tracking revoked refresh tokens.
+# When a user logs out, their refresh token ID is written here.
+# On token refresh, the service checks this bucket — if the token is revoked, it rejects.
+# 3 replicas = the data is stored on 3 NATS servers for redundancy.
 kv:
   - bucket: authms_refresh_tokens
-    history: 1
-    replicas: 3
+    history: 1      # Only latest value per key (revoked = exists, that's all we need)
+    replicas: 3     # Survives loss of any single NATS node
 
+# Resource reservations for the scheduler.
+# The scheduler uses these to decide whether a node has capacity for another copy.
 resources:
-  cpu: 100       # MHz
-  memory: 32     # MB
+  cpu: 100          # MHz reserved
+  memory: 32        # MB reserved
 
+# Per-path rate limits enforced by the gateway.
+# These protect auth endpoints from brute-force attacks.
+# The gateway collects rules from all services at startup and applies
+# the longest matching prefix per request.
+rate_limit:
+  - path_prefix: "/v1/auth/"
+    rate: 5           # 5 requests/sec per IP for login/refresh/logout
+    burst: 10
+
+# Health check via NATS request-reply.
+# NATS micro services automatically respond to $SRV.PING.<name>,
+# so no separate HTTP health endpoint is needed.
 health:
   type: nats
   subject: $SRV.PING.xauth
-  interval: 10s
-  timeout: 3s
+  interval: 10s     # Probe frequency
+  timeout: 3s       # Max wait for a reply before marking unhealthy
 
 logs:
   max_files: 5
-  max_file_size: 10  # MB
+  max_file_size: 10   # MB per file. Oldest file is deleted when a new one rotates in.
 
+# Rolling update strategy.
+# Controls how Asty replaces old instances with new ones during a deploy.
+# Production is conservative — one instance at a time guarantees at least
+# N-1 healthy instances serving traffic during deploy.
 update:
-  max_parallel: 1
-  min_healthy_time: 10s
-  healthy_deadline: 3m
-  progress_deadline: 10m
-  auto_revert: true
+  max_parallel: 1       # One at a time — keeps capacity stable
+  min_healthy_time: 10s # New instance must pass health checks for 10s before it counts
+  healthy_deadline: 3m  # If not healthy within 3 min — considered failed
+  progress_deadline: 10m # Entire deploy must complete within 10 min or auto-revert triggers
+  auto_revert: true     # On failure: stop new version, bring back previous one
 
+# Restart policy for unexpected crashes.
+# After exhausting attempts within the interval, the allocation is marked failed
+# and the server reschedules it to a different node.
 restart:
-  attempts: 10
-  interval: 5m
-  delay: 15s
+  attempts: 10      # Max restart attempts within the interval window
+  interval: 5m      # Window duration — counter resets after 5 min of stable uptime
+  delay: 15s        # Pause between consecutive restart attempts

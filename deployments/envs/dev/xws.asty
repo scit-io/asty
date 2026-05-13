@@ -1,30 +1,35 @@
-# xws service — WebSocket session manager
-# Type: service — autoscaled based on load
-# Dev version: uses pre-built local binary
+# xws — WebSocket session manager.
+# Maintains persistent bidirectional connections with clients.
+# When a client connects via the gateway's /ws endpoint, the gateway
+# publishes to api.v1.xws.ws.connect and xws opens a NATS pub/sub
+# session for that client. Messages flow both ways until disconnect
+# or inactivity timeout.
+#
+# Unlike xauth/xhttp, xws does NOT use nats.go/micro — it's raw NATS.
+# So it exposes a custom "xws.ping" subject for health checks.
+#
+# Environment: LOCAL DEV
 
 name: xws
 type: service
 
 artifact:
   url: local
-  checksum: ""
 
 command: ./xws
 user: nobody
-kill_timeout: 10s
+kill_timeout: 10s   # Active WS sessions are drained on SIGTERM
 
 env:
-  A_NATS_HOST: "${A_NATS_HOST}"
-  A_NATS_PORT: "${A_NATS_PORT}"
-  A_NATS_USER: "${A_NATS_USER}"
-  A_NATS_PASSWORD: "${A_NATS_PASSWORD}"
-  A_LOG_LEVEL: "${A_LOG_LEVEL}"
-  X_WS_INACTIVITY_TIMEOUT: "${X_WS_INACTIVITY_TIMEOUT}"
+  X_WS_INACTIVITY_TIMEOUT: "${X_WS_INACTIVITY_TIMEOUT}"  # Close idle sessions after this duration
 
+# Resource reservations for the scheduler.
 resources:
-  cpu: 100       # MHz
-  memory: 48     # MB
+  cpu: 100          # MHz reserved
+  memory: 32        # MB — low; xws holds session state in memory, not large buffers
 
+# Custom health subject because xws uses raw NATS (no micro $SRV.PING).
+# The service subscribes to "xws.ping" and responds with "ok".
 health:
   type: nats
   subject: xws.ping
@@ -33,10 +38,10 @@ health:
 
 logs:
   max_files: 5
-  max_file_size: 10  # MB
+  max_file_size: 10
 
 update:
-  max_parallel: 2
+  max_parallel: 2       # Faster feedback in dev
   min_healthy_time: 10s
   healthy_deadline: 3m
   progress_deadline: 10m
