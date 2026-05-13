@@ -47,19 +47,64 @@ func (p *Process) GetLogPath() string {
 	return filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
 }
 
-// GetLogs reads the entire log file and returns it. The lines parameter
-// is currently ignored; callers that want a tail use tailLines on the
-// returned bytes.
-//
-// TODO: replace with a true tail-N implementation when log files grow
-// large enough that loading the whole file becomes a memory concern.
+// GetLogs returns the last `lines` lines of the service log file by
+// scanning backwards from EOF in tailReadBuffer-sized chunks and
+// counting newlines. Memory use is bounded by the size of the returned
+// tail, not by the log file size — important on long-running services
+// that accumulate tens of MiB before anyone asks for logs. A non-
+// positive `lines` reads the whole file.
 func (p *Process) GetLogs(lines int) ([]byte, error) {
 	f, err := os.Open(p.GetLogPath())
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	return io.ReadAll(f)
+
+	if lines <= 0 {
+		return io.ReadAll(f)
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	size := info.Size()
+	if size == 0 {
+		return nil, nil
+	}
+
+	buf := make([]byte, tailReadBuffer)
+	var tail []byte
+	newlines := 0
+	pos := size
+
+	for pos > 0 {
+		readSize := int64(tailReadBuffer)
+		if pos < readSize {
+			readSize = pos
+		}
+		pos -= readSize
+		if _, err := f.ReadAt(buf[:readSize], pos); err != nil && err != io.EOF {
+			return nil, err
+		}
+		chunk := buf[:readSize]
+		for i := int(readSize) - 1; i >= 0; i-- {
+			if chunk[i] != '\n' {
+				continue
+			}
+			// Trailing newline at the very end of the file is a
+			// separator, not a line boundary worth counting.
+			if pos+int64(i) == size-1 {
+				continue
+			}
+			newlines++
+			if newlines == lines {
+				return append(append([]byte{}, chunk[i+1:]...), tail...), nil
+			}
+		}
+		tail = append(append([]byte{}, chunk...), tail...)
+	}
+	return tail, nil
 }
 
 // TailLogs streams new lines from the log file into the lines channel

@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,37 +11,6 @@ import (
 
 	"asty/asty/internal/core/types"
 )
-
-// splitLines splits a string into lines, optionally returning only the last N lines.
-func splitLines(data string, lastN int) []string {
-	if data == "" {
-		return []string{}
-	}
-
-	lines := []string{}
-	current := ""
-
-	for _, ch := range data {
-		if ch == '\n' {
-			if current != "" {
-				lines = append(lines, current)
-				current = ""
-			}
-		} else {
-			current += string(ch)
-		}
-	}
-
-	if current != "" {
-		lines = append(lines, current)
-	}
-
-	if lastN > 0 && len(lines) > lastN {
-		return lines[len(lines)-lastN:]
-	}
-
-	return lines
-}
 
 func TestProcessLogs(t *testing.T) {
 	// Create temp directory for test
@@ -97,16 +67,17 @@ func TestProcessLogs(t *testing.T) {
 		t.Errorf("expected 'line3' in logs, got: %s", logStr)
 	}
 
-	// Test splitLines
-	lines := splitLines(logStr, 0)
-	if len(lines) < 3 {
-		t.Errorf("expected at least 3 lines, got %d", len(lines))
+	// Bounded tail: ask for 2 lines, should get line2+line3 only.
+	tailBytes, err := proc.GetLogs(2)
+	if err != nil {
+		t.Fatalf("failed to get bounded logs: %v", err)
 	}
-
-	// Test splitLines with limit
-	lastTwo := splitLines(logStr, 2)
-	if len(lastTwo) > 2 {
-		t.Errorf("expected max 2 lines, got %d", len(lastTwo))
+	tail := string(tailBytes)
+	if strings.Contains(tail, "line1") {
+		t.Errorf("GetLogs(2) should not include line1, got: %s", tail)
+	}
+	if !strings.Contains(tail, "line2") || !strings.Contains(tail, "line3") {
+		t.Errorf("GetLogs(2) should include line2 and line3, got: %s", tail)
 	}
 
 	// Stop process
@@ -121,50 +92,60 @@ func TestProcessLogs(t *testing.T) {
 	}
 }
 
-func TestSplitLines(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		lastN int
-		want  int
-	}{
-		{
-			name:  "empty string",
-			input: "",
-			lastN: 0,
-			want:  0,
-		},
-		{
-			name:  "single line",
-			input: "line1\n",
-			lastN: 0,
-			want:  1,
-		},
-		{
-			name:  "multiple lines",
-			input: "line1\nline2\nline3\n",
-			lastN: 0,
-			want:  3,
-		},
-		{
-			name:  "last 2 lines",
-			input: "line1\nline2\nline3\nline4\n",
-			lastN: 2,
-			want:  2,
-		},
-		{
-			name:  "no trailing newline",
-			input: "line1\nline2",
-			lastN: 0,
-			want:  2,
-		},
+// TestGetLogsTail writes a file with deterministic content and verifies
+// GetLogs returns exactly the requested tail, including across the 4 KiB
+// chunk boundary the backward scan uses.
+func TestGetLogsTail(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "asty-getlogs-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	svc := &types.ServiceDefinition{Name: "tail-svc"}
+	proc := New(svc, "test-node", tmpDir)
+	logDir := filepath.Join(tmpDir, "logs")
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	// 5000 short lines — total size comfortably crosses the 4 KiB chunk
+	// boundary, so the backward scan must stitch chunks correctly.
+	var sb strings.Builder
+	for i := 0; i < 5000; i++ {
+		fmt.Fprintf(&sb, "line%d\n", i)
+	}
+	if err := os.WriteFile(proc.GetLogPath(), []byte(sb.String()), 0644); err != nil {
+		t.Fatal(err)
 	}
 
+	tests := []struct {
+		name      string
+		lines     int
+		wantFirst string
+		wantLast  string
+		wantCount int
+	}{
+		{"tail 3", 3, "line4997", "line4999", 3},
+		{"tail 100", 100, "line4900", "line4999", 100},
+		{"tail across chunk boundary", 1000, "line4000", "line4999", 1000},
+		{"tail more than file has", 10000, "line0", "line4999", 5000},
+		{"tail 0 returns whole file", 0, "line0", "line4999", 5000},
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := splitLines(tt.input, tt.lastN)
-			if len(result) != tt.want {
-				t.Errorf("splitLines() got %d lines, want %d", len(result), tt.want)
+			b, err := proc.GetLogs(tt.lines)
+			if err != nil {
+				t.Fatalf("GetLogs: %v", err)
+			}
+			got := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+			if len(got) != tt.wantCount {
+				t.Fatalf("got %d lines, want %d", len(got), tt.wantCount)
+			}
+			if got[0] != tt.wantFirst {
+				t.Errorf("first line = %q, want %q", got[0], tt.wantFirst)
+			}
+			if got[len(got)-1] != tt.wantLast {
+				t.Errorf("last line = %q, want %q", got[len(got)-1], tt.wantLast)
 			}
 		})
 	}

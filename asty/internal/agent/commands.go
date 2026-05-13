@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"asty/asty/internal/core/types"
 
@@ -146,7 +147,14 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
 		return
 	}
 
-	logLines := tailLines(string(logData), logsCmd.Lines)
+	// GetLogs already bounded the result to logsCmd.Lines lines; here we
+	// just split into individual entries and drop empties.
+	var logLines []string
+	for _, line := range strings.Split(string(logData), "\n") {
+		if line != "" {
+			logLines = append(logLines, line)
+		}
+	}
 
 	log.Debug().
 		Str("service", logsCmd.ServiceName).

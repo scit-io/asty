@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -173,22 +172,3 @@ func (a *Agent) stopAllProcesses() {
 	}
 }
 
-// tailLines splits data into lines (dropping empty ones) and returns at
-// most lastN trailing lines. Used by the GetLogs RPC to bound the response
-// size when the caller asks for "the last N lines" of a log file.
-func tailLines(data string, lastN int) []string {
-	if data == "" {
-		return []string{}
-	}
-	parts := strings.Split(data, "\n")
-	lines := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p != "" {
-			lines = append(lines, p)
-		}
-	}
-	if lastN > 0 && len(lines) > lastN {
-		return lines[len(lines)-lastN:]
-	}
-	return lines
-}
