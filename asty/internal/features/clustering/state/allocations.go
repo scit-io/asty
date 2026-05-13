@@ -3,7 +3,6 @@ package state
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -53,65 +52,28 @@ func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*types.Servic
 	return &alloc, nil
 }
 
-// ListAllocations returns all allocations for a service
+// ListAllocations returns all allocations for a service via a single
+// streaming Watch snapshot (see snapshotKVByPattern) — no per-key round-trips.
 func (cs *ClusterState) ListAllocations(serviceName string) ([]*types.ServiceAllocation, error) {
-	keys, err := cs.bucket.Keys()
-	if err != nil {
-		if err == nats.ErrNoKeysFound {
-			return []*types.ServiceAllocation{}, nil
-		}
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
-
-	prefix := fmt.Sprintf("alloc.%s.", serviceName)
-	allocs := make([]*types.ServiceAllocation, 0)
-
-	for _, key := range keys {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-
-		entry, err := cs.bucket.Get(key)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("failed to get allocation entry")
-			continue
-		}
-
-		var alloc types.ServiceAllocation
-		if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal allocation")
-			continue
-		}
-
-		allocs = append(allocs, &alloc)
-	}
-
-	return allocs, nil
+	pattern := fmt.Sprintf("alloc.%s.*", serviceName)
+	return cs.allocsFromSnapshot(pattern)
 }
 
-// ListAllAllocations returns every allocation record in the bucket
+// ListAllAllocations returns every allocation record in the bucket via a
+// single streaming Watch snapshot.
 func (cs *ClusterState) ListAllAllocations() ([]*types.ServiceAllocation, error) {
-	keys, err := cs.bucket.Keys()
-	if err != nil {
-		if err == nats.ErrNoKeysFound {
-			return []*types.ServiceAllocation{}, nil
-		}
-		return nil, fmt.Errorf("failed to list keys: %w", err)
-	}
+	return cs.allocsFromSnapshot("alloc.>")
+}
 
-	const prefix = "alloc."
-	allocs := make([]*types.ServiceAllocation, 0, len(keys))
-	for _, key := range keys {
-		if !strings.HasPrefix(key, prefix) {
-			continue
-		}
-		entry, err := cs.bucket.Get(key)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("failed to get allocation entry")
-			continue
-		}
+func (cs *ClusterState) allocsFromSnapshot(pattern string) ([]*types.ServiceAllocation, error) {
+	raw, err := cs.snapshotKVByPattern(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot allocations: %w", err)
+	}
+	allocs := make([]*types.ServiceAllocation, 0, len(raw))
+	for key, data := range raw {
 		var alloc types.ServiceAllocation
-		if err := json.Unmarshal(entry.Value(), &alloc); err != nil {
+		if err := json.Unmarshal(data, &alloc); err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal allocation")
 			continue
 		}

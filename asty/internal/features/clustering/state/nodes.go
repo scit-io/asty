@@ -3,7 +3,6 @@ package state
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -62,37 +61,22 @@ func (cs *ClusterState) GetNode(nodeID string) (*types.NodeInfo, error) {
 	return &node, nil
 }
 
-// ListNodes returns all nodes in the cluster
+// ListNodes returns all nodes in the cluster via a single streaming Watch
+// snapshot (see snapshotKVByPattern) — no per-key round-trips.
 func (cs *ClusterState) ListNodes() ([]*types.NodeInfo, error) {
-	keys, err := cs.bucket.Keys()
+	raw, err := cs.snapshotKVByPattern("node.*")
 	if err != nil {
-		if err == nats.ErrNoKeysFound {
-			return []*types.NodeInfo{}, nil
-		}
-		return nil, fmt.Errorf("failed to list keys: %w", err)
+		return nil, fmt.Errorf("snapshot nodes: %w", err)
 	}
-
-	nodes := make([]*types.NodeInfo, 0)
-	for _, key := range keys {
-		if !strings.HasPrefix(key, "node.") {
-			continue
-		}
-
-		entry, err := cs.bucket.Get(key)
-		if err != nil {
-			log.Warn().Err(err).Str("key", key).Msg("failed to get node entry")
-			continue
-		}
-
+	nodes := make([]*types.NodeInfo, 0, len(raw))
+	for key, data := range raw {
 		var node types.NodeInfo
-		if err := json.Unmarshal(entry.Value(), &node); err != nil {
+		if err := json.Unmarshal(data, &node); err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal node")
 			continue
 		}
-
 		nodes = append(nodes, &node)
 	}
-
 	return nodes, nil
 }
 
