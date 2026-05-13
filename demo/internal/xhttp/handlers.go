@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"asty/demo/utils"
+
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
 	"github.com/rs/zerolog"
@@ -45,11 +47,11 @@ func (h *Handlers) Create(req micro.Request) {
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(req.Data(), &body); err != nil {
-		replyError(req, 400, "invalid json")
+		utils.Error(req, 400, "invalid json")
 		return
 	}
 	if body.Name == "" {
-		replyError(req, 400, "name required")
+		utils.Error(req, 400, "name required")
 		return
 	}
 
@@ -61,12 +63,12 @@ func (h *Handlers) Create(req micro.Request) {
 		body.Name, body.Value,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 
 	h.cache.Invalidate(ctx, "list")
-	replyJSON(req, 201, it)
+	utils.JSON(req, 201, it)
 }
 
 func (h *Handlers) Get(req micro.Request) {
@@ -77,7 +79,7 @@ func (h *Handlers) Get(req micro.Request) {
 		ID int64 `json:"id"`
 	}
 	if err := json.Unmarshal(req.Data(), &body); err != nil {
-		replyError(req, 400, "invalid json")
+		utils.Error(req, 400, "invalid json")
 		return
 	}
 
@@ -85,7 +87,7 @@ func (h *Handlers) Get(req micro.Request) {
 	if cached := h.cache.Get(ctx, cacheKey); len(cached) > 0 {
 		var it Item
 		if json.Unmarshal(cached, &it) == nil {
-			replyJSON(req, 200, it)
+			utils.JSON(req, 200, it)
 			return
 		}
 	}
@@ -96,18 +98,18 @@ func (h *Handlers) Get(req micro.Request) {
 		FROM xhttp WHERE id = $1`, body.ID,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err == sql.ErrNoRows {
-		replyError(req, 404, "not found")
+		utils.Error(req, 404, "not found")
 		return
 	}
 	if err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 
 	if encoded, err := json.Marshal(it); err == nil {
 		h.cache.Put(ctx, cacheKey, encoded)
 	}
-	replyJSON(req, 200, it)
+	utils.JSON(req, 200, it)
 }
 
 func (h *Handlers) List(req micro.Request) {
@@ -117,7 +119,7 @@ func (h *Handlers) List(req micro.Request) {
 	if cached := h.cache.Get(ctx, "list"); len(cached) > 0 {
 		var items []Item
 		if json.Unmarshal(cached, &items) == nil {
-			replyJSON(req, 200, items)
+			utils.JSON(req, 200, items)
 			return
 		}
 	}
@@ -126,7 +128,7 @@ func (h *Handlers) List(req micro.Request) {
 		SELECT id, name, value, created_at, updated_at
 		FROM xhttp ORDER BY id`)
 	if err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 	defer rows.Close()
@@ -135,20 +137,20 @@ func (h *Handlers) List(req micro.Request) {
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt); err != nil {
-			replyError(req, 500, "db scan error")
+			utils.Error(req, 500, "db scan error")
 			return
 		}
 		items = append(items, it)
 	}
 	if err := rows.Err(); err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 
 	if encoded, err := json.Marshal(items); err == nil {
 		h.cache.Put(ctx, "list", encoded)
 	}
-	replyJSON(req, 200, items)
+	utils.JSON(req, 200, items)
 }
 
 func (h *Handlers) Update(req micro.Request) {
@@ -161,11 +163,11 @@ func (h *Handlers) Update(req micro.Request) {
 		Value string `json:"value"`
 	}
 	if err := json.Unmarshal(req.Data(), &body); err != nil {
-		replyError(req, 400, "invalid json")
+		utils.Error(req, 400, "invalid json")
 		return
 	}
 	if body.Name == "" {
-		replyError(req, 400, "name required")
+		utils.Error(req, 400, "name required")
 		return
 	}
 
@@ -177,16 +179,16 @@ func (h *Handlers) Update(req micro.Request) {
 		body.Name, body.Value, body.ID,
 	).Scan(&it.ID, &it.Name, &it.Value, &it.CreatedAt, &it.UpdatedAt)
 	if err == sql.ErrNoRows {
-		replyError(req, 404, "not found")
+		utils.Error(req, 404, "not found")
 		return
 	}
 	if err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 
 	h.cache.Invalidate(ctx, fmt.Sprintf("item:%d", body.ID), "list")
-	replyJSON(req, 200, it)
+	utils.JSON(req, 200, it)
 }
 
 func (h *Handlers) Delete(req micro.Request) {
@@ -197,39 +199,21 @@ func (h *Handlers) Delete(req micro.Request) {
 		ID int64 `json:"id"`
 	}
 	if err := json.Unmarshal(req.Data(), &body); err != nil {
-		replyError(req, 400, "invalid json")
+		utils.Error(req, 400, "invalid json")
 		return
 	}
 
 	res, err := h.db.ExecContext(ctx, `DELETE FROM xhttp WHERE id = $1`, body.ID)
 	if err != nil {
-		replyError(req, 500, "db error")
+		utils.Error(req, 500, "db error")
 		return
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		replyError(req, 404, "not found")
+		utils.Error(req, 404, "not found")
 		return
 	}
 
 	h.cache.Invalidate(ctx, fmt.Sprintf("item:%d", body.ID), "list")
-	replyJSON(req, 204, nil)
-}
-
-func replyJSON(req micro.Request, status int, data any) {
-	body, _ := json.Marshal(map[string]any{"data": data})
-	headers := micro.Headers{
-		"Status":       []string{fmt.Sprintf("%d", status)},
-		"Content-Type": []string{"application/json"},
-	}
-	req.Respond(body, micro.WithHeaders(headers))
-}
-
-func replyError(req micro.Request, status int, text string) {
-	body, _ := json.Marshal(map[string]string{"error": text})
-	headers := micro.Headers{
-		"Status":       []string{fmt.Sprintf("%d", status)},
-		"Content-Type": []string{"application/json"},
-	}
-	req.Respond(body, micro.WithHeaders(headers))
+	utils.JSON(req, 204, nil)
 }

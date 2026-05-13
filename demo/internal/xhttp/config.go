@@ -3,7 +3,7 @@ package xhttp
 import (
 	"time"
 
-	"asty/demo/internal/envutil"
+	"asty/demo/utils"
 )
 
 type Config struct {
@@ -16,10 +16,10 @@ type Config struct {
 
 func LoadConfig() Config {
 	return Config{
-		NATSUrl:      envutil.NATSURL(),
-		KVBucket:     envutil.EnvOr("A_KV_XHTTP_CACHE", "xhttp_cache"),
-		DatabaseURL:  envutil.MustEnv("X_HTTP_DATABASE_URL"),
-		AccessSecret: []byte(envutil.MustEnv("X_AUTH_ACCESS_SECRET")),
-		CacheTTL:     envutil.DurationOr("X_HTTP_CACHE_TTL", 30*time.Second),
+		NATSUrl:      utils.NATSURL(),
+		KVBucket:     utils.EnvOr("A_KV_XHTTP_CACHE", "xhttp_cache"),
+		DatabaseURL:  utils.MustEnv("X_HTTP_DATABASE_URL"),
+		AccessSecret: []byte(utils.MustEnv("X_AUTH_ACCESS_SECRET")),
+		CacheTTL:     utils.DurationOr("X_HTTP_CACHE_TTL", 30*time.Second),
 	}
 }

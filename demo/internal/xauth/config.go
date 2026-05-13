@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"asty/demo/internal/envutil"
+	"asty/demo/utils"
 )
 
 type Config struct {
@@ -36,16 +36,16 @@ func parseSameSite(s string) http.SameSite {
 
 func LoadConfig() Config {
 	return Config{
-		NATSUrl:        envutil.NATSURL(),
-		KVBucket:       envutil.EnvOr("A_KV_AUTHMS_REFRESH_TOKENS", "authms_refresh_tokens"),
-		Username:       envutil.MustEnv("X_AUTH_USERNAME"),
-		Password:       envutil.MustEnv("X_AUTH_PASSWORD"),
-		AccessSecret:   []byte(envutil.MustEnv("X_AUTH_ACCESS_SECRET")),
-		RefreshSecret:  []byte(envutil.MustEnv("X_AUTH_REFRESH_SECRET")),
-		AccessTTL:      envutil.DurationOr("X_AUTH_ACCESS_TTL", 15*time.Minute),
-		RefreshTTL:     envutil.DurationOr("X_AUTH_REFRESH_TTL", 168*time.Hour),
+		NATSUrl:        utils.NATSURL(),
+		KVBucket:       utils.EnvOr("A_KV_AUTHMS_REFRESH_TOKENS", "authms_refresh_tokens"),
+		Username:       utils.MustEnv("X_AUTH_USERNAME"),
+		Password:       utils.MustEnv("X_AUTH_PASSWORD"),
+		AccessSecret:   []byte(utils.MustEnv("X_AUTH_ACCESS_SECRET")),
+		RefreshSecret:  []byte(utils.MustEnv("X_AUTH_REFRESH_SECRET")),
+		AccessTTL:      utils.DurationOr("X_AUTH_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:     utils.DurationOr("X_AUTH_REFRESH_TTL", 168*time.Hour),
 		CookieDomain:   os.Getenv("X_AUTH_COOKIE_DOMAIN"),
-		CookieSecure:   envutil.EnvOr("X_AUTH_COOKIE_SECURE", "true") == "true",
-		CookieSameSite: parseSameSite(envutil.EnvOr("X_AUTH_COOKIE_SAMESITE", "strict")),
+		CookieSecure:   utils.EnvOr("X_AUTH_COOKIE_SECURE", "true") == "true",
+		CookieSameSite: parseSameSite(utils.EnvOr("X_AUTH_COOKIE_SAMESITE", "strict")),
 	}
 }

@@ -1,8 +1,9 @@
-// Package envutil holds tiny helpers shared by the demo services.
-// Kept separate from asty/internal/core/* on purpose: demos are meant
-// to look like a third-party service would — no dependency on the
-// asty SDK, just stdlib.
-package envutil
+// Package utils holds tiny helpers shared by the demo services
+// (env-var parsing, NATS URL building, micro reply formatting). Kept
+// separate from asty/internal/core/* on purpose: demos are meant to
+// look like a third-party service would — no dependency on the asty
+// SDK, just stdlib and nats.go.
+package utils
 
 import (
 	"os"

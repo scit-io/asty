@@ -3,7 +3,7 @@ package xws
 import (
 	"time"
 
-	"asty/demo/internal/envutil"
+	"asty/demo/utils"
 )
 
 type Config struct {
@@ -13,7 +13,7 @@ type Config struct {
 
 func LoadConfig() Config {
 	return Config{
-		NATSUrl:           envutil.NATSURL(),
-		InactivityTimeout: envutil.DurationOr("X_WS_INACTIVITY_TIMEOUT", 3*time.Minute),
+		NATSUrl:           utils.NATSURL(),
+		InactivityTimeout: utils.DurationOr("X_WS_INACTIVITY_TIMEOUT", 3*time.Minute),
 	}
 }

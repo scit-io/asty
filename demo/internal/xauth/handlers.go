@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"time"
 
+	"asty/demo/utils"
+
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/nats-io/nats.go/micro"
 	"github.com/rs/zerolog"
@@ -29,14 +31,14 @@ func (h *Handlers) Login(req micro.Request) {
 		Password string `json:"password"`
 	}
 	if err := json.Unmarshal(req.Data(), &body); err != nil {
-		replyError(req, 400, "invalid json")
+		utils.Error(req, 400, "invalid json")
 		return
 	}
 
 	userOK := hmac.Equal([]byte(body.Username), []byte(h.cfg.Username))
 	passOK := hmac.Equal([]byte(body.Password), []byte(h.cfg.Password))
 	if !userOK || !passOK {
-		replyError(req, 401, "invalid credentials")
+		utils.Error(req, 401, "invalid credentials")
 		return
 	}
 
@@ -46,28 +48,28 @@ func (h *Handlers) Login(req micro.Request) {
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
 		h.log.Error().Err(err).Msg("Login: issue tokens failed")
-		replyError(req, 500, "failed to issue tokens")
+		utils.Error(req, 500, "failed to issue tokens")
 		return
 	}
 
 	h.log.Info().Str("user", h.cfg.Username).Msg("login ok")
-	replyOK(req, 200, map[string]string{"status": "ok"}, accessCookie, refreshCookie)
+	utils.JSON(req, 200, map[string]string{"status": "ok"}, accessCookie, refreshCookie)
 }
 
 func (h *Handlers) Refresh(req micro.Request) {
 	rawRefresh := getCookie(req, "refresh_token")
 	if rawRefresh == "" {
-		replyError(req, 401, "refresh token missing")
+		utils.Error(req, 401, "refresh token missing")
 		return
 	}
 
 	c, err := VerifyJWT(rawRefresh, h.cfg.RefreshSecret)
 	if err != nil {
-		replyError(req, 401, "invalid refresh token")
+		utils.Error(req, 401, "invalid refresh token")
 		return
 	}
 	if time.Now().Unix() > c.Exp+int64(JWTClockSkew.Seconds()) {
-		replyError(req, 401, "refresh token expired")
+		utils.Error(req, 401, "refresh token expired")
 		return
 	}
 
@@ -77,22 +79,22 @@ func (h *Handlers) Refresh(req micro.Request) {
 	entry, err := h.kv.Get(ctx, c.Jti)
 	if err != nil {
 		if err == jetstream.ErrKeyNotFound {
-			replyError(req, 401, "refresh token revoked")
+			utils.Error(req, 401, "refresh token revoked")
 			return
 		}
 		h.log.Error().Err(err).Str("jti", c.Jti).Msg("Refresh: KV get error")
-		replyError(req, 500, "internal error")
+		utils.Error(req, 500, "internal error")
 		return
 	}
 	if string(entry.Value()) == "revoked" {
-		replyError(req, 401, "refresh token revoked")
+		utils.Error(req, 401, "refresh token revoked")
 		return
 	}
 
 	accessCookie, refreshCookie, err := h.issueTokenCookies(ctx)
 	if err != nil {
 		h.log.Error().Err(err).Msg("Refresh: issue tokens failed")
-		replyError(req, 500, "failed to issue tokens")
+		utils.Error(req, 500, "failed to issue tokens")
 		return
 	}
 
@@ -101,7 +103,7 @@ func (h *Handlers) Refresh(req micro.Request) {
 	}
 
 	h.log.Info().Str("user", c.Sub).Msg("refresh ok")
-	replyOK(req, 200, map[string]string{"status": "ok"}, accessCookie, refreshCookie)
+	utils.JSON(req, 200, map[string]string{"status": "ok"}, accessCookie, refreshCookie)
 }
 
 func (h *Handlers) Logout(req micro.Request) {
@@ -119,23 +121,23 @@ func (h *Handlers) Logout(req micro.Request) {
 	clearRefresh := buildSetCookie("refresh_token", "", h.cfg.CookieDomain, -1, h.cfg.CookieSecure, h.cfg.CookieSameSite)
 
 	h.log.Info().Msg("logout")
-	replyOK(req, 200, map[string]string{"status": "ok"}, clearAccess, clearRefresh)
+	utils.JSON(req, 200, map[string]string{"status": "ok"}, clearAccess, clearRefresh)
 }
 
 func (h *Handlers) Me(req micro.Request) {
 	rawAccess := getCookie(req, "access_token")
 	if rawAccess == "" {
-		replyError(req, 401, "access token missing")
+		utils.Error(req, 401, "access token missing")
 		return
 	}
 
 	c, err := VerifyJWT(rawAccess, h.cfg.AccessSecret)
 	if err != nil {
-		replyError(req, 401, "invalid access token")
+		utils.Error(req, 401, "invalid access token")
 		return
 	}
 	if time.Now().Unix() > c.Exp+int64(JWTClockSkew.Seconds()) {
-		replyError(req, 401, "access token expired")
+		utils.Error(req, 401, "access token expired")
 		return
 	}
 
@@ -203,25 +205,4 @@ func buildSetCookie(name, value, domain string, maxAge int, secure bool, sameSit
 		MaxAge: maxAge, HttpOnly: true, Secure: secure, SameSite: sameSite,
 	}
 	return c.String()
-}
-
-func replyOK(req micro.Request, status int, data any, cookies ...string) {
-	body, _ := json.Marshal(map[string]any{"data": data})
-	headers := micro.Headers{
-		"Status":       []string{fmt.Sprintf("%d", status)},
-		"Content-Type": []string{"application/json"},
-	}
-	if len(cookies) > 0 {
-		headers["Set-Cookie"] = cookies
-	}
-	req.Respond(body, micro.WithHeaders(headers))
-}
-
-func replyError(req micro.Request, status int, text string) {
-	body, _ := json.Marshal(map[string]string{"error": text})
-	headers := micro.Headers{
-		"Status":       []string{fmt.Sprintf("%d", status)},
-		"Content-Type": []string{"application/json"},
-	}
-	req.Respond(body, micro.WithHeaders(headers))
 }
