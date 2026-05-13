@@ -38,7 +38,15 @@ type Process struct {
 	status    Status
 	cancelCtx context.CancelFunc
 
-	logFile *os.File
+	// Log output. setupLogs picks one of two modes based on the
+	// service definition: plain (child writes directly to logFile) or
+	// rotating (child writes to logPipeW; a goroutine drains the read
+	// end into logRotator, which rolls files over by size). The unused
+	// fields stay nil.
+	logFile    *os.File
+	logRotator *rotatingWriter
+	logPipeW   *os.File
+	logWG      sync.WaitGroup
 
 	// done is closed when the process exits (clean or failed). Letting
 	// callers select on it avoids polling Status() in tight loops.
@@ -110,8 +118,13 @@ func (p *Process) Start(ctx context.Context) error {
 		p.cmd.Env = append(p.cmd.Env, fmt.Sprintf("%s=%s", k, os.ExpandEnv(v)))
 	}
 	p.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	p.cmd.Stdout = p.logFile
-	p.cmd.Stderr = p.logFile
+	if p.logPipeW != nil {
+		p.cmd.Stdout = p.logPipeW
+		p.cmd.Stderr = p.logPipeW
+	} else {
+		p.cmd.Stdout = p.logFile
+		p.cmd.Stderr = p.logFile
+	}
 
 	if err := p.cmd.Start(); err != nil {
 		p.status = StatusFailed

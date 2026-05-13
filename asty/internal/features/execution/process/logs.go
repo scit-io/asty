@@ -1,32 +1,61 @@
 package process
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"time"
 )
-
-// tailPollInterval — how often TailLogs re-reads the log file. Fast
-// enough to feel "live" in the UI; slow enough that an idle process
-// doesn't burn a CPU. fsnotify would be more reactive but complicates
-// log rotation; the polling cost is negligible compared to JSON encoding
-// and NATS publish on the agent.
-const tailPollInterval = 100 * time.Millisecond
 
 // tailReadBuffer is the per-tick read size. 4 KiB is one filesystem
 // block on every supported OS, which keeps the syscall count down
 // without holding too much in memory.
 const tailReadBuffer = 4096
 
+// GetLogPath returns the path to the active per-service log file.
+// Rotated copies (when rotation is enabled) live at path.1, path.2, ...
+func (p *Process) GetLogPath() string {
+	return filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
+}
+
+// setupLogs prepares the destination the child process will write
+// stdout/stderr into. Two modes:
+//
+//   - Plain (default, used when .asty leaves logs.* empty): child
+//     writes directly to a single append-only file at GetLogPath().
+//   - Rotating (logs.max_files > 0 && logs.max_file_size > 0): child
+//     writes to a pipe; a copier goroutine drains the pipe into a
+//     rotatingWriter that rolls the file over once max_file_size is
+//     reached, keeping max_files rotated backups.
 func (p *Process) setupLogs() error {
 	logDir := filepath.Join(p.workDir, "logs")
 	if err := os.MkdirAll(logDir, 0755); err != nil {
 		return err
 	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("%s.log", p.svc.Name))
+	logPath := p.GetLogPath()
+
+	if p.svc.Logs.MaxFiles > 0 && p.svc.Logs.MaxFileSize > 0 {
+		maxBytes := int64(p.svc.Logs.MaxFileSize) * 1024 * 1024
+		rw, err := newRotatingWriter(logPath, maxBytes, p.svc.Logs.MaxFiles)
+		if err != nil {
+			return err
+		}
+		r, w, err := os.Pipe()
+		if err != nil {
+			rw.Close()
+			return err
+		}
+		p.logRotator = rw
+		p.logPipeW = w
+		p.logWG.Add(1)
+		go func() {
+			defer p.logWG.Done()
+			io.Copy(rw, r)
+			r.Close()
+		}()
+		return nil
+	}
+
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
@@ -35,24 +64,33 @@ func (p *Process) setupLogs() error {
 	return nil
 }
 
+// closeLogs releases whatever logs.go opened in setupLogs. In rotating
+// mode this closes the pipe write end (which lets the copier goroutine
+// drain and exit), waits for it, then closes the rotator. In plain
+// mode it just closes the active file.
 func (p *Process) closeLogs() {
+	if p.logPipeW != nil {
+		p.logPipeW.Close()
+		p.logPipeW = nil
+		p.logWG.Wait()
+		if p.logRotator != nil {
+			p.logRotator.Close()
+			p.logRotator = nil
+		}
+		return
+	}
 	if p.logFile != nil {
 		p.logFile.Close()
 		p.logFile = nil
 	}
 }
 
-// GetLogPath returns the path to the per-service log file.
-func (p *Process) GetLogPath() string {
-	return filepath.Join(p.workDir, "logs", fmt.Sprintf("%s.log", p.svc.Name))
-}
-
-// GetLogs returns the last `lines` lines of the service log file by
+// GetLogs returns the last `lines` lines of the active log file by
 // scanning backwards from EOF in tailReadBuffer-sized chunks and
-// counting newlines. Memory use is bounded by the size of the returned
-// tail, not by the log file size — important on long-running services
-// that accumulate tens of MiB before anyone asks for logs. A non-
-// positive `lines` reads the whole file.
+// counting newlines. Memory use is bounded by the returned tail, not
+// by the file size. lines <= 0 returns the whole file. Rotated backups
+// (path.1, .2, ...) are not included — callers wanting historical
+// content read those files directly.
 func (p *Process) GetLogs(lines int) ([]byte, error) {
 	f, err := os.Open(p.GetLogPath())
 	if err != nil {
@@ -92,8 +130,6 @@ func (p *Process) GetLogs(lines int) ([]byte, error) {
 			if chunk[i] != '\n' {
 				continue
 			}
-			// Trailing newline at the very end of the file is a
-			// separator, not a line boundary worth counting.
 			if pos+int64(i) == size-1 {
 				continue
 			}
@@ -105,65 +141,4 @@ func (p *Process) GetLogs(lines int) ([]byte, error) {
 		tail = append(append([]byte{}, chunk...), tail...)
 	}
 	return tail, nil
-}
-
-// TailLogs streams new lines from the log file into the lines channel
-// until ctx is cancelled. It seeks to EOF first so callers only see
-// content written after the call started.
-func (p *Process) TailLogs(ctx context.Context, lines chan<- string) error {
-	f, err := os.Open(p.GetLogPath())
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if _, err := f.Seek(0, io.SeekEnd); err != nil {
-		return err
-	}
-
-	buf := make([]byte, tailReadBuffer)
-	remainder := ""
-
-	ticker := time.NewTicker(tailPollInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			n, err := f.Read(buf)
-			if err != nil && err != io.EOF {
-				return err
-			}
-			if n == 0 {
-				continue
-			}
-			remainder = emitLines(ctx, lines, remainder+string(buf[:n]))
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-		}
-	}
-}
-
-// emitLines pushes complete lines from data into out, returning whatever
-// trailing partial line is left for the next read cycle to prepend.
-func emitLines(ctx context.Context, out chan<- string, data string) string {
-	start := 0
-	for i := 0; i < len(data); i++ {
-		if data[i] != '\n' {
-			continue
-		}
-		line := data[start:i]
-		start = i + 1
-		if line == "" {
-			continue
-		}
-		select {
-		case out <- line:
-		case <-ctx.Done():
-			return ""
-		}
-	}
-	return data[start:]
 }
