@@ -27,7 +27,7 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	nLines := readQueryLines(r)
 	follow := r.URL.Query().Get("follow") == "true"
 
-	allocation := api.findAllocationByID(allocID)
+	allocation := api.allocByID(allocID)
 	if allocation == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 		return
@@ -51,22 +51,7 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	api.streamFromNATS(w, r, flusher, subject, true)
 }
 
-// findAllocationByID walks every service's allocations once, returning
-// the first match. Cheap enough for typical cluster sizes.
-func (api *API) findAllocationByID(allocID string) *types.ServiceAllocation {
-	for _, svc := range api.ctx.Services() {
-		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		for _, alloc := range allocs {
-			if alloc.ID == allocID {
-				return alloc
-			}
-		}
-	}
-	return nil
-}
+// allocByID lives in lookup.go (snapshot-first lookups).
 
 // respondAllocSnapshot sends a "fetch logs" RPC to the owning agent and
 // returns the response as JSON.

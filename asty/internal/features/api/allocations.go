@@ -7,6 +7,9 @@ import (
 	"asty/asty/internal/core/types"
 )
 
+// Snapshot-first allocation lookups (allocByID, allocsByNode,
+// nodeAllocCounts) live in lookup.go.
+
 // handleAllocations returns service allocations.
 func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	if !methodGuard(w, r, http.MethodGet) {
@@ -32,19 +35,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if nodeID != "" {
-		var allAllocs []*types.ServiceAllocation
-		for _, svc := range api.ctx.Services() {
-			allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-			if err != nil {
-				continue
-			}
-			for _, alloc := range allocs {
-				if alloc.NodeID == nodeID {
-					allAllocs = append(allAllocs, alloc)
-				}
-			}
-		}
-
+		allAllocs := api.allocsByNode(nodeID)
 		api.writeJSON(w, http.StatusOK, map[string]interface{}{
 			"node_id":     nodeID,
 			"allocations": allAllocs,
@@ -90,20 +81,10 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	services := api.ctx.Services()
-	for _, svc := range services {
-		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		for _, alloc := range allocs {
-			if alloc.ID == allocID {
-				api.writeJSON(w, http.StatusOK, alloc)
-				return
-			}
-		}
+	if alloc := api.allocByID(allocID); alloc != nil {
+		api.writeJSON(w, http.StatusOK, alloc)
+		return
 	}
-
 	api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 }
 
@@ -111,7 +92,7 @@ func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
 // pending so the controller re-dispatches a start command to the same node.
 // Live copy count stays at N.
 func (api *API) handleAllocationRestart(w http.ResponseWriter, _ *http.Request, allocID string) {
-	alloc := api.findAllocByID(allocID)
+	alloc := api.allocByID(allocID)
 	if alloc == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 		return
@@ -143,7 +124,7 @@ func (api *API) handleAllocationRestart(w http.ResponseWriter, _ *http.Request, 
 // off a noisy neighbour. To stop permanently, scale the service down or drain
 // the node.
 func (api *API) handleAllocationStop(w http.ResponseWriter, _ *http.Request, allocID string) {
-	alloc := api.findAllocByID(allocID)
+	alloc := api.allocByID(allocID)
 	if alloc == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 		return
@@ -163,19 +144,3 @@ func (api *API) handleAllocationStop(w http.ResponseWriter, _ *http.Request, all
 	})
 }
 
-// findAllocByID walks every service's allocations and returns the first match
-// or nil. Used by per-allocation action handlers (restart, stop).
-func (api *API) findAllocByID(allocID string) *types.ServiceAllocation {
-	for _, svc := range api.ctx.Services() {
-		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		for _, a := range allocs {
-			if a.ID == allocID {
-				return a
-			}
-		}
-	}
-	return nil
-}

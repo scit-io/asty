@@ -162,17 +162,27 @@ func (dm *DrainManager) GetStatus(nodeID string) *DrainStatus {
 
 // collectAllocs gathers every running/pending/starting allocation
 // currently bound to nodeID. Stopped/failed ones are ignored — they're
-// not contributing traffic and don't need migration.
+// not contributing traffic and don't need migration. One Watch-based
+// snapshot beats N round-trips when the service list is long.
 func (dm *DrainManager) collectAllocs(nodeID string) []allocOnNode {
-	var allocs []allocOnNode
+	svcByName := make(map[string]*types.ServiceDefinition, len(dm.deps.GetServices()))
 	for _, svc := range dm.deps.GetServices() {
-		alloc, err := dm.deps.GetClusterState().GetAllocation(svc.Name, nodeID)
-		if err != nil {
+		svcByName[svc.Name] = svc
+	}
+	all, err := dm.deps.GetClusterState().ListAllAllocations()
+	if err != nil {
+		return nil
+	}
+	var allocs []allocOnNode
+	for _, a := range all {
+		if a.NodeID != nodeID || !a.Status.IsLive() {
 			continue
 		}
-		if alloc.Status.IsLive() {
-			allocs = append(allocs, allocOnNode{svc: svc, alloc: alloc})
+		svc, ok := svcByName[a.ServiceName]
+		if !ok {
+			continue
 		}
+		allocs = append(allocs, allocOnNode{svc: svc, alloc: a})
 	}
 	return allocs
 }

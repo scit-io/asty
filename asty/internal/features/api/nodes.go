@@ -9,30 +9,9 @@ import (
 	"asty/asty/internal/features/draining"
 )
 
-// nodeAllocCounts walks every service's allocations once and groups
-// (planned, running) counts by node ID. Returning a map (instead of
-// computing per-node) keeps complexity at O(allocations) regardless of
-// how many nodes are queried afterwards.
-func (api *API) nodeAllocCounts() map[string]struct{ Planned, Running int } {
-	out := make(map[string]struct{ Planned, Running int })
-	for _, svc := range api.ctx.Services() {
-		allocs, err := api.ctx.ClusterState().ListAllocations(svc.Name)
-		if err != nil {
-			continue
-		}
-		for _, a := range allocs {
-			c := out[a.NodeID]
-			c.Planned++
-			if a.Status == types.AllocRunning {
-				c.Running++
-			}
-			out[a.NodeID] = c
-		}
-	}
-	return out
-}
+// nodeAllocCounts lives in lookup.go (snapshot-first lookups).
 
-func applyAllocCounts(node *types.NodeInfo, counts map[string]struct{ Planned, Running int }) {
+func applyAllocCounts(node *types.NodeInfo, counts map[string]allocCounts) {
 	c := counts[node.ID]
 	node.AllocationsRunning = c.Running
 	node.AllocationsPlanned = c.Planned
