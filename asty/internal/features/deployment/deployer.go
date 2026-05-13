@@ -36,6 +36,11 @@ type DeploymentPlan struct {
 	TargetVersion  string
 	UpdateStrategy UpdateStrategy
 	Allocations    []*types.ServiceAllocation
+	// Service is the freshly-loaded definition the deployer ships to
+	// agents in restart commands. The server populates it from the
+	// service loader so per-deploy changes (env, resources, etc.) are
+	// honoured.
+	Service *types.ServiceDefinition
 }
 
 // UpdateStrategy defines how to update.
@@ -68,26 +73,30 @@ type StateAccessor interface {
 	MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error
 }
 
+// SendRestartCommand is the dispatcher the deployer uses to tell an
+// agent to apply a new version. Mirrors controller.SendStartCommand
+// in spirit: the server provides the implementation, the deployer
+// stays decoupled from NATS and URL-resolution details.
+type SendRestartCommand func(nodeID string, svc *types.ServiceDefinition, version string) error
+
 // Deployer handles service deployments with rolling updates.
 type Deployer struct {
 	clusterState StateAccessor
 	nc           *nats.Conn
-	cfg          DeployerConfig
+	restart      SendRestartCommand
 
 	mu      sync.Mutex
 	history []DeploymentRecord
 }
 
-// DeployerConfig holds deployer-specific configuration. Empty for now;
-// kept as a struct so adding knobs in the future doesn't break the API.
-type DeployerConfig struct{}
-
-// NewDeployer creates a new deployer.
-func NewDeployer(clusterState StateAccessor, nc *nats.Conn, cfg DeployerConfig) *Deployer {
+// NewDeployer creates a new deployer. restart is the per-dispatch
+// callback used by the rolling-update path to push a new version to a
+// node's agent (server.sendRestartCommand in production).
+func NewDeployer(clusterState StateAccessor, nc *nats.Conn, restart SendRestartCommand) *Deployer {
 	return &Deployer{
 		clusterState: clusterState,
 		nc:           nc,
-		cfg:          cfg,
+		restart:      restart,
 		history:      make([]DeploymentRecord, 0),
 	}
 }

@@ -52,6 +52,7 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 		CurrentVersion: currentVersion,
 		TargetVersion:  version,
 		Allocations:    allocs,
+		Service:        svc,
 		UpdateStrategy: deployment.UpdateStrategy{
 			MaxParallel:      svc.Update.MaxParallel,
 			MinHealthyTime:   minHealthy,

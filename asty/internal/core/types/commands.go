@@ -51,6 +51,20 @@ func MarshalStartCommand(svc *ServiceDefinition) ([]byte, error) {
 	return json.Marshal(Command{Type: "start", Data: data})
 }
 
+// MarshalRestartCommand wraps svc in a restart-typed Command. The payload
+// shape is identical to start (StartServiceCommand) so the agent decodes
+// it with the same parser — the type alone distinguishes "start fresh"
+// from "stop then start with this new svc def" (which is what deploy
+// rolling-update uses to apply a new version).
+func MarshalRestartCommand(svc *ServiceDefinition) ([]byte, error) {
+	cmd := StartServiceCommand{Service: svc}
+	data, err := json.Marshal(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(Command{Type: "restart", Data: data})
+}
+
 func MarshalStopCommand(serviceName string) ([]byte, error) {
 	cmd := StopServiceCommand{ServiceName: serviceName}
 	data, err := json.Marshal(cmd)

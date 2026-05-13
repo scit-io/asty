@@ -39,6 +39,8 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 	switch cmd.Type {
 	case "start":
 		a.handleStartCommand(msg, cmd.Data)
+	case "restart":
+		a.handleRestartCommand(msg, cmd.Data)
 	case "stop":
 		a.handleStopCommand(msg, cmd.Data)
 	case "logs":
@@ -47,6 +49,27 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 		log.Error().Str("type", cmd.Type).Msg("unknown command type")
 		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
 	}
+}
+
+func (a *Agent) handleRestartCommand(msg *nats.Msg, data []byte) {
+	startCmd, err := types.ParseStartCommand(data)
+	if err != nil {
+		log.Error().Err(err).Msg("failed to parse restart command")
+		msg.Respond(types.MarshalResponse(false, "", err))
+		return
+	}
+
+	log.Info().
+		Str("service", startCmd.Service.Name).
+		Msg("restarting service")
+
+	if err := a.RestartService(startCmd.Service); err != nil {
+		log.Error().Err(err).Str("service", startCmd.Service.Name).Msg("failed to restart service")
+		msg.Respond(types.MarshalResponse(false, "", err))
+		return
+	}
+
+	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s restarted", startCmd.Service.Name), nil))
 }
 
 func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {

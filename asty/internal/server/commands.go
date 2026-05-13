@@ -36,7 +36,9 @@ func (s *Server) SendCommandToAgent(nodeID string, command []byte, timeout time.
 }
 
 // sendStartCommand provisions any declared KV buckets, injects their
-// env vars into svc, then asks the agent to start the service.
+// env vars into svc, resolves ${VERSION}/${ARCH}/${GITHUB_REPO} in the
+// artifact URL against this alloc's version, then asks the agent to
+// start the service.
 func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) error {
 	kvEnv, err := s.provisionKVBuckets(svc)
 	if err != nil {
@@ -44,7 +46,9 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 	}
 	kvEnvForAllocation(svc, kvEnv)
 
-	cmd, err := types.MarshalStartCommand(svc)
+	resolved := s.resolvedSvcForDispatch(nodeID, svc, "")
+
+	cmd, err := types.MarshalStartCommand(resolved)
 	if err != nil {
 		return fmt.Errorf("failed to marshal start command: %w", err)
 	}
@@ -56,6 +60,51 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 		return fmt.Errorf("agent rejected start: %s", resp.Error)
 	}
 	return nil
+}
+
+// sendRestartCommand asks the agent to stop the running copy and start a
+// fresh one from the resolved svc. Used by the deployer to apply a new
+// version: the dispatched svc has its artifact URL pre-expanded with
+// version so the agent downloads the new tarball.
+func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition, version string) error {
+	kvEnv, err := s.provisionKVBuckets(svc)
+	if err != nil {
+		return fmt.Errorf("provision KV: %w", err)
+	}
+	kvEnvForAllocation(svc, kvEnv)
+
+	resolved := s.resolvedSvcForDispatch(nodeID, svc, version)
+
+	cmd, err := types.MarshalRestartCommand(resolved)
+	if err != nil {
+		return fmt.Errorf("failed to marshal restart command: %w", err)
+	}
+	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStartCommandTimeout)
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("agent rejected restart: %s", resp.Error)
+	}
+	return nil
+}
+
+// resolvedSvcForDispatch returns a shallow copy of svc with the artifact
+// URL placeholders expanded against the version associated with this
+// dispatch. Caller-supplied version wins; falls back to alloc.Version
+// from KV ("latest" if alloc is missing or unversioned).
+func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinition, version string) *types.ServiceDefinition {
+	if version == "" {
+		if alloc, err := s.clusterState.GetAllocation(svc.Name, nodeID); err == nil && alloc.Version != "" {
+			version = alloc.Version
+		}
+	}
+	if version == "" {
+		version = "latest"
+	}
+	resolved := *svc
+	resolved.Artifact.URL = resolveArtifactURL(svc.Artifact.URL, version)
+	return &resolved
 }
 
 // StopServiceOnNode dispatches a stop command to a node's agent.

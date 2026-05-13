@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -143,19 +142,16 @@ func (d *Deployer) checkAllocationsHealth(allocs []*types.ServiceAllocation) boo
 }
 
 // sendUpdateCommand asks the agent at nodeID to restart the service at
-// the new version. Currently the agent has no "restart" handler;
-// Phase 6.4 of the audit covers either implementing it or returning
-// a 501 here.
-func (d *Deployer) sendUpdateCommand(nodeID, serviceName, version string) error {
-	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", nodeID)
-	cmd := types.Command{
-		Type: "restart",
-		Data: []byte(fmt.Sprintf(`{"service_name":%q,"version":%q}`, serviceName, version)),
+// the new version. Delegates to the server-provided dispatcher, which
+// resolves ${VERSION}/${ARCH}/${GITHUB_REPO} placeholders in the
+// artifact URL before sending — the agent receives a fully-resolved
+// svc def.
+func (d *Deployer) sendUpdateCommand(nodeID string, plan *DeploymentPlan) error {
+	if d.restart == nil {
+		return fmt.Errorf("deployer: no restart dispatcher configured")
 	}
-	data, err := json.Marshal(cmd)
-	if err != nil {
-		return err
+	if plan.Service == nil {
+		return fmt.Errorf("deployer: plan.Service is nil (server must populate it)")
 	}
-	_, err = d.nc.Request(subject, data, agentRestartTimeout)
-	return err
+	return d.restart(nodeID, plan.Service, plan.TargetVersion)
 }

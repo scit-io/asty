@@ -36,7 +36,7 @@ func (d *Deployer) deployCanary(ctx context.Context, plan *DeploymentPlan, statu
 		if err := d.markPending(plan, alloc); err != nil {
 			return false, err
 		}
-		if err := d.sendUpdateCommand(alloc.NodeID, plan.ServiceName, plan.TargetVersion); err != nil {
+		if err := d.sendUpdateCommand(alloc.NodeID, plan); err != nil {
 			return false, fmt.Errorf("failed to send update command: %w", err)
 		}
 	}

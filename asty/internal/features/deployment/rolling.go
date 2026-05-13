@@ -61,7 +61,7 @@ func (d *Deployer) dispatchBatch(plan *DeploymentPlan, batch []*types.ServiceAll
 		if err := d.markPending(plan, alloc); err != nil {
 			return fmt.Errorf("failed to update allocation: %w", err)
 		}
-		if err := d.sendUpdateCommand(alloc.NodeID, plan.ServiceName, plan.TargetVersion); err != nil {
+		if err := d.sendUpdateCommand(alloc.NodeID, plan); err != nil {
 			return fmt.Errorf("failed to send update command: %w", err)
 		}
 	}

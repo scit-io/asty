@@ -111,7 +111,7 @@ func (s *Server) initFeatures(ctx context.Context) {
 	}
 	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState, s.pingPair)
 
-	s.deployer = deployment.NewDeployer(s.clusterState, s.nc, deployment.DeployerConfig{})
+	s.deployer = deployment.NewDeployer(s.clusterState, s.nc, s.sendRestartCommand)
 	s.serviceLoader = deployment.NewServiceLoader(s.cfg.Agent.ServiceDir)
 	services, err := s.serviceLoader.LoadAll()
 	if err != nil {

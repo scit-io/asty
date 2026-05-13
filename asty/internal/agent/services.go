@@ -140,6 +140,22 @@ func (a *Agent) StopService(serviceName string) error {
 	return nil
 }
 
+// RestartService stops the currently-running copy (if any) and starts a
+// fresh one from svc. Used by the deployer's rolling-update path to apply
+// a new version: StartService alone is idempotent (it refreshes the alloc
+// PID and returns when the process exists), so the explicit stop here
+// bypasses the short-circuit and guarantees the new svc def — including
+// any version-substituted Artifact URL — actually takes effect.
+func (a *Agent) RestartService(svc *types.ServiceDefinition) error {
+	// Best-effort stop: ignore "service not running" so a restart targeted
+	// at a node that doesn't currently host the process still results in
+	// a fresh start.
+	if err := a.StopService(svc.Name); err != nil {
+		log.Debug().Err(err).Str("service", svc.Name).Msg("restart: stop returned (may have been already stopped)")
+	}
+	return a.StartService(svc)
+}
+
 // stopAllProcesses runs StopService on every known process, called on
 // agent shutdown to leave cluster state consistent.
 func (a *Agent) stopAllProcesses() {
