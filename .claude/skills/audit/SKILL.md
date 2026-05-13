@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Wide-and-deep code audit — find wheels, overhead, dead code, bad idioms, comment quality (incl. Cyrillic), what's redundant, what's missing. Save to `audit/{HH:MM_DD-MM-YY}.md` with prioritised plan and status-tracked tasks `[ ]`/`[~]`/`[+]`. Also covers "execute the audit" mode.
+description: Wide-and-deep code audit — find wheels, overhead, dead code, bad idioms, comment quality (incl. Cyrillic), what's redundant, what's missing. Save to `.audit/{HH:MM_DD-MM-YY}.md` with prioritised plan and status-tracked tasks `[ ]`/`[~]`/`[+]`. Also covers "execute the audit" mode.
 ---
 
 # /audit
@@ -25,7 +25,7 @@ Fresh findings always start `[ ]`. User flips marker as work proceeds. Priority 
 4. **Overhead** — N+1 to KV/DB, `time.Sleep` without `ctx`, missing HTTP-client timeouts, repeated sorts on hot path.
 5. **Bad idioms** — stringly-typed enums, `interface{}` ↔ `any` mix, `fmt.Sscanf("%d")` over `strconv.Atoi`, `^uint(0)>>1` over `math.MaxInt`, `panic` where `log.Fatal` fits.
 6. **Comments** — see `.claude/coding-rules/comments.md` for the full rule set; flag stale references, placeholders, dead links, and any comment that violates project comment conventions.
-7. **Language** — Cyrillic in `*.go`/`*.ts`/`*.tsx`/configs outside `audit/*`. Project is English-only.
+7. **Language** — Cyrillic in `*.go`/`*.ts`/`*.tsx`/configs outside `.audit/*`. Project is English-only.
 8. **Redundant** — empty `Config struct{}` "for future", `error` returns always nil, dead fallback branches.
 9. **Missing** — timeouts, contexts, tests on hot layers, env validation, `vet/race/tidy` Makefile targets, `doc.go` in sub-packages.
 10. **Env drift** — structural delta between dev and prod environment configs (`feedback_dev_prod_sync`). Project-specific layout — discover the paths from the repo.
@@ -53,7 +53,7 @@ If a check is impossible, write "could not verify — assumption needs validatio
 
 ## Report structure
 
-File `audit/{HH:MM_DD-MM-YY}.md`, name from `date "+%H:%M_%d-%m-%y"`.
+File `.audit/{HH:MM_DD-MM-YY}.md`, name from `date "+%H:%M_%d-%m-%y"`.
 
 Header: scope (LOC, branch, commits) + marker convention.
 
@@ -89,7 +89,7 @@ Path + 3–5 sentence summary. Don't restate the whole report.
 
 ## Execute-the-audit mode
 
-When user says "приступай к выполнению audit/<file>.md" or similar:
+When user says "приступай к выполнению .audit/<file>.md" or similar:
 
 **Strictly task-by-task**, no batching. Cycle per task:
 
