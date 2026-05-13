@@ -50,6 +50,24 @@ by `npm outdated` and must be done deliberately (e.g. Tailwind 3 → 4
 needs a config-and-class migration, not just a version line). Surface
 those to the user before applying.
 
+**Daily-update protocol:** at the first prompt of each new day, check
+all three surfaces and offer the user a one-shot bump:
+
+  1. Compare today's date against the most recent check (memory entry
+     `project_deps_last_check`). If same day, skip; otherwise proceed.
+  2. Latest Go stable (`https://go.dev/dl/`) vs `go.mod`'s `go` line.
+  3. `go list -m -u all` for module updates.
+  4. `(cd asty/web && npm outdated) ; (cd demo/web && npm outdated) ;
+     (cd docs && npm outdated)`.
+  5. Summarise: who's behind and by how much. Flag majors separately
+     from in-range bumps. If everything is current, just say so.
+  6. Offer to install. Only on the user's go-ahead, apply the bumps
+     and rebuild every affected project (`go build ./... && go test
+     ./...` for Go; `npm run build` in each web project that had a
+     change).
+  7. Update the `project_deps_last_check` memory with today's date so
+     the next session in the same day doesn't repeat the check.
+
 ## Build Commands
 
 ```bash
