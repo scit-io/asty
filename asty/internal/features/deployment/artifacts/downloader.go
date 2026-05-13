@@ -11,9 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
+
+// artifactDownloadTimeout caps the full request (dial + read body).
+// Typical artifacts are 10–50 MiB; even on a 100 KiB/s link that's
+// ~10 minutes worst case. A hung CDN past this is treated as failure
+// and the controller retries on the next reconcile.
+const artifactDownloadTimeout = 10 * time.Minute
 
 // Downloader handles downloading and extracting service artifacts
 type Downloader struct {
@@ -23,7 +30,7 @@ type Downloader struct {
 // NewDownloader creates a new artifact downloader
 func NewDownloader() *Downloader {
 	return &Downloader{
-		client: &http.Client{},
+		client: &http.Client{Timeout: artifactDownloadTimeout},
 	}
 }
 
