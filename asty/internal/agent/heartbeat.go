@@ -74,11 +74,11 @@ func (a *Agent) pushOneMetricsSample() {
 		}
 		cpu := int(m.CPUPercent)
 		mem := int(m.MemoryMB)
-		health := a.healthChecker.HealthStatusStr(name)
+		health := a.healthChecker.HealthStatus(name)
 		err := a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			alloc.CPUUsage = cpu
 			alloc.MemoryUsage = mem
-			if health != "" {
+			if health != types.HealthUnknown {
 				alloc.HealthStatus = health
 			}
 			return true

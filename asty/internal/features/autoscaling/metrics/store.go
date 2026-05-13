@@ -3,6 +3,8 @@ package metrics
 import (
 	"sync"
 	"time"
+
+	"asty/asty/internal/core/types"
 )
 
 // MetricPoint represents a single metric data point
@@ -13,13 +15,13 @@ type MetricPoint struct {
 
 // ScalingEvent represents an autoscaling decision event
 type ScalingEvent struct {
-	Timestamp int64  `json:"timestamp"`
-	Service   string `json:"service"`
-	Action    string `json:"action"`
-	Reason    string `json:"reason"`
-	FromCount int    `json:"from_count"`
-	ToCount   int    `json:"to_count"`
-	NodeID    string `json:"node_id,omitempty"`
+	Timestamp int64               `json:"timestamp"`
+	Service   string              `json:"service"`
+	Action    types.ScalingAction `json:"action"`
+	Reason    string              `json:"reason"`
+	FromCount int                 `json:"from_count"`
+	ToCount   int                 `json:"to_count"`
+	NodeID    string              `json:"node_id,omitempty"`
 }
 
 // Store holds data needed for autoscaler decisions.

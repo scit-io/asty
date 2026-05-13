@@ -13,7 +13,7 @@ import (
 // expected to come from logs, not this in-memory ring.
 const historyCap = 100
 
-// beginRecord adds a new "running" entry to history at the start of a
+// beginRecord adds a new StateRunning entry to history at the start of a
 // deployment.
 func (d *Deployer) beginRecord(plan *DeploymentPlan) {
 	record := DeploymentRecord{
@@ -21,7 +21,7 @@ func (d *Deployer) beginRecord(plan *DeploymentPlan) {
 		Service:   plan.ServiceName,
 		Version:   plan.TargetVersion,
 		Strategy:  "rolling",
-		Status:    "running",
+		Status:    StateRunning,
 		StartedAt: time.Now(),
 		Progress:  0,
 	}
@@ -40,7 +40,7 @@ func (d *Deployer) addRecord(record DeploymentRecord) {
 	d.history = append(d.history, record)
 }
 
-func (d *Deployer) updateLastRecord(status string, progress int) {
+func (d *Deployer) updateLastRecord(status State, progress int) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if len(d.history) == 0 {
@@ -49,7 +49,7 @@ func (d *Deployer) updateLastRecord(status string, progress int) {
 	last := &d.history[len(d.history)-1]
 	last.Status = status
 	last.Progress = progress
-	if status != "running" {
+	if status != StateRunning {
 		last.CompletedAt = time.Now()
 	}
 }
@@ -77,11 +77,11 @@ func (d *Deployer) revertDeployment(status *DeploymentStatus, reason string) (*D
 		Str("reason", reason).
 		Msg("reverting deployment")
 
-	status.Status = "reverted"
-	status.Phase = "revert"
+	status.Status = StateReverted
+	status.Phase = PhaseRevert
 	status.Error = reason
 	status.EndTime = time.Now()
-	d.updateLastRecord("reverted", 0)
+	d.updateLastRecord(StateReverted, 0)
 	return status, fmt.Errorf("deployment reverted: %s", reason)
 }
 
@@ -89,10 +89,10 @@ func (d *Deployer) revertDeployment(status *DeploymentStatus, reason string) (*D
 // computed from how far we got before the failure to give operators a
 // sense of where things broke.
 func (d *Deployer) failDeployment(status *DeploymentStatus, err error) (*DeploymentStatus, error) {
-	status.Status = "failed"
+	status.Status = StateFailed
 	status.Error = err.Error()
 	status.EndTime = time.Now()
-	d.updateLastRecord("failed", status.Updated*100/max(status.Total, 1))
+	d.updateLastRecord(StateFailed, status.Updated*100/max(status.Total, 1))
 
 	log.Error().
 		Err(err).

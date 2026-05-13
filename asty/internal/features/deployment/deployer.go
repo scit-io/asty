@@ -18,7 +18,7 @@ type DeploymentRecord struct {
 	Service     string    `json:"service"`
 	Version     string    `json:"version"`
 	Strategy    string    `json:"strategy"`
-	Status      string    `json:"status"` // running, completed, failed, reverted
+	Status      State     `json:"status"`
 	StartedAt   time.Time `json:"started_at"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
 	Progress    int       `json:"progress"` // 0-100
@@ -56,8 +56,8 @@ type UpdateStrategy struct {
 // DeploymentStatus tracks deployment progress.
 type DeploymentStatus struct {
 	ServiceName   string
-	Status        string // running, successful, failed, reverted
-	Phase         string // canary, rolling, complete
+	Status        State
+	Phase         Phase
 	Updated       int
 	Total         int
 	CanaryHealthy bool
@@ -108,8 +108,8 @@ func NewDeployer(clusterState StateAccessor, nc *nats.Conn, restart SendRestartC
 func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*DeploymentStatus, error) {
 	status := &DeploymentStatus{
 		ServiceName: plan.ServiceName,
-		Status:      "running",
-		Phase:       "canary",
+		Status:      StateRunning,
+		Phase:       PhaseCanary,
 		Total:       len(plan.Allocations),
 		StartTime:   time.Now(),
 	}
@@ -138,7 +138,7 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		log.Info().Str("service", plan.ServiceName).Msg("canary healthy, proceeding to rolling update")
 	}
 
-	status.Phase = "rolling"
+	status.Phase = PhaseRolling
 	if err := d.rollingUpdate(ctx, plan, status); err != nil {
 		if plan.UpdateStrategy.AutoRevert {
 			log.Warn().Str("service", plan.ServiceName).Err(err).Msg("rolling update failed, reverting")
@@ -147,10 +147,10 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		return d.failDeployment(status, err)
 	}
 
-	status.Phase = "complete"
-	status.Status = "successful"
+	status.Phase = PhaseComplete
+	status.Status = StateCompleted
 	status.EndTime = time.Now()
-	d.updateLastRecord("completed", 100)
+	d.updateLastRecord(StateCompleted, 100)
 
 	log.Info().
 		Str("service", plan.ServiceName).

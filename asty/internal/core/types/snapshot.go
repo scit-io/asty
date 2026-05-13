@@ -37,6 +37,6 @@ type ServiceWithUsage struct {
 	TrafficThreshold   int    `json:"traffic_threshold"`
 	CooldownUpActive   bool   `json:"cooldown_up_active"`
 	CooldownDownActive bool   `json:"cooldown_down_active"`
-	LastAction         string `json:"last_action,omitempty"`
-	LastActionAt       int64  `json:"last_action_at,omitempty"`
+	LastAction         ScalingAction `json:"last_action,omitempty"`
+	LastActionAt       int64         `json:"last_action_at,omitempty"`
 }

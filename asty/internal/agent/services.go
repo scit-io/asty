@@ -171,4 +171,3 @@ func (a *Agent) stopAllProcesses() {
 		}
 	}
 }
-

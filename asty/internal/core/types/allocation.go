@@ -42,9 +42,9 @@ type ServiceAllocation struct {
 	Version             string           `json:"version"`
 	PID                 int              `json:"pid"`
 	StartedAt           time.Time        `json:"started_at"`
-	HealthStatus        string           `json:"health_status"` // healthy, unhealthy, unknown
-	CPUUsage            int              `json:"cpu_usage"`     // percentage
-	MemoryUsage         int              `json:"memory_usage"`  // MB
+	HealthStatus        HealthState      `json:"health_status"`
+	CPUUsage            int              `json:"cpu_usage"`    // percentage
+	MemoryUsage         int              `json:"memory_usage"` // MB
 	Restarts            int              `json:"restarts"`
 	ConsecutiveFailures int              `json:"consecutive_failures"`
 	CreatedAt           time.Time        `json:"created_at"`
@@ -83,10 +83,10 @@ type ServiceCooldown struct {
 // the most-recent autoscaler action was. It mirrors the fields the API
 // and the snapshot builder both surface to the UI.
 type CooldownStatus struct {
-	UpActive     bool   `json:"cooldown_up_active"`
-	DownActive   bool   `json:"cooldown_down_active"`
-	LastAction   string `json:"last_action"`     // "scale_up", "scale_down", or "" if none yet
-	LastActionAt int64  `json:"last_action_at"`  // unix seconds
+	UpActive     bool          `json:"cooldown_up_active"`
+	DownActive   bool          `json:"cooldown_down_active"`
+	LastAction   ScalingAction `json:"last_action"`    // ScaleUp, ScaleDown, or "" if never scaled
+	LastActionAt int64         `json:"last_action_at"` // unix seconds
 }
 
 // Status reports cooldown state at time `at` given the configured
@@ -97,13 +97,13 @@ func (c ServiceCooldown) Status(at time.Time, up, down time.Duration) CooldownSt
 	var s CooldownStatus
 	if !c.LastScaleUp.IsZero() {
 		s.UpActive = at.Sub(c.LastScaleUp) < up
-		s.LastAction = "scale_up"
+		s.LastAction = ScaleUp
 		s.LastActionAt = c.LastScaleUp.Unix()
 	}
 	if !c.LastScaleDown.IsZero() {
 		s.DownActive = at.Sub(c.LastScaleDown) < down
 		if c.LastScaleDown.Unix() > s.LastActionAt {
-			s.LastAction = "scale_down"
+			s.LastAction = ScaleDown
 			s.LastActionAt = c.LastScaleDown.Unix()
 		}
 	}

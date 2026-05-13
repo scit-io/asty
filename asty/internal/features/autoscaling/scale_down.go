@@ -53,7 +53,7 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	}
 	return &ScalingDecision{
 		ServiceName: svc.Name,
-		Action:      "scale_down",
+		Action:      types.ScaleDown,
 		Reason: fmt.Sprintf(
 			"avg cpu=%d%% mem=%dMB across %d copies, floor cpu=%d mem=%d",
 			avgCPU, avgMem, len(running), cpuFloor, memFloor),

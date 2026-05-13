@@ -30,7 +30,7 @@ func (as *Autoscaler) executeScaleUp(d *ScalingDecision, svc *types.ServiceDefin
 	if err := as.clusterState.MarkScaleUp(svc.Name, time.Now()); err != nil {
 		log.Warn().Err(err).Str("service", svc.Name).Msg("failed to persist scale-up cooldown")
 	}
-	as.recordEvent(svc.Name, "scale_up", d.Reason, d.TargetNode, +1)
+	as.recordEvent(svc.Name, types.ScaleUp, d.Reason, d.TargetNode, +1)
 	return nil
 }
 
@@ -50,14 +50,14 @@ func (as *Autoscaler) executeScaleDown(d *ScalingDecision, svc *types.ServiceDef
 	if err := as.clusterState.MarkScaleDown(svc.Name, time.Now()); err != nil {
 		log.Warn().Err(err).Str("service", svc.Name).Msg("failed to persist scale-down cooldown")
 	}
-	as.recordEvent(svc.Name, "scale_down", d.Reason, d.RemoveNode, -1)
+	as.recordEvent(svc.Name, types.ScaleDown, d.Reason, d.RemoveNode, -1)
 	return nil
 }
 
 // recordEvent re-reads the allocation list to compute "before/after"
-// counts for the event ring buffer. delta is +1 for scale_up, -1 for
-// scale_down so the FromCount/ToCount fields read correctly.
-func (as *Autoscaler) recordEvent(service, action, reason, nodeID string, delta int) {
+// counts for the event ring buffer. delta is +1 for ScaleUp, -1 for
+// ScaleDown so the FromCount/ToCount fields read correctly.
+func (as *Autoscaler) recordEvent(service string, action types.ScalingAction, reason, nodeID string, delta int) {
 	allocs, _ := as.clusterState.ListAllocations(service)
 	count := len(scheduling.LiveAllocations(allocs))
 	as.metricsStore.AddEvent(metrics.ScalingEvent{

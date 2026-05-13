@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"asty/asty/internal/core/types"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -131,17 +133,18 @@ func (c *Checker) IsHealthy(processName string) bool {
 	return ok && check.Healthy
 }
 
-// HealthStatusStr returns "healthy", "unhealthy", or "" if no probe is
-// registered. Used by the agent to populate Allocation.HealthStatus.
-func (c *Checker) HealthStatusStr(processName string) string {
+// HealthStatus returns the latest probe state for processName, or
+// HealthUnknown if no probe is registered. Used by the agent to
+// populate Allocation.HealthStatus.
+func (c *Checker) HealthStatus(processName string) types.HealthState {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	check, ok := c.checks[processName]
 	if !ok {
-		return ""
+		return types.HealthUnknown
 	}
 	if check.Healthy {
-		return "healthy"
+		return types.HealthHealthy
 	}
-	return "unhealthy"
+	return types.HealthUnhealthy
 }

@@ -17,12 +17,12 @@ func (c *ServiceController) autoscaleOnce(ctx context.Context, svc *types.Servic
 		log.Error().Err(err).Str("service", svc.Name).Msg("autoscaler evaluate failed")
 		return
 	}
-	if d.Action == "none" {
+	if d.Action == types.ScaleNone {
 		return
 	}
 	log.Info().
 		Str("service", svc.Name).
-		Str("action", d.Action).
+		Str("action", string(d.Action)).
 		Str("reason", d.Reason).
 		Msg("autoscaling decision")
 
@@ -34,8 +34,8 @@ func (c *ServiceController) autoscaleOnce(ctx context.Context, svc *types.Servic
 		return
 	}
 	target := d.TargetNode
-	if d.Action == "scale_down" {
+	if d.Action == types.ScaleDown {
 		target = d.RemoveNode
 	}
-	c.OnEvent(types.NewEvent(d.Action, svc.Name, target, d.Reason))
+	c.OnEvent(types.NewEvent(string(d.Action), svc.Name, target, d.Reason))
 }

@@ -27,7 +27,7 @@ func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*type
 	if node := as.findNodeWithTrafficWithoutService(nodes, live); node != nil {
 		return &ScalingDecision{
 			ServiceName: svc.Name,
-			Action:      "scale_up",
+			Action:      types.ScaleUp,
 			Reason:      fmt.Sprintf("gateway traffic on node %s without %s", node.ID, svc.Name),
 			TargetNode:  node.ID,
 		}
@@ -39,7 +39,7 @@ func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*type
 		}
 		return &ScalingDecision{
 			ServiceName: svc.Name,
-			Action:      "scale_up",
+			Action:      types.ScaleUp,
 			Reason: fmt.Sprintf(
 				"copy on %s exceeded targets (cpu=%d%%, mem=%dMB) — adding copy on %s",
 				hot.NodeID, hot.CPUUsage, hot.MemoryUsage, target.ID),

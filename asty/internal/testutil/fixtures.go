@@ -83,7 +83,7 @@ func NewTestAllocation(service, nodeID string) *types.ServiceAllocation {
 		Version:      "v1.0.0",
 		PID:          12345,
 		StartedAt:    time.Now(),
-		HealthStatus: "healthy",
+		HealthStatus: types.HealthHealthy,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
 	}

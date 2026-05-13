@@ -12,11 +12,11 @@ import (
 )
 
 // ScalingDecision describes what the autoscaler intends to do next.
-// Action is one of "scale_up", "scale_down", "none". TargetNode is set
-// for scale_up; RemoveNode is set for scale_down.
+// Action is one of types.ScaleUp / ScaleDown / ScaleNone. TargetNode
+// is set for ScaleUp; RemoveNode is set for ScaleDown.
 type ScalingDecision struct {
 	ServiceName string
-	Action      string
+	Action      types.ScalingAction
 	Reason      string
 	TargetNode  string
 	RemoveNode  string
@@ -73,16 +73,16 @@ func (as *Autoscaler) EvaluateService(ctx context.Context, svc *types.ServiceDef
 // Splits to per-action methods that update KV and record an event.
 func (as *Autoscaler) ExecuteScalingDecision(ctx context.Context, d *ScalingDecision, svc *types.ServiceDefinition) error {
 	switch d.Action {
-	case "scale_up":
+	case types.ScaleUp:
 		return as.executeScaleUp(d, svc)
-	case "scale_down":
+	case types.ScaleDown:
 		return as.executeScaleDown(d, svc)
-	case "none":
+	case types.ScaleNone:
 		return nil
 	}
 	return fmt.Errorf("unknown action: %s", d.Action)
 }
 
 func noop(name, reason string) *ScalingDecision {
-	return &ScalingDecision{ServiceName: name, Action: "none", Reason: reason}
+	return &ScalingDecision{ServiceName: name, Action: types.ScaleNone, Reason: reason}
 }

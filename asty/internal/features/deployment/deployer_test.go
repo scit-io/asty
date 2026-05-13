@@ -59,16 +59,16 @@ func TestMinFunction(t *testing.T) {
 func TestDeploymentStatus(t *testing.T) {
 	status := &DeploymentStatus{
 		ServiceName:   "test-service",
-		Status:        "running",
-		Phase:         "canary",
+		Status:        StateRunning,
+		Phase:         PhaseCanary,
 		Updated:       1,
 		Total:         3,
 		CanaryHealthy: true,
 		StartTime:     time.Now(),
 	}
 
-	if status.Phase != "canary" {
-		t.Errorf("expected phase 'canary', got '%s'", status.Phase)
+	if status.Phase != PhaseCanary {
+		t.Errorf("expected phase %q, got %q", PhaseCanary, status.Phase)
 	}
 
 	if !status.CanaryHealthy {
