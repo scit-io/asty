@@ -22,7 +22,7 @@ func (a *Agent) monitorProcesses(ctx context.Context) {
 			return
 		case name := <-a.failed:
 			if proc := a.lookupFailed(name); proc != nil {
-				a.attemptRestart(name, proc)
+				a.attemptRestart(ctx, name, proc)
 			}
 		}
 	}
@@ -42,7 +42,7 @@ func (a *Agent) lookupFailed(name string) *process.Process {
 	return proc
 }
 
-func (a *Agent) attemptRestart(name string, proc *process.Process) {
+func (a *Agent) attemptRestart(ctx context.Context, name string, proc *process.Process) {
 	log.Warn().
 		Str("service", name).
 		Int("pid", proc.PID()).
@@ -91,7 +91,11 @@ func (a *Agent) attemptRestart(name string, proc *process.Process) {
 		Int("old_pid", proc.PID()).
 		Msg("restarting failed service")
 
-	time.Sleep(svc.Restart.GetDelay())
+	select {
+	case <-ctx.Done():
+		return
+	case <-time.After(svc.Restart.GetDelay()):
+	}
 
 	err = a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 		alloc.Status = types.AllocPending
