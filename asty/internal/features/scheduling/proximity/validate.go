@@ -2,7 +2,6 @@ package proximity
 
 import (
 	"context"
-	"net"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -10,21 +9,18 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// validateInterval — how often the background goroutine pings inter-DC
+// validateInterval — how often the background goroutine measures inter-DC
 // latencies to catch config-vs-reality drift. Picked at 1 hour because
 // configured latencies don't change in seconds; pinging more often would
-// add noise and TCP load with no operational benefit.
+// add noise and NATS load with no operational benefit.
 const validateInterval = 1 * time.Hour
 
-// pingProbeTimeout caps how long a single TCP ping can hang. Long enough
-// to not flap on transient hiccups, short enough that one bad node can't
-// stall the whole validation pass.
-const pingProbeTimeout = 2 * time.Second
-
-// pingProbePort is a well-known asty port we use for TCP-connect timing.
-// We don't speak any protocol on it — the connect handshake itself gives
-// us a serviceable round-trip estimate without needing ICMP privileges.
-const pingProbePort = ":4646"
+// PingFn measures the round-trip time between two cluster nodes — the
+// request travels through srcID's agent to tgtID's agent — returning
+// milliseconds, or 0 on any error (no responders, timeout, peer
+// unreachable). Injected from the server so this package stays decoupled
+// from NATS and is unit-testable without a live cluster.
+type PingFn func(srcID, tgtID string) int
 
 // divergenceThreshold — fraction by which actual ping latency may differ
 // from the configured value before we log a warning. ±50% is a wide band
@@ -36,9 +32,10 @@ type NodeLister interface {
 	ListNodes() ([]*types.NodeInfo, error)
 }
 
-// RunValidation periodically re-measures inter-DC latencies and logs
-// divergence from the configured matrix. It runs until ctx is cancelled.
-func RunValidation(ctx context.Context, pm *Matrix, lister NodeLister) {
+// RunValidation periodically re-measures inter-DC latencies via the
+// agent ping-peer mechanism (see agent/ping.go) and logs divergence from
+// the configured matrix. Runs until ctx is cancelled.
+func RunValidation(ctx context.Context, pm *Matrix, lister NodeLister, ping PingFn) {
 	ticker := time.NewTicker(validateInterval)
 	defer ticker.Stop()
 
@@ -52,14 +49,15 @@ func RunValidation(ctx context.Context, pm *Matrix, lister NodeLister) {
 				log.Error().Err(err).Msg("failed to list nodes for latency validation")
 				continue
 			}
-			pm.ValidateLatencies(ctx, nodes)
+			pm.ValidateLatencies(ctx, nodes, ping)
 		}
 	}
 }
 
-// ValidateLatencies probes representative nodes in each DC pair and logs
-// when the measured latency drifts from the configured value.
-func (m *Matrix) ValidateLatencies(ctx context.Context, nodes []*types.NodeInfo) {
+// ValidateLatencies probes representative nodes in each DC pair via the
+// supplied PingFn and logs when the measured latency drifts from the
+// configured value.
+func (m *Matrix) ValidateLatencies(_ context.Context, nodes []*types.NodeInfo, ping PingFn) {
 	dcNodes := make(map[string][]*types.NodeInfo)
 	for _, node := range nodes {
 		dc := node.Datacenter
@@ -75,7 +73,7 @@ func (m *Matrix) ValidateLatencies(ctx context.Context, nodes []*types.NodeInfo)
 				continue // each pair processed once
 			}
 
-			actual := m.measureLatency(dcNodes[dc1], dcNodes[dc2])
+			actual := m.measureLatency(dcNodes[dc1], dcNodes[dc2], ping)
 			if actual == 0 {
 				continue
 			}
@@ -97,22 +95,16 @@ func (m *Matrix) ValidateLatencies(ctx context.Context, nodes []*types.NodeInfo)
 	}
 }
 
-func (m *Matrix) measureLatency(nodes1, nodes2 []*types.NodeInfo) int {
+// measureLatency asks the representative node of dc1 to ping the
+// representative of dc2, returning the RTT. Returns 0 when either DC
+// has no nodes or either representative has no usable ID — the loop
+// caller treats 0 as "skip this pair".
+func (m *Matrix) measureLatency(nodes1, nodes2 []*types.NodeInfo, ping PingFn) int {
 	if len(nodes1) == 0 || len(nodes2) == 0 {
 		return 0
 	}
-	if nodes1[0].IP == "" || nodes2[0].IP == "" {
+	if nodes1[0].ID == "" || nodes2[0].ID == "" {
 		return 0
 	}
-	return m.pingNode(nodes1[0].IP)
-}
-
-func (m *Matrix) pingNode(ip string) int {
-	start := time.Now()
-	conn, err := net.DialTimeout("tcp", ip+pingProbePort, pingProbeTimeout)
-	if err != nil {
-		return 0
-	}
-	defer conn.Close()
-	return int(time.Since(start).Milliseconds())
+	return ping(nodes1[0].ID, nodes2[0].ID)
 }

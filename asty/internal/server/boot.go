@@ -109,7 +109,7 @@ func (s *Server) initFeatures(ctx context.Context) {
 	if err := s.proximityMatrix.LoadFromConfig(s.cfg.Autoscale.DCLatency); err != nil {
 		log.Error().Err(err).Msg("failed to load proximity matrix")
 	}
-	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState)
+	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState, s.pingPair)
 
 	s.deployer = deployment.NewDeployer(s.clusterState, s.nc, deployment.DeployerConfig{})
 	s.serviceLoader = deployment.NewServiceLoader(s.cfg.Agent.ServiceDir)

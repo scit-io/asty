@@ -141,6 +141,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	if err := a.subscribeCommands(); err != nil {
 		return fmt.Errorf("failed to subscribe to commands: %w", err)
 	}
+	if err := a.subscribePing(); err != nil {
+		return fmt.Errorf("failed to subscribe to ping: %w", err)
+	}
 
 	go a.publishHeartbeat(ctx)
 	go a.publishProcessMetrics(ctx)

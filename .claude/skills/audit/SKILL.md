@@ -97,7 +97,11 @@ When user says "приступай к выполнению .audit/<file>.md" or 
 2. **Brief in Russian, simple words.** Assume user doesn't remember context — pull them in. Minimal or no code blocks.
 3. **Variants numbered `1..N`** with trade-offs. End with `Рекомендация: N — потому что …`. Use numbers, not letters.
 4. **Wait for approval.** No edits until user picks a variant or ends discussion.
-5. **Make minimal edits** strictly per the approved variant.
+5. **Make minimal edits** strictly per the approved variant. If during
+   investigation/implementation a pre-existing defect adjacent to the task
+   is uncovered, surface it in the brief and offer a variant that fixes it.
+   Never silently log it as "not my scope" — user wants the option to
+   include the fix in the same task.
 6. **Short report** — what changed, which files, what was verified (build/tests if relevant). No rationalisations.
 7. **Wait for verdict** — approval (`[+]` + commit) or rework (`[~]` + discussion).
 8. **Mark + commit** only after explicit approval. Commit message describes the task.
