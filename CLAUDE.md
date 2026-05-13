@@ -27,6 +27,14 @@ The project consists of two main parts:
 **Monitoring:** Asty exposes HTTP JSON API at `:4747`. Web UI (`asty/web/`) connects to it for cluster monitoring.
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
+## Toolchain
+
+**Go 1.26.3** (the latest stable as of this revision). The pinned
+version lives in `go.mod`; Go's toolchain system auto-downloads it if
+the local install is older, so contributors don't need to upgrade
+manually. Track the upstream releases at https://go.dev/dl/ and bump
+the `go.mod` directive when a new stable lands.
+
 ## Build Commands
 
 ```bash
