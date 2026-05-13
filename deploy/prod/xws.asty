@@ -50,6 +50,5 @@ update:
   auto_revert: true      # Whether to roll back to previous version on failure
 
 restart:
-  attempts: 10      # Max restart attempts within the interval window
-  interval: 5m      # Counter-reset window after stable uptime
+  attempts: 10      # Max consecutive failures before the allocation is failed
   delay: 15s        # Pause between consecutive restart attempts

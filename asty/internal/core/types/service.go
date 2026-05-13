@@ -98,10 +98,11 @@ type Update struct {
 }
 
 // Restart describes the per-service restart policy plus the
-// pre-parsed delay duration.
+// pre-parsed delay duration. The failure counter (ConsecutiveFailures
+// on the allocation) resets on the next successful start, so Attempts
+// caps consecutive failures, not failures within a time window.
 type Restart struct {
 	Attempts int    `yaml:"attempts"`
-	Interval string `yaml:"interval"`
 	Delay    string `yaml:"delay"`
 
 	parsedDelay time.Duration `yaml:"-" json:"-"`

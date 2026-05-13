@@ -73,9 +73,9 @@ update:
   auto_revert: true      # Whether to roll back to previous version on failure
 
 # Restart policy for unexpected crashes.
-# After exhausting attempts within the interval, the allocation is marked failed
-# and the server reschedules it to a different node.
+# After N consecutive failures the allocation is marked failed and the
+# server reschedules it to a different node. The counter resets on the
+# next successful start, so this caps a crash loop, not lifetime crashes.
 restart:
-  attempts: 10      # Max restart attempts within the interval window
-  interval: 5m      # Counter-reset window after stable uptime
+  attempts: 10      # Max consecutive failures before the allocation is failed
   delay: 15s        # Pause between consecutive restart attempts
