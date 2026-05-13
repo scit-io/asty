@@ -124,7 +124,7 @@ asty -mode server -config /etc/asty/config.asty
 asty -mode agent  -config /etc/asty/config.asty
 ```
 
-Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `ui:`, `agent:`, `gateway:`). Sample: `deployments/envs/dev/config.asty`.
+Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `ui:`, `agent:`, `gateway:`). Sample: `deploy/dev/config.asty`.
 
 **Env-var overrides** (loaded after YAML; `A_` prefix) — useful for per-node values and secrets:
 
@@ -149,9 +149,23 @@ Authoritative struct layout: `internal/platform/asty/core/config/config.go` (+ `
 ### Platform Services
 Demo services (xauth, xhttp, xws) keep their `A_` and `X_` env vars: `A_NATS_HOST`/`A_NATS_PORT` for the local NATS, `A_LOG_LEVEL` for zerolog, and `X_*` for service-specific tunables (`X_AUTH_PASSWORD`, `X_HTTP_DATABASE_URL`, …). These are examples only and will be replaced by real business services.
 
+## Configuration conventions
+
+**Comment rules for configs:** see `.claude/coding-rules/comments.md`
+(key-focused inlines for `.asty`, block-style for `.vars`).
+
+**dev and prod configs must be structurally identical** (same set of keys, same
+nesting). Only VALUES may differ between environments (artifact URL, user,
+replicas, allowed_hosts, etc.). Missing keys in one env vs the other count as
+structural divergence and are forbidden — see `feedback_dev_prod_sync` memory.
+
+**dev cluster size is variable (1..N nodes, including even N).** Do not assume
+dev = single node. Use the same `replicas: 3` as prod and rely on the server's
+fallback in `server/kv.go` to reduce replicas when the cluster is smaller.
+
 ## Service Definition Format
 
-`.asty` files in `deployments/` directory define deployments. Key fields:
+`.asty` files in `deploy/` directory define deployments. Key fields:
 ```yaml
 name: service-name
 type: system | service      # system = 1 per node; service = autoscaled
@@ -317,7 +331,7 @@ Demo services use `nats.go/micro` directly — no platform SDK, no shared middle
 ### Adding New Service
 1. Create `demo/internal/myservice/` with config.go, handlers.go
 2. Create `demo/cmd/myservice/main.go` — connect NATS, `micro.AddService`, register endpoints
-3. Create `deployments/envs/dev/myservice.asty` — deployment definition with `kv:` section if needed
+3. Create `deploy/dev/myservice.asty` — deployment definition with `kv:` section if needed
 4. Asty server provisions KV buckets and deploys the binary to target nodes
 
 ## Important Notes

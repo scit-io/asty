@@ -1,0 +1,81 @@
+# xauth — JWT authentication service.
+# Handles login, token refresh, logout, and token validation.
+# Tokens are stored as HttpOnly cookies; revoked refresh tokens
+# are tracked in a NATS KV bucket to prevent reuse.
+#
+# Environment: LOCAL DEV
+
+name: xauth         # Service identifier; matches binary name and NATS subject prefix
+type: service       # Scheduling mode (service — autoscaled; system — one per node)
+
+artifact:
+  url: local        # Binary source URL (local — skip download, use binary already on disk)
+  checksum: ""      # Expected SHA256, verified after download (empty — skipped for url=local)
+
+command: ./xauth    # Entry point launched by the agent inside the service work dir
+user: nobody        # OS user the process runs as (nobody — non-root, limits damage surface)
+kill_timeout: 30s   # Grace period after SIGTERM before SIGKILL (30s — drain in-flight auth)
+
+env:
+  X_AUTH_USERNAME: "${X_AUTH_USERNAME}"               # Accepted login username (env-substituted)
+  X_AUTH_PASSWORD: "${X_AUTH_PASSWORD}"               # Accepted login password (env-substituted)
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"     # HMAC key for access tokens (short-lived)
+  X_AUTH_REFRESH_SECRET: "${X_AUTH_REFRESH_SECRET}"   # HMAC key for refresh tokens (long-lived)
+  X_AUTH_COOKIE_DOMAIN: "${X_AUTH_COOKIE_DOMAIN}"     # Cookie Domain attribute (empty — current host)
+  X_AUTH_COOKIE_SECURE: "${X_AUTH_COOKIE_SECURE}"     # Cookie Secure flag (false in dev — no TLS)
+  X_AUTH_COOKIE_SAMESITE: "${X_AUTH_COOKIE_SAMESITE}" # Cookie SameSite policy (lax in dev)
+  X_AUTH_ACCESS_TTL: "${X_AUTH_ACCESS_TTL}"           # Access token lifetime (env-substituted, e.g. "15m")
+  X_AUTH_REFRESH_TTL: "${X_AUTH_REFRESH_TTL}"         # Refresh token lifetime (env-substituted, e.g. "168h")
+
+# KV bucket for tracking revoked refresh tokens.
+# When a user logs out, their refresh token ID is written here.
+# On token refresh, the service checks this bucket — if the token is revoked, it rejects.
+kv:
+  - bucket: authms_refresh_tokens  # NATS KV bucket name; provisioned by the server before service start
+    history: 1                     # Number of versions kept per key (1 — revoked-flag presence is all we need)
+    replicas: 3                    # NATS replication factor (server/kv.go falls back if cluster smaller)
+
+# Resource reservations for the scheduler.
+# The scheduler uses these to decide whether a node has capacity for another copy.
+resources:
+  cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
+  memory: 32        # Memory reservation in MB
+
+# Per-path rate limits enforced by the gateway.
+# These protect auth endpoints from brute-force attacks.
+# The gateway collects rules from all services at startup and applies
+# the longest matching prefix per request.
+rate_limit:
+  - path_prefix: "/v1/auth/"  # URL prefix this rule applies to (longest match wins)
+    rate: 5                   # Allowed requests per second per IP for this path
+    burst: 10                 # Burst allowance above steady rate
+
+# Health check via NATS request-reply.
+# NATS micro services automatically respond to $SRV.PING.<name>,
+# so no separate HTTP health endpoint is needed.
+health:
+  type: nats               # Probe type (nats — request-reply; http — GET addr+path)
+  subject: $SRV.PING.xauth # NATS subject the service replies on (nats.go/micro auto-handler)
+  interval: 10s            # Probe frequency
+  timeout: 3s              # Max wait for a reply before marking unhealthy
+
+logs:
+  max_files: 5      # Number of rotated log files retained
+  max_file_size: 10 # Per-file size limit in MB (oldest rotated file evicted)
+
+# Rolling update strategy.
+# Controls how Asty replaces old instances with new ones during a deploy.
+update:
+  max_parallel: 2        # Instances replaced in parallel during rolling update (2 — faster feedback in dev)
+  min_healthy_time: 10s  # Required healthy uptime before an instance counts as updated
+  healthy_deadline: 3m   # Per-instance budget to become healthy; over budget → failed
+  progress_deadline: 10m # Whole-deploy budget; over budget triggers auto_revert
+  auto_revert: true      # Whether to roll back to previous version on failure
+
+# Restart policy for unexpected crashes.
+# After exhausting attempts within the interval, the allocation is marked failed
+# and the server reschedules it to a different node.
+restart:
+  attempts: 10      # Max restart attempts within the interval window
+  interval: 5m      # Counter-reset window after stable uptime
+  delay: 15s        # Pause between consecutive restart attempts

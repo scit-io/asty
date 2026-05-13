@@ -1,0 +1,80 @@
+# Asty configuration — PRODUCTION environment.
+#
+# Loaded via `asty -mode server -config <path>` or `asty -mode agent -config <path>`.
+# Every field here can be overridden per-node via A_* env vars — useful for
+# per-node identity (A_NODE_ID, A_NODE_IP) and secrets (A_TOKEN, A_NATS_USER, A_NATS_PASSWORD).
+#
+# Secrets MUST be injected via env vars, never stored in this file.
+# This file is committed to the repo and should contain no sensitive values.
+
+# Cluster identity.
+domain: ""          # Cluster domain (set via A_DOMAIN per deployment, e.g. "prod.example.com")
+datacenter: ""      # This node's DC (set via A_DATACENTER per node, e.g. "eu-west-1")
+log_level: info     # Zerolog level (info — production default)
+dev_mode: false     # Skip required-field validation (false — required fields enforced)
+
+# NATS connection for both server and agent.
+# Every node runs a local NATS server — services always connect to localhost.
+# Credentials are injected via A_NATS_USER / A_NATS_PASSWORD env vars.
+nats:
+  host: 127.0.0.1   # Local NATS server address (always loopback by design)
+  port: "4222"      # Local NATS server port
+
+# Autoscaler thresholds.
+# The controller evaluates these every eval_interval and decides whether
+# to scale up/down based on CPU, memory, and traffic RPS.
+autoscale:
+  min_copies: 3                  # Floor for scale-down (should match number of DCs)
+  target_cpu: 75                 # CPU usage % above which scale-up is triggered
+  target_memory: 75              # Memory usage % above which scale-up is triggered
+  traffic_rps_threshold: 5       # Validated RPS per node above which scale-up is triggered
+  traffic_window: 1m             # RPS averaging window
+  cooldown_up: 30s               # Min interval between consecutive scale-up actions
+  cooldown_down: 5m              # Min interval between consecutive scale-down actions (prevents flapping)
+  eval_interval: 10s             # Autoscaler tick rate
+  controller_workers: 2          # Parallel reconciliation goroutines
+
+# Resource reservations.
+# CPU/memory set aside for the agent + NATS + OS overhead.
+# The scheduler subtracts these from total node capacity before placing services.
+resources:
+  reserved_cpu: 100              # Agent + OS overhead in MHz (subtracted before placement)
+  reserved_memory: 250           # Agent + OS overhead in MB (subtracted before placement)
+
+# HTTP API for the Web UI and CLI monitoring.
+# Binds to localhost only — not exposed externally.
+# External access goes through the gateway, not the UI API.
+ui:
+  addr: 127.0.0.1:4747  # HTTP API listen address (loopback only — internal access)
+
+# Agent-specific paths.
+agent:
+  work_dir: /var/lib/asty           # Root for per-service work directories (binaries, logs, state)
+  service_dir: /etc/asty/services   # Directory the agent loads .asty service definitions from
+
+# Embedded HTTP gateway configuration.
+# The gateway runs inside the agent process — it's the sole HTTP entry point
+# for all client traffic. It translates HTTP requests into NATS request-reply
+# and upgrades WebSocket connections to NATS pub/sub.
+gateway:
+  enabled: true                  # Whether this node serves HTTP/WS traffic (false — control-plane-only node)
+  http:
+    addr: ":80"                  # HTTP listen address (public-facing, fronted by load balancer)
+    read_header_timeout: 5s      # Max wait between TCP accept and complete headers
+    read_timeout: 15s            # Max wait for full request body
+    write_timeout: 15s           # Max wait for response to be written
+    idle_timeout: 60s            # Keep-alive idle timeout
+    nats_request_timeout: 5s     # Max wait for NATS backend to respond
+    nats_retry_delay: 100ms      # Delay before retrying a failed NATS request
+    ws_connect_timeout: 2s       # Max time to establish a WS session
+  metrics_addr: "127.0.0.1:8081" # Prometheus /metrics listen address (internal only)
+  # CORS: which origins are allowed to call the gateway.
+  # Set via A_ALLOWED_HOSTS env var (comma-separated) per deployment.
+  allowed_hosts: []              # CORS-allowed Origin hosts (empty list — allow all)
+  # General rate limiting — applies to all /v1/ routes.
+  # Path-specific limits are declared by each service in its .asty file.
+  rate_limit:
+    rate: 100                    # General per-IP rate limit (requests per second)
+    burst: 200                   # Burst allowance above steady rate
+    max_ws_conns: 1000           # Max concurrent WebSocket connections per node
+    max_ips: 100000              # Max tracked IPs in the rate limiter LRU

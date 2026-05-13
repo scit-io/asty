@@ -1,0 +1,60 @@
+# xhttp — CRUD data service.
+# Provides create/read/update/delete operations backed by PostgreSQL.
+# Uses a NATS KV cache in front of the database to reduce query load —
+# cache entries expire after X_HTTP_CACHE_TTL.
+# Validates access tokens using the same secret as xauth.
+#
+# Environment: PRODUCTION
+
+name: xhttp         # Service identifier; matches binary name and NATS subject prefix
+type: service       # Scheduling mode (service — autoscaled; system — one per node)
+
+artifact:
+  url: https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/xhttp_linux_${ARCH}.tar.gz  # Binary source URL (https — tar.gz from GitHub Releases)
+  checksum: ${CHECKSUM}  # Expected SHA256, verified after download (substituted at deploy)
+
+command: ./xhttp    # Entry point launched by the agent inside the service work dir
+user: asty          # OS user the process runs as (asty — dedicated non-root, least privilege)
+kill_timeout: 10s   # Grace period after SIGTERM before SIGKILL (10s — DB conns close fast)
+
+env:
+  X_HTTP_DATABASE_URL: "${X_HTTP_DATABASE_URL}"       # PostgreSQL connection string (env-substituted)
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"     # HMAC key for verifying access tokens (shared with xauth)
+  X_HTTP_CACHE_TTL: "${X_HTTP_CACHE_TTL}"             # Cache entry lifetime (env-substituted)
+
+# Cache bucket. Stores serialized query results keyed by request parameters.
+# history: 1 means only the latest value is kept — stale cache entries are just overwritten.
+# 3 replicas: cache loss isn't fatal (DB is source of truth), but replicas prevent
+# cold-start storms when a NATS node restarts.
+kv:
+  - bucket: xhttp_cache  # NATS KV bucket name; provisioned by the server before service start
+    history: 1           # Number of versions kept per key (1 — overwrite only, no audit history)
+    replicas: 3          # NATS replication factor (server/kv.go falls back if cluster smaller)
+
+# Resource reservations for the scheduler.
+resources:
+  cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
+  memory: 64        # Memory reservation in MB (64 — pg pool + row buffering needs headroom)
+
+health:
+  type: nats               # Probe type (nats — request-reply; http — GET addr+path)
+  subject: $SRV.PING.xhttp # NATS subject the service replies on (nats.go/micro auto-handler)
+  interval: 10s            # Probe frequency
+  timeout: 3s              # Max wait for a reply before marking unhealthy
+
+logs:
+  max_files: 5      # Number of rotated log files retained
+  max_file_size: 10 # Per-file size limit in MB (oldest rotated file evicted)
+
+# One at a time — keeps read capacity stable during deploys.
+update:
+  max_parallel: 1        # Instances replaced in parallel during rolling update (1 — keeps capacity stable)
+  min_healthy_time: 10s  # Required healthy uptime before an instance counts as updated
+  healthy_deadline: 3m   # Per-instance budget to become healthy; over budget → failed
+  progress_deadline: 10m # Whole-deploy budget; over budget triggers auto_revert
+  auto_revert: true      # Whether to roll back to previous version on failure
+
+restart:
+  attempts: 10      # Max restart attempts within the interval window
+  interval: 5m      # Counter-reset window after stable uptime
+  delay: 15s        # Pause between consecutive restart attempts

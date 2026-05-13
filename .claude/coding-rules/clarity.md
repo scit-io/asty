@@ -2,23 +2,9 @@
 
 The asty orchestrator codebase is read by people without deep backend experience. Phase 6.4 of the refactor restructured code with that audience in mind. Apply these rules to new code as well.
 
-## Comments explain WHY, not WHAT
+## Comments
 
-The identifier name says what; the comment says why this value, this trade-off, this defensive copy.
-
-Bad:
-
-```go
-// Increment migrated counter
-op.status.Migrated++
-```
-
-Good — already implicit from name; if a comment is added, it justifies the lock release / publish:
-
-```go
-// bumpMigrated increments the counter and publishes a progress event.
-// Used by both the system and regular paths.
-```
+All comment rules live in [comments.md](comments.md) — WHY-over-WHAT, key-focused YAML inlines, block style for shell envs, no value-centric comments.
 
 ## One file = one concept
 

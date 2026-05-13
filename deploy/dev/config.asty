@@ -1,0 +1,86 @@
+# Asty configuration — LOCAL DEV environment.
+#
+# Loaded via `asty -mode server -config <path>` or `asty -mode agent -config <path>`.
+# Every field here can be overridden per-node via A_* env vars (useful in start.sh
+# when running multiple agents on loopback with different ports).
+#
+# Secrets (A_NATS_USER, A_NATS_PASSWORD, A_TOKEN) are NOT stored here —
+# they live in dev.vars and are exported by start.sh into the process env.
+
+# Cluster identity.
+domain: dev.local   # Cluster domain (used in NATS subject namespacing and API auth)
+datacenter: dc1     # This node's DC; used by proximity-aware scheduling
+log_level: debug    # Zerolog level (debug — verbose; in prod typically info)
+dev_mode: false     # Skip required-field validation (false — full validation, like prod)
+
+# NATS connection for both server and agent.
+# In dev, start.sh overrides A_NATS_PORT per node so multiple agents
+# can coexist on the same machine without port conflicts.
+nats:
+  host: 127.0.0.1   # Local NATS server address (always loopback by design)
+  port: "4222"      # Local NATS server port (overridden per node in dev via A_NATS_PORT)
+
+# Autoscaler thresholds.
+# The controller evaluates these every eval_interval and decides
+# whether to scale up/down based on CPU, memory, and traffic RPS.
+autoscale:
+  min_copies: 3                  # Floor for scale-down (should match number of DCs)
+  target_cpu: 75                 # CPU usage % above which scale-up is triggered
+  target_memory: 75              # Memory usage % above which scale-up is triggered
+  traffic_rps_threshold: 5       # Validated RPS per node above which scale-up is triggered
+  traffic_window: 1m             # RPS averaging window
+  cooldown_up: 30s               # Min interval between consecutive scale-up actions
+  cooldown_down: 5m              # Min interval between consecutive scale-down actions (prevents flapping)
+  eval_interval: 10s             # Autoscaler tick rate
+  controller_workers: 2          # Parallel reconciliation goroutines
+
+# Resource reservations.
+# CPU/memory set aside for the agent + NATS + OS overhead.
+# The scheduler subtracts these from total node capacity before placing services.
+resources:
+  reserved_cpu: 100              # Agent + OS overhead in MHz (subtracted before placement)
+  reserved_memory: 250           # Agent + OS overhead in MB (subtracted before placement)
+
+# HTTP API for the Web UI and CLI monitoring.
+# Each node exposes this read-only API; the Web UI at asty/web/ connects here.
+ui:
+  addr: 127.0.0.1:4747  # HTTP API listen address (loopback only — Web UI/CLI access)
+
+# Agent-specific paths.
+agent:
+  work_dir: /tmp/asty-dev/work    # Root for per-service work directories (binaries, logs, state)
+  service_dir: ./deploy/dev         # Directory the agent loads .asty service definitions from
+
+# Embedded HTTP gateway configuration.
+# The gateway runs inside the agent process — it's the sole HTTP entry point
+# for all client traffic. It translates HTTP requests into NATS request-reply
+# and upgrades WebSocket connections to NATS pub/sub.
+gateway:
+  enabled: true                  # Whether this node serves HTTP/WS traffic (false — control-plane-only node)
+  # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
+  # start.sh overrides A_HTTP_ADDR / A_GATEWAY_METRICS_ADDR per node.
+  # Without those overrides every agent would race for the same :80 /
+  # 127.0.0.1:8081 and all but the first would fail with "address already in use".
+  http:
+    addr: ":80"                  # HTTP listen address (start.sh overrides per node in dev)
+    read_header_timeout: 5s      # Max wait between TCP accept and complete headers
+    read_timeout: 15s            # Max wait for full request body
+    write_timeout: 15s           # Max wait for response to be written
+    idle_timeout: 60s            # Keep-alive idle timeout
+    nats_request_timeout: 5s     # Max wait for NATS backend to respond
+    nats_retry_delay: 100ms      # Delay before retrying a failed NATS request
+    ws_connect_timeout: 2s       # Max time to establish a WS session
+  metrics_addr: "127.0.0.1:8081" # Prometheus /metrics listen address (internal only)
+  # CORS: which origins are allowed to call the gateway.
+  # In dev — local Vite dev servers for the Web UI and demo frontend.
+  allowed_hosts:                 # CORS-allowed Origin hosts (empty list — allow all)
+    - "localhost:3000"
+    - "localhost:5173"
+  # General rate limiting — applies to all /v1/ routes.
+  # Path-specific limits (brute-force defense, write throttling) are declared
+  # by each service in its .asty file under rate_limit: section.
+  rate_limit:
+    rate: 100                    # General per-IP rate limit (requests per second)
+    burst: 200                   # Burst allowance above steady rate
+    max_ws_conns: 1000           # Max concurrent WebSocket connections per node
+    max_ips: 100000              # Max tracked IPs in the rate limiter LRU

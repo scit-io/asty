@@ -1,0 +1,55 @@
+# xws — WebSocket session manager.
+# Maintains persistent bidirectional connections with clients.
+# When a client connects via the gateway's /ws endpoint, the gateway
+# publishes to api.v1.xws.ws.connect and xws opens a NATS pub/sub
+# session for that client. Messages flow both ways until disconnect
+# or inactivity timeout.
+#
+# Unlike xauth/xhttp, xws does NOT use nats.go/micro — it's raw NATS.
+# So it exposes a custom "xws.ping" subject for health checks.
+#
+# Environment: PRODUCTION
+
+name: xws           # Service identifier; matches binary name and NATS subject prefix
+type: service       # Scheduling mode (service — autoscaled; system — one per node)
+
+artifact:
+  url: https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/xws_linux_${ARCH}.tar.gz  # Binary source URL (https — tar.gz from GitHub Releases)
+  checksum: ${CHECKSUM}  # Expected SHA256, verified after download (substituted at deploy)
+
+command: ./xws      # Entry point launched by the agent inside the service work dir
+user: asty          # OS user the process runs as (asty — dedicated non-root, least privilege)
+kill_timeout: 10s   # Grace period after SIGTERM before SIGKILL
+
+env:
+  X_WS_INACTIVITY_TIMEOUT: "${X_WS_INACTIVITY_TIMEOUT}"  # Idle WS session lifetime (env-substituted at deploy)
+
+# Resource reservations for the scheduler.
+resources:
+  cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
+  memory: 32        # Memory reservation in MB
+
+# Custom health subject because xws uses raw NATS (no micro $SRV.PING).
+# The service subscribes to "xws.ping" and responds with "ok".
+health:
+  type: nats        # Probe type (nats — request-reply; http — GET addr+path)
+  subject: xws.ping # NATS subject the service replies on (for type=nats)
+  interval: 10s     # Probe frequency
+  timeout: 3s       # Max wait for a reply before marking unhealthy
+
+logs:
+  max_files: 5      # Number of rotated log files retained
+  max_file_size: 10 # Per-file size limit in MB (oldest rotated file evicted)
+
+# Preserve active WS connections on remaining instances during deploy.
+update:
+  max_parallel: 1        # Instances replaced in parallel during rolling update (1 — preserves WS capacity)
+  min_healthy_time: 10s  # Required healthy uptime before an instance counts as updated
+  healthy_deadline: 3m   # Per-instance budget to become healthy; over budget → failed
+  progress_deadline: 10m # Whole-deploy budget; over budget triggers auto_revert
+  auto_revert: true      # Whether to roll back to previous version on failure
+
+restart:
+  attempts: 10      # Max restart attempts within the interval window
+  interval: 5m      # Counter-reset window after stable uptime
+  delay: 15s        # Pause between consecutive restart attempts

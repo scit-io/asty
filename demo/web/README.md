@@ -9,7 +9,7 @@ React-приложение для тестирования всех паттер
 
 1. Убедитесь что Asty dev-окружение запущено:
    ```bash
-   cd ../deployments/envs/dev
+   cd ../deploy/dev
    ./start.sh 8  # 8 нод, gateway на dev-node-1 (127.0.0.1:80)
    ```
 

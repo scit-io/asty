@@ -115,7 +115,7 @@ func defaults() *Config {
 		UI: UIConfig{Addr: "127.0.0.1:4747"},
 		Agent: AgentConfig{
 			WorkDir:    "/var/lib/asty",
-			ServiceDir: "./deployments/infra",
+			ServiceDir: "/etc/asty/services",
 		},
 		Gateway: gatewayDefaults(),
 	}

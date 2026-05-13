@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# deployments/envs/dev/start.sh
+# deploy/dev/start.sh
 #
 # Запуск и остановка dev-окружения Asty.
 #
@@ -14,7 +14,7 @@ set -euo pipefail
 # Пути
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"

@@ -9,6 +9,7 @@ When in doubt: read the topic file that matches the work you are doing.
 - [concurrency.md](concurrency.md) — default to KV.Watch / OnExit / Done; acceptable polling list; `subscribers[T]`; debounce; initial-state-then-watch.
 - [architecture.md](architecture.md) — core/features/server/agent split; interfaces only at boundaries; sub-packages are sub-features, not file splits.
 - [testing.md](testing.md) — `go build/test/race/vet` required; `testutil` fixtures use typed enums; race-test concurrent code.
-- [clarity.md](clarity.md) — comments explain WHY; one file = one concept; no dead stubs.
+- [clarity.md](clarity.md) — one file = one concept; no dead stubs; magic numbers → named constants.
+- [comments.md](comments.md) — WHY over WHAT, key-focused YAML inlines, block-style for shell envs, no value-centric comments.
 
 History: these rules came out of `dev-docs/refactoring-audit.md` Phase 6 (commits `19ea499` … `3450310` on `main`). They reflect what worked in practice and what we would do differently next time. A developer-facing version of the same content (Russian, more examples) lives at `docs/asty-coding-rules.md`.
