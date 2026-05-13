@@ -1,11 +1,11 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Dev-proxy на Gateway: фронт обращается к относительным путям (/v1, /health),
-// Vite форвардит их на Gateway. Это избавляет от CORS и позволяет браузеру
-// отправлять HttpOnly-куки (same-origin).
+// Dev-proxy to the Gateway: the front-end uses relative paths (/v1, /health),
+// and Vite forwards them to the Gateway. This avoids CORS and lets the
+// browser send HttpOnly cookies (same-origin).
 //
-// Asty dev-окружение запускает gateway на 127.0.0.1:80 (dev-node-1).
+// The Asty dev environment runs the gateway on 127.0.0.1:80 (dev-node-1).
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const gatewayUrl = env.VITE_GATEWAY_URL || 'http://127.0.0.1';

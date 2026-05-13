@@ -33,7 +33,7 @@ export default function AuthTab() {
 
   return (
     <section>
-      <h2>xauth — JWT в HttpOnly-куках</h2>
+      <h2>xauth — JWT in HttpOnly cookies</h2>
       <div className="row">
         <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" />
         <input
@@ -49,7 +49,7 @@ export default function AuthTab() {
         <button className="secondary" disabled={busy} onClick={refresh}>refresh</button>
         <button className="secondary" disabled={busy} onClick={logout}>logout</button>
       </div>
-      <pre className="out">{out || 'Нажми кнопку — тут появится ответ.'}</pre>
+      <pre className="out">{out || 'Press a button — the response appears here.'}</pre>
     </section>
   );
 }

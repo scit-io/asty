@@ -11,27 +11,27 @@ import (
 	"time"
 )
 
-// jwtHeader — неизменяемая base64url-закодированная шапка всех токенов (HS256).
-// Вычислена однократно: base64url({"alg":"HS256","typ":"JWT"})
+// jwtHeader is the immutable base64url-encoded header shared by every
+// token (HS256). Computed once: base64url({"alg":"HS256","typ":"JWT"}).
 const jwtHeader = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"
 
-// JWTClockSkew — допуск на расхождение часов между подписантом токена и
-// проверяющим. Без него токен, выданный «прямо сейчас» на узле A, при
-// дрейфе NTP на пару секунд может оказаться «истёкшим» на узле B.
-// 60 секунд — стандарт индустрии (RFC 7519 §4.1.4 «small leeway»);
-// применяется единообразно для access и refresh — для любого JWT в платформе.
+// JWTClockSkew is the allowed clock drift between the token signer and
+// the verifier. Without it, a token issued "just now" on node A may
+// appear "expired" on node B after a couple of seconds of NTP drift.
+// 60 seconds is the industry standard (RFC 7519 §4.1.4 "small leeway");
+// applied uniformly to access and refresh — to every JWT in the platform.
 const JWTClockSkew = 60 * time.Second
 
-// Claims — полезная нагрузка JWT-токена (подмножество RFC 7519).
+// Claims is the JWT token payload (a subset of RFC 7519).
 type Claims struct {
-	Sub string `json:"sub"` // субъект (имя пользователя)
-	Exp int64  `json:"exp"` // unix-время истечения
-	Jti string `json:"jti"` // уникальный ID токена (используется для отзыва refresh)
-	Iat int64  `json:"iat"` // unix-время выдачи
+	Sub string `json:"sub"` // subject (username)
+	Exp int64  `json:"exp"` // unix expiration time
+	Jti string `json:"jti"` // unique token ID (used for refresh-token revocation)
+	Iat int64  `json:"iat"` // unix issued-at time
 }
 
-// SignJWT формирует подписанный JWT-токен (HS256) без внешних зависимостей.
-// Формат: base64url(header).base64url(payload).base64url(HMAC-SHA256(header.payload))
+// SignJWT produces a signed JWT (HS256) with no external dependencies.
+// Format: base64url(header).base64url(payload).base64url(HMAC-SHA256(header.payload))
 func SignJWT(c Claims, secret []byte) (string, error) {
 	payload, err := json.Marshal(c)
 	if err != nil {
@@ -47,23 +47,25 @@ func SignJWT(c Claims, secret []byte) (string, error) {
 	return hp + "." + sig, nil
 }
 
-// VerifyJWT проверяет HMAC-SHA256 подпись токена и возвращает Claims.
+// VerifyJWT checks the HMAC-SHA256 signature of a token and returns
+// its Claims.
 //
-// Срок действия (Exp) намеренно не проверяется здесь — это делает вызывающий код.
-// Такое разделение позволяет вернуть клиенту разные сообщения:
-// "токен истёк" (→ попробуй /refresh) vs "токен невалиден" (→ войди заново).
+// Expiry (Exp) is intentionally not checked here — the caller does that.
+// Splitting these checks lets the client surface different messages:
+// "token expired" (→ try /refresh) vs "token invalid" (→ log in again).
 func VerifyJWT(token string, secret []byte) (Claims, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return Claims{}, fmt.Errorf("jwt: неверный формат токена")
+		return Claims{}, fmt.Errorf("jwt: invalid token format")
 	}
 
-	// Defense-in-depth: токен подписан именно нашим SignJWT (один фиксированный
-	// header HS256). Существующий HMAC-check уже отбрасывает подделки без
-	// секрета, но явная проверка fail-fast и страхует от будущих правок,
-	// которые могли бы начать диспатчить по alg из header.
+	// Defense-in-depth: the token must have been signed by our SignJWT
+	// (one fixed HS256 header). The HMAC check already rejects forgeries
+	// without the secret, but an explicit header check fails fast and
+	// guards against a future change that might start dispatching by
+	// the alg field of the header.
 	if parts[0] != jwtHeader {
-		return Claims{}, fmt.Errorf("jwt: неподдерживаемый header")
+		return Claims{}, fmt.Errorf("jwt: unsupported header")
 	}
 
 	hp := parts[0] + "." + parts[1]
@@ -71,9 +73,9 @@ func VerifyJWT(token string, secret []byte) (Claims, error) {
 	mac.Write([]byte(hp))
 	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 
-	// hmac.Equal выполняет сравнение за константное время — защита от timing-атак.
+	// hmac.Equal runs in constant time — protection against timing attacks.
 	if !hmac.Equal([]byte(parts[2]), []byte(expected)) {
-		return Claims{}, fmt.Errorf("jwt: невалидная подпись")
+		return Claims{}, fmt.Errorf("jwt: invalid signature")
 	}
 
 	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
@@ -89,8 +91,8 @@ func VerifyJWT(token string, secret []byte) (Claims, error) {
 	return c, nil
 }
 
-// NewJTI генерирует криптографически случайный уникальный ID токена (JWT ID).
-// Используется для идентификации refresh-токена в KV-хранилище при отзыве.
+// NewJTI generates a cryptographically random unique token ID (JWT ID).
+// Used to identify the refresh token in the KV store for revocation.
 func NewJTI() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

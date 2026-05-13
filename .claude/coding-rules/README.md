@@ -12,4 +12,4 @@ When in doubt: read the topic file that matches the work you are doing.
 - [clarity.md](clarity.md) — one file = one concept; no dead stubs; magic numbers → named constants.
 - [comments.md](comments.md) — WHY over WHAT, key-focused YAML inlines, block-style for shell envs, no value-centric comments.
 
-History: these rules came out of the Phase-6 refactor (commits `19ea499` … `3450310` on `main`). They reflect what worked in practice and what we would do differently next time. A developer-facing version of the same content (Russian, more examples) lives at `docs/asty-coding-rules.md`.
+History: these rules came out of the Phase-6 refactor (commits `19ea499` … `3450310` on `main`). They reflect what worked in practice and what we would do differently next time.

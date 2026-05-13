@@ -68,7 +68,7 @@ export default function CrudTab() {
   };
 
   const del = async (id: number) => {
-    if (!confirm(`Удалить #${id}?`)) return;
+    if (!confirm(`Delete #${id}?`)) return;
     setBusy(true);
     const r = await apiCall(`/v1/xhttp/delete`, {
       method: 'POST',
@@ -128,7 +128,7 @@ export default function CrudTab() {
         </table>
       )}
 
-      <pre className="out">{out || 'Нажми list, чтобы увидеть записи.'}</pre>
+      <pre className="out">{out || 'Press "list" to see the records.'}</pre>
     </section>
   );
 }

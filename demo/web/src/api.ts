@@ -1,4 +1,4 @@
-// Базовый URL Gateway. Пустая строка = относительные пути через Vite dev-proxy.
+// Gateway base URL. Empty string = relative paths via Vite dev-proxy.
 export const BASE = import.meta.env.VITE_GATEWAY_URL ?? '';
 
 export type ApiResult<T> = {
@@ -13,9 +13,9 @@ export async function apiCall<T = unknown>(
   path: string,
   init?: RequestInit,
 ): Promise<ApiResult<T>> {
-  // 8s — больше суммы Gateway-таймаутов (NATS 5s + WS connect 2s + retry-окно).
-  // Без timeout «зависший backend» оставляет кнопку disabled на ≥30s, пользователь
-  // не понимает что произошло. signal в конце spread'а — перекрывает init.signal.
+  // 8s — larger than the sum of Gateway timeouts (NATS 5s + WS connect 2s + retry window).
+  // Without it, a hung backend would leave the button disabled for ≥30s and the user
+  // would have no idea what happened. signal placed after the spread overrides init.signal.
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, {

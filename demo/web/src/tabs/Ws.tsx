@@ -62,7 +62,7 @@ export default function WsTab() {
     <section>
       <h2>xws — WebSocket</h2>
       <div className="row">
-        <span>статус: <code>{status}</code></span>
+        <span>status: <code>{status}</code></span>
         <button className="primary" disabled={status !== 'disconnected'} onClick={connect}>connect</button>
         <button className="secondary" disabled={status !== 'connected'} onClick={() => send({ type: 'ping' })}>
           ping

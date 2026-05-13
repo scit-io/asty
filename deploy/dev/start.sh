@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # deploy/dev/start.sh
 #
-# Запуск и остановка dev-окружения Asty.
+# Start and stop the Asty dev environment.
 #
-# Использование:
-#   ./start.sh          — 1 нода (server + agent)
-#   ./start.sh 3        — 3 ноды (server + agent на каждой, leader election)
-#   ./start.sh stop     — остановить всё
+# Usage:
+#   ./start.sh          — 1 node (server + agent)
+#   ./start.sh 3        — 3 nodes (server + agent each, with leader election)
+#   ./start.sh stop     — stop everything
 
 set -euo pipefail
 
 # =============================================================================
-# Пути
+# Paths
 # =============================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
@@ -23,7 +23,7 @@ PID_FILE="/tmp/asty-dev-pids"
 NATS_CONF_RENDERED="/tmp/asty-dev-nats.conf"
 
 # =============================================================================
-# Вывод
+# Output helpers
 # =============================================================================
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${GREEN}▶${NC} $*"; }
@@ -32,18 +32,18 @@ warn() { echo -e "${YELLOW}⚠${NC} $*"; }
 die()  { echo -e "${RED}✗ $*${NC}" >&2; exit 1; }
 
 # =============================================================================
-# Проверка зависимостей
+# Dependency check
 # =============================================================================
 check_deps() {
   local missing=()
   for cmd in docker go; do
     command -v "$cmd" &>/dev/null || missing+=("$cmd")
   done
-  [[ ${#missing[@]} -eq 0 ]] || die "Не найдены: ${missing[*]}. Установите и повторите."
+  [[ ${#missing[@]} -eq 0 ]] || die "missing dependencies: ${missing[*]}. Install them and retry."
 }
 
 # =============================================================================
-# Рендер NATS-конфига
+# Render NATS config
 # =============================================================================
 render_nats_conf() {
   local nodes=$1
@@ -72,13 +72,13 @@ CONF_CLUSTER
 }
 
 # =============================================================================
-# Инфраструктура (NATS + PostgreSQL)
+# Infrastructure (NATS + PostgreSQL)
 # =============================================================================
 start_infra() {
   local nodes=$1
   NATS_NODES=$nodes
 
-  log "Запуск инфраструктуры: $NATS_NODES нод NATS + PostgreSQL..."
+  log "starting infrastructure: $NATS_NODES NATS nodes + PostgreSQL..."
   render_nats_conf "$NATS_NODES"
   export DEV_NATS_CONF="$NATS_CONF_RENDERED"
 
@@ -91,34 +91,34 @@ start_infra() {
 
   docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes 2>/dev/null || true
 
-  # Запускаем 1 ноду — она сразу становится leader
+  # Start 1 node first — it immediately becomes the leader.
   docker compose -f "$COMPOSE_FILE" up -d --scale nats=1
-  info "NATS: запущена 1 нода, ждём готовность..."
+  info "NATS: 1 node started, waiting for readiness..."
   local port
   port=$(docker port dev-nats-1 8222/tcp 2>/dev/null | awk -F: '{print $NF; exit}')
   local elapsed=0
   until curl -s "http://127.0.0.1:$port/healthz?js-server-only=true" 2>/dev/null | grep -q '"ok"'; do
     sleep 1
     elapsed=$((elapsed + 1))
-    [[ $elapsed -lt 30 ]] || die "NATS не готов за 30s"
+    [[ $elapsed -lt 30 ]] || die "NATS not ready after 30s"
   done
-  info "NATS готов (${elapsed}s)"
+  info "NATS ready (${elapsed}s)"
 
-  # Добавляем остальные ноды — они подключатся к существующему leader
+  # Add the remaining nodes — they join the existing leader.
   if [[ $NATS_NODES -gt 1 ]]; then
     docker compose -f "$COMPOSE_FILE" up -d --scale nats="$NATS_NODES"
-    info "NATS: масштабировано до $NATS_NODES нод"
+    info "NATS: scaled to $NATS_NODES nodes"
   fi
 
-  info "NATS: $NATS_NODES нод | мониторинг: http://localhost:8222"
+  info "NATS: $NATS_NODES nodes | monitoring: http://localhost:8222"
 }
 
 # =============================================================================
-# Ожидание готовности NATS (JetStream)
+# Wait for NATS (JetStream) readiness
 # =============================================================================
 wait_nats() {
   local nodes=$1
-  log "Ожидание готовности NATS (JetStream)..."
+  log "waiting for NATS JetStream readiness..."
   local max_wait=60
   local elapsed=0
 
@@ -128,7 +128,7 @@ wait_nats() {
           | grep -Eq '"leader":[[:space:]]*"[^"]'; do
       sleep 1
       elapsed=$((elapsed + 1))
-      [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader не выбран за ${max_wait}s"
+      [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader not elected after ${max_wait}s"
     done
   fi
 
@@ -137,22 +137,22 @@ wait_nats() {
         &>/dev/null; do
     sleep 1
     elapsed=$((elapsed + 1))
-    [[ $elapsed -lt $max_wait ]] || die "NATS dev-nats-1 не готов за ${max_wait}s"
+    [[ $elapsed -lt $max_wait ]] || die "NATS dev-nats-1 not ready after ${max_wait}s"
   done
 
-  info "NATS готов (${elapsed}s)"
+  info "NATS ready (${elapsed}s)"
 }
 
 stop_infra() {
-  log "Остановка инфраструктуры..."
+  log "stopping infrastructure..."
   docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes
 }
 
 # =============================================================================
-# Сборка бинарников
+# Build binaries
 # =============================================================================
 build_binaries() {
-  log "Сборка бинарников → $BIN_DIR ..."
+  log "building binaries → $BIN_DIR ..."
   mkdir -p "$BIN_DIR"
   cd "$ROOT_DIR"
 
@@ -166,18 +166,18 @@ build_binaries() {
 }
 
 # =============================================================================
-# Loopback-алиасы для multi-node кластера (macOS)
+# Loopback aliases for multi-node cluster (macOS only)
 # =============================================================================
 setup_loopback_aliases() {
   local nodes=$1
   [[ "$(uname -s)" == "Darwin" ]] || return 0
   [[ $nodes -gt 1 ]] || return 0
 
-  log "Настройка loopback-алиасов 127.0.0.2..127.0.0.$nodes (потребуется sudo)..."
+  log "setting up loopback aliases 127.0.0.2..127.0.0.$nodes (requires sudo)..."
   for ((i=2; i<=nodes; i++)); do
     sudo ifconfig lo0 -alias "127.0.0.$i" 2>/dev/null || true
     sudo ifconfig lo0 alias "127.0.0.$i" up
-    info "алиас 127.0.0.$i"
+    info "alias 127.0.0.$i"
   done
 }
 
@@ -186,9 +186,9 @@ teardown_loopback_aliases() {
   local aliases
   aliases=$(ifconfig lo0 2>/dev/null | awk '/inet 127\.0\.0\.[0-9]+ / && $2!="127.0.0.1" {print $2}')
   [[ -n "$aliases" ]] || return 0
-  log "Удаление loopback-алиасов (потребуется sudo)..."
+  log "removing loopback aliases (requires sudo)..."
   for addr in $aliases; do
-    sudo ifconfig lo0 -alias "$addr" 2>/dev/null && info "убран $addr" || true
+    sudo ifconfig lo0 -alias "$addr" 2>/dev/null && info "removed $addr" || true
   done
 }
 
@@ -197,9 +197,9 @@ teardown_loopback_aliases() {
 # =============================================================================
 start_asty() {
   local nodes=$1
-  log "Запуск Asty: $nodes нод (server + agent на каждой)..."
+  log "starting Asty: $nodes nodes (server + agent on each)..."
 
-  # Загружаем dev.vars и экспортируем все переменные
+  # Load dev.vars and export every variable.
   while IFS='=' read -r key value; do
     # Skip comments and empty lines
     [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
@@ -210,14 +210,15 @@ start_asty() {
     export "$key=$value"
   done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
 
-  # Все ноды Asty подключаются к одному NATS endpoint — host-порту dev-nats-1.
-  # При --scale nats>1 OrbStack выдаёт непоследовательные host-порты в диапазоне
-  # 4222-4322 (4228, 4229, ...), формула base+i-1 ломается. NATS-кластер сам
-  # реплицирует JetStream, одной точки входа достаточно.
+  # All Asty nodes connect to a single NATS endpoint — the host port of
+  # dev-nats-1. With --scale nats>1, OrbStack assigns non-sequential host
+  # ports in the 4222-4322 range (4228, 4229, ...), so a base+i-1 formula
+  # breaks. The NATS cluster replicates JetStream itself — one entry
+  # point is enough.
   local nats_host_port
   nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
-  [[ -n "$nats_host_port" ]] || die "не удалось определить host-порт NATS"
-  info "NATS host-порт: $nats_host_port"
+  [[ -n "$nats_host_port" ]] || die "failed to detect NATS host port"
+  info "NATS host port: $nats_host_port"
 
   # Asty reads $SCRIPT_DIR/config.asty via -config; we only export the
   # per-node and secret bits that have to be runtime-different per node
@@ -229,8 +230,8 @@ start_asty() {
   export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"
   export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}"
 
-  # Каждая нода запускает server + agent, все цепляются к одному NATS endpoint.
-  # sudo нужен для bind на порт 80 (gateway).
+  # Each node runs server + agent — both attach to the same NATS endpoint.
+  # sudo is required to bind port 80 (the gateway).
   for ((i=1; i<=nodes; i++)); do
     local addr="127.0.0.$i"
     local server_log="/tmp/asty-dev-server-$i.log"
@@ -258,7 +259,7 @@ start_asty() {
     echo "$agent_pid" >> "$PID_FILE"
 
     info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | server PID=$server_pid | agent PID=$agent_pid"
-    info "  Логи: $server_log | $agent_log"
+    info "  logs: $server_log | $agent_log"
     # Pause so JetStream confirms the KV bucket before the next agent
     # races to (re)create it — without it: "nats: no response from stream".
     sleep 0.5
@@ -266,27 +267,27 @@ start_asty() {
 }
 
 # =============================================================================
-# Ожидание готовности Asty
+# Wait for Asty readiness
 # =============================================================================
 wait_asty() {
-  log "Ожидание готовности Asty..."
+  log "waiting for Asty readiness..."
   local max_wait=30
   local elapsed=0
 
-  # Проверяем что процессы живы (простая проверка)
+  # Simple check: are the processes alive?
   sleep 2
 
   while IFS= read -r pid; do
     if ! kill -0 "$pid" 2>/dev/null; then
-      die "Процесс Asty (PID=$pid) упал. Проверьте логи в /tmp/asty-dev-*.log"
+      die "Asty process (PID=$pid) died. Check logs in /tmp/asty-dev-*.log"
     fi
   done < "$PID_FILE"
 
-  info "Asty запущен"
+  info "Asty up"
 }
 
 # =============================================================================
-# Очистка осиротевших процессов (только наши бинарники по точному пути)
+# Cleanup orphan processes (our binaries, identified by exact path)
 # =============================================================================
 cleanup_orphans() {
   local killed=0
@@ -295,39 +296,39 @@ cleanup_orphans() {
   for svc in gateway xauth xhttp xws; do
     sudo pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
   done
-  [[ $killed -eq 1 ]] && info "✓ осиротевшие процессы убраны" || true
+  [[ $killed -eq 1 ]] && info "✓ orphan processes removed" || true
 }
 
 # =============================================================================
-# Статус
+# Status
 # =============================================================================
 print_status() {
   echo ""
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
-  echo -e "${GREEN}  Asty dev-окружение запущено${NC}"
+  echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Asty UI:    http://localhost:4747 (нода 1)"
-  info "Gateway:    http://127.0.0.1:80 (нода 1)"
+  info "Asty UI:    http://localhost:4747 (node 1)"
+  info "Gateway:    http://127.0.0.1:80 (node 1)"
   info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"
   info ""
-  info "Логи сервера 1: tail -f /tmp/asty-dev-server-1.log"
-  info "Логи агента 1:  tail -f /tmp/asty-dev-agent-1.log"
+  info "server-1 log: tail -f /tmp/asty-dev-server-1.log"
+  info "agent-1 log:  tail -f /tmp/asty-dev-agent-1.log"
   echo ""
-  info "Остановить: $SCRIPT_DIR/start.sh stop"
+  info "Stop with: $SCRIPT_DIR/start.sh stop"
 }
 
 # =============================================================================
-# Остановка
+# Stop
 # =============================================================================
 stop_all() {
-  log "Остановка Asty..."
+  log "stopping Asty..."
 
-  # Asty processes по PID-файлу (sudo — агенты запущены от root)
+  # Asty processes by PID file (sudo — agents run as root).
   if [[ -f "$PID_FILE" ]]; then
     while IFS= read -r pid; do
-      sudo kill "$pid" 2>/dev/null && info "✓ PID $pid завершён" || true
+      sudo kill "$pid" 2>/dev/null && info "✓ PID $pid terminated" || true
     done < "$PID_FILE"
     sleep 1
     while IFS= read -r pid; do
@@ -336,25 +337,25 @@ stop_all() {
     rm -f "$PID_FILE"
   fi
 
-  # Осиротевшие процессы (только наши бинарники)
+  # Orphan processes (our binaries only).
   cleanup_orphans
 
-  # Docker инфраструктура
+  # Docker infrastructure.
   stop_infra
 
-  # Временные данные (sudo — агенты создают файлы от root)
+  # Temporary data (sudo — agents create files as root).
   sudo rm -rf "$DATA_BASE"
   rm -f "$NATS_CONF_RENDERED"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
 
-  # Loopback-алиасы (macOS)
+  # Loopback aliases (macOS).
   teardown_loopback_aliases
 
-  log "✓ Остановлено"
+  log "✓ stopped"
 }
 
 # =============================================================================
-# Точка входа
+# Entry point
 # =============================================================================
 CMD="${1:-1}"
 
@@ -364,7 +365,7 @@ if [[ "$CMD" == "stop" ]]; then
 fi
 
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "Использование: $0 [NODES|stop]  (NODES ≥ 1, по умолчанию 1)"
+  die "usage: $0 [NODES|stop]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"
@@ -373,7 +374,7 @@ check_deps
 cleanup_orphans
 
 if [[ -f "$PID_FILE" ]]; then
-  warn "Обнаружено запущенное окружение. Останавливаю перед повторным запуском..."
+  warn "found a running environment. Stopping it before relaunch..."
   stop_all
 fi
 

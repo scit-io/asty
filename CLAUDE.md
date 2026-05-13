@@ -18,7 +18,7 @@ Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *m
 
 ## Project Overview
 
-**Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. It replaces Nomad with a simpler, integrated solution that combines scheduling, autoscaling, and deployment in a single binary.
+**Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. Single binary, two modes (server + agent), combining scheduling, autoscaling, and deployment.
 
 The project consists of two main parts:
 1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui).
@@ -79,7 +79,7 @@ Communication between agents and server happens over NATS subjects (`asty.v1.*`)
 
 ### Service Deployment Model
 
-Asty deploys services as **raw binaries** (not containers), similar to Nomad's `raw_exec` driver:
+Asty deploys services as **raw binaries** (not containers):
 - Services defined in `.asty` files (YAML declarative format, see `services/*.asty`)
 - Agent downloads binaries from URLs with checksum verification
 - Process lifecycle: start → health check → run → graceful shutdown (SIGTERM → SIGKILL)
@@ -89,7 +89,7 @@ Asty deploys services as **raw binaries** (not containers), similar to Nomad's `
 
 ### Locality-Aware Autoscaling
 
-The key differentiator from Nomad. Traffic is routed by geographic load balancer to nearest node. Gateway on that node validates requests and serves them **locally** (same-node NATS at `127.0.0.1:4222`).
+Traffic is routed by geographic load balancer to the nearest node. The gateway on that node validates requests and serves them **locally** (same-node NATS at `127.0.0.1:4222`). This is Asty's main differentiator from generic orchestrators.
 
 Autoscaler monitors:
 1. Gateway valid_rps per node (>5 rps sustained → scale up)
