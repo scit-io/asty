@@ -3,7 +3,6 @@ package deployment
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"asty/asty/internal/core/types"
 
@@ -48,10 +47,6 @@ func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, stat
 			return fmt.Errorf("batch update failed health check")
 		}
 		status.Updated += len(batch)
-
-		// Short pause between batches so observers can see staged
-		// progress; not a correctness requirement.
-		time.Sleep(plan.UpdateStrategy.MinHealthyTime)
 	}
 	return nil
 }
