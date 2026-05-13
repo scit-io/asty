@@ -121,13 +121,18 @@ type KVBucket struct {
 // the Get* methods fall back to default values if Resolve was skipped,
 // so behaviour is correct either way — just less efficient.
 func (s *ServiceDefinition) Resolve() {
-	s.parsedKillTimeout = parseDurationOr(s.KillTimeout, defaultKillTimeout)
-	s.Health.parsedInterval = parseDurationOr(s.Health.Interval, defaultHealthInterval)
-	s.Health.parsedTimeout = parseDurationOr(s.Health.Timeout, defaultHealthTimeout)
-	s.Restart.parsedDelay = parseDurationOr(s.Restart.Delay, defaultRestartDelay)
+	s.parsedKillTimeout = ParseDurationOr(s.KillTimeout, defaultKillTimeout)
+	s.Health.parsedInterval = ParseDurationOr(s.Health.Interval, defaultHealthInterval)
+	s.Health.parsedTimeout = ParseDurationOr(s.Health.Timeout, defaultHealthTimeout)
+	s.Restart.parsedDelay = ParseDurationOr(s.Restart.Delay, defaultRestartDelay)
 }
 
-func parseDurationOr(s string, fallback time.Duration) time.Duration {
+// ParseDurationOr parses a duration string and returns fallback for
+// empty input, a parse error, or a zero result. The d == 0 fallback
+// matters for fields where literal "0s" is semantically dangerous
+// (e.g. kill_timeout=0 means SIGKILL without grace; update.*=0 means
+// "skip the wait", breaking rolling updates).
+func ParseDurationOr(s string, fallback time.Duration) time.Duration {
 	if s == "" {
 		return fallback
 	}
@@ -143,7 +148,7 @@ func (s *ServiceDefinition) GetKillTimeout() time.Duration {
 	if s.parsedKillTimeout != 0 {
 		return s.parsedKillTimeout
 	}
-	return parseDurationOr(s.KillTimeout, defaultKillTimeout)
+	return ParseDurationOr(s.KillTimeout, defaultKillTimeout)
 }
 
 // GetInterval returns the parsed health.interval, with default fallback.
@@ -151,7 +156,7 @@ func (h *Health) GetInterval() time.Duration {
 	if h.parsedInterval != 0 {
 		return h.parsedInterval
 	}
-	return parseDurationOr(h.Interval, defaultHealthInterval)
+	return ParseDurationOr(h.Interval, defaultHealthInterval)
 }
 
 // GetTimeout returns the parsed health.timeout, with default fallback.
@@ -159,7 +164,7 @@ func (h *Health) GetTimeout() time.Duration {
 	if h.parsedTimeout != 0 {
 		return h.parsedTimeout
 	}
-	return parseDurationOr(h.Timeout, defaultHealthTimeout)
+	return ParseDurationOr(h.Timeout, defaultHealthTimeout)
 }
 
 // GetAttempts returns the configured restart attempt count or the
@@ -176,5 +181,5 @@ func (r *Restart) GetDelay() time.Duration {
 	if r.parsedDelay != 0 {
 		return r.parsedDelay
 	}
-	return parseDurationOr(r.Delay, defaultRestartDelay)
+	return ParseDurationOr(r.Delay, defaultRestartDelay)
 }

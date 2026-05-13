@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"asty/demo/internal/envutil"
 )
 
 type Config struct {
@@ -33,56 +35,17 @@ func parseSameSite(s string) http.SameSite {
 }
 
 func LoadConfig() Config {
-	host := envOr("A_NATS_HOST", "127.0.0.1")
-	port := envOr("A_NATS_PORT", "4222")
-	natsURL := "nats://" + host + ":" + port
-
-	user := os.Getenv("A_NATS_USER")
-	pass := os.Getenv("A_NATS_PASSWORD")
-	if user != "" && pass != "" {
-		natsURL = "nats://" + user + ":" + pass + "@" + host + ":" + port
-	}
-
-	kvBucket := envOr("A_KV_AUTHMS_REFRESH_TOKENS", "authms_refresh_tokens")
-
 	return Config{
-		NATSUrl:        natsURL,
-		KVBucket:       kvBucket,
-		Username:       mustEnv("X_AUTH_USERNAME"),
-		Password:       mustEnv("X_AUTH_PASSWORD"),
-		AccessSecret:   []byte(mustEnv("X_AUTH_ACCESS_SECRET")),
-		RefreshSecret:  []byte(mustEnv("X_AUTH_REFRESH_SECRET")),
-		AccessTTL:      durationOr("X_AUTH_ACCESS_TTL", 15*time.Minute),
-		RefreshTTL:     durationOr("X_AUTH_REFRESH_TTL", 168*time.Hour),
+		NATSUrl:        envutil.NATSURL(),
+		KVBucket:       envutil.EnvOr("A_KV_AUTHMS_REFRESH_TOKENS", "authms_refresh_tokens"),
+		Username:       envutil.MustEnv("X_AUTH_USERNAME"),
+		Password:       envutil.MustEnv("X_AUTH_PASSWORD"),
+		AccessSecret:   []byte(envutil.MustEnv("X_AUTH_ACCESS_SECRET")),
+		RefreshSecret:  []byte(envutil.MustEnv("X_AUTH_REFRESH_SECRET")),
+		AccessTTL:      envutil.DurationOr("X_AUTH_ACCESS_TTL", 15*time.Minute),
+		RefreshTTL:     envutil.DurationOr("X_AUTH_REFRESH_TTL", 168*time.Hour),
 		CookieDomain:   os.Getenv("X_AUTH_COOKIE_DOMAIN"),
-		CookieSecure:   envOr("X_AUTH_COOKIE_SECURE", "true") == "true",
-		CookieSameSite: parseSameSite(envOr("X_AUTH_COOKIE_SAMESITE", "strict")),
+		CookieSecure:   envutil.EnvOr("X_AUTH_COOKIE_SECURE", "true") == "true",
+		CookieSameSite: parseSameSite(envutil.EnvOr("X_AUTH_COOKIE_SAMESITE", "strict")),
 	}
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func mustEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		panic("required env var not set: " + key)
-	}
-	return v
-}
-
-func durationOr(key string, fallback time.Duration) time.Duration {
-	v := os.Getenv(key)
-	if v == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return fallback
-	}
-	return d
 }

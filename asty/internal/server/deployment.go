@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"asty/asty/internal/core/types"
 	"asty/asty/internal/features/deployment"
 )
 
@@ -43,9 +44,9 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 		currentVersion = "unknown"
 	}
 
-	healthyDeadline := parseUpdateDuration(svc.Update.HealthyDeadline, defaultHealthyDeadline)
-	minHealthy := parseUpdateDuration(svc.Update.MinHealthyTime, defaultMinHealthyTime)
-	progressDeadline := parseUpdateDuration(svc.Update.ProgressDeadline, defaultProgressDeadline)
+	healthyDeadline := types.ParseDurationOr(svc.Update.HealthyDeadline, defaultHealthyDeadline)
+	minHealthy := types.ParseDurationOr(svc.Update.MinHealthyTime, defaultMinHealthyTime)
+	progressDeadline := types.ParseDurationOr(svc.Update.ProgressDeadline, defaultProgressDeadline)
 
 	plan := &deployment.DeploymentPlan{
 		ServiceName:    serviceName,
@@ -64,18 +65,4 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 	}
 
 	return s.deployer.Deploy(ctx, plan)
-}
-
-// parseUpdateDuration parses a string from a .asty Update.* field with
-// fallback for empty or invalid values. Centralised here so changing
-// the parsing rule (e.g. supporting "1d") only touches one spot.
-func parseUpdateDuration(s string, fallback time.Duration) time.Duration {
-	if s == "" {
-		return fallback
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return fallback
-	}
-	return d
 }
