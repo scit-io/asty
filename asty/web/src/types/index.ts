@@ -2,7 +2,7 @@ export interface Node {
   id: string
   datacenter: string
   ip: string
-  status: 'ready' | 'down' | 'initializing' | 'draining' | 'drained'
+  status: 'ready' | 'down' | 'draining' | 'drained'
   cpu_total: number
   cpu_available: number
   memory_total: number
@@ -26,7 +26,7 @@ export interface Allocation {
   id: string
   service_name: string
   node_id: string
-  status: 'pending' | 'running' | 'stopping' | 'stopped' | 'failed'
+  status: 'pending' | 'starting' | 'running' | 'stopped' | 'failed'
   version: string
   pid: number
   started_at: string
@@ -34,6 +34,7 @@ export interface Allocation {
   cpu_usage: number
   memory_usage: number
   restarts: number
+  consecutive_failures: number
   created_at: string
   updated_at: string
 }
