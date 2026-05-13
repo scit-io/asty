@@ -138,12 +138,19 @@ func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string
 	})
 }
 
-// targetCopies caps MinCopies at the number of healthy nodes — we can't
-// schedule more copies than we have nodes.
-func (s *Scheduler) targetCopies(healthyNodes int) int {
+// TargetCopies returns the desired live copy count for svc, respecting an
+// operator-set scale override (state.SetServiceScale) when present, falling
+// back to AutoscaleConfig.MinCopies otherwise. The result is capped at the
+// number of healthy nodes — we can't schedule more copies than we have nodes.
+func (s *Scheduler) TargetCopies(svc *types.ServiceDefinition, healthyNodes int) int {
 	target := s.cfg.Autoscale.MinCopies
-	if target < 1 {
-		target = 1
+	if s.clusterState != nil {
+		if override, ok := s.clusterState.GetServiceScale(svc.Name); ok {
+			target = override
+		}
+	}
+	if target < 0 {
+		target = 0
 	}
 	if target > healthyNodes {
 		target = healthyNodes

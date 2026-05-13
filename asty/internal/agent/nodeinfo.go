@@ -53,7 +53,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	status := types.NodeReady
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
 		switch existing.Status {
-		case types.NodeDraining, types.NodeDrained:
+		case types.NodeDraining, types.NodeDrained, types.NodePaused:
 			status = existing.Status
 		}
 	}

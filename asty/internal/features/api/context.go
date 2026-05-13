@@ -29,6 +29,8 @@ type ServerContext interface {
 	NATSConn() *nats.Conn
 	StreamHub() StreamHub
 	DeployService(ctx context.Context, service, version string) (*deployment.DeploymentStatus, error)
+	StopServiceOnNode(nodeID, serviceName string) error
+	ReconcileService(svcName string)
 }
 
 // StreamHub is the subset of streamHub behavior the API handlers need.

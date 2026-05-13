@@ -63,6 +63,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 		resync,
 	)
 	ctrl.OnEvent = s.addClusterEvent
+	s.controller = ctrl
 	go ctrl.Run(leaderCtx)
 }
 
@@ -72,6 +73,20 @@ func (s *Server) stopLeaderWork() {
 	if s.leaderCancel != nil {
 		s.leaderCancel()
 		s.leaderCancel = nil
+	}
+	s.controller = nil
+}
+
+// ReconcileService enqueues svcName for re-reconciliation on the leader's
+// controller. No-op when this node is not currently the leader. Used by API
+// handlers after operator-driven state changes (scale, restart, stop) to
+// avoid waiting for the periodic resync.
+func (s *Server) ReconcileService(svcName string) {
+	s.mu.Lock()
+	ctrl := s.controller
+	s.mu.Unlock()
+	if ctrl != nil {
+		ctrl.Enqueue(svcName)
 	}
 }
 

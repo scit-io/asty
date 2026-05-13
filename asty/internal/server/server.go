@@ -9,6 +9,7 @@ import (
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/features/autoscaling"
 	autometrics "asty/asty/internal/features/autoscaling/metrics"
+	"asty/asty/internal/features/clustering/controller"
 	"asty/asty/internal/features/clustering/discovery"
 	"asty/asty/internal/features/clustering/leader"
 	"asty/asty/internal/features/clustering/state"
@@ -51,9 +52,10 @@ type Server struct {
 
 	// Leadership-scoped goroutines (scheduler/autoscaler) run under
 	// leaderCtx, which is cancelled on loss of leadership. mu guards the
-	// cancel handle when leadership flips.
+	// cancel handle and the controller reference when leadership flips.
 	mu           sync.Mutex
 	leaderCancel context.CancelFunc
+	controller   *controller.ServiceController // non-nil only while this node is the leader
 }
 
 // New creates a new Server. NodeID falls back to the OS hostname if the

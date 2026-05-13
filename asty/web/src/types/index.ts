@@ -2,7 +2,7 @@ export interface Node {
   id: string
   datacenter: string
   ip: string
-  status: 'ready' | 'down' | 'draining' | 'drained'
+  status: 'ready' | 'down' | 'draining' | 'drained' | 'paused'
   cpu_total: number
   cpu_available: number
   memory_total: number

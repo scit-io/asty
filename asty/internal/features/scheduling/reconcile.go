@@ -47,7 +47,7 @@ func (s *Scheduler) reconcileSystem(svc *types.ServiceDefinition, healthy []*typ
 // needed it asks PickCandidates to choose nodes that maximise DC
 // diversity first, then pack onto already-busy nodes (cache locality).
 func (s *Scheduler) reconcileRegular(svc *types.ServiceDefinition, healthy []*types.NodeInfo, live []*types.ServiceAllocation, occupied map[string]bool, nodeAllocCounts map[string]int) error {
-	target := s.targetCopies(len(healthy))
+	target := s.TargetCopies(svc, len(healthy))
 	if len(live) >= target {
 		return nil
 	}

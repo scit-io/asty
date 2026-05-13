@@ -139,13 +139,14 @@ func TestPickCandidatesPacking(t *testing.T) {
 
 func TestTargetCopiesClampedByNodeCount(t *testing.T) {
 	scheduler := &Scheduler{cfg: &config.Config{Autoscale: config.AutoscaleConfig{MinCopies: 3}}}
-	if got := scheduler.targetCopies(2); got != 2 {
+	svc := &types.ServiceDefinition{Name: "svc-test"}
+	if got := scheduler.TargetCopies(svc, 2); got != 2 {
 		t.Errorf("expected 2 (clamped), got %d", got)
 	}
-	if got := scheduler.targetCopies(5); got != 3 {
+	if got := scheduler.TargetCopies(svc, 5); got != 3 {
 		t.Errorf("expected 3 (target), got %d", got)
 	}
-	if got := scheduler.targetCopies(0); got != 0 {
+	if got := scheduler.TargetCopies(svc, 0); got != 0 {
 		t.Errorf("expected 0 with no nodes, got %d", got)
 	}
 }

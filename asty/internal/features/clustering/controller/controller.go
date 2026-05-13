@@ -135,3 +135,10 @@ func (c *ServiceController) enqueueAllServices() {
 		c.queue.Add(svc.Name)
 	}
 }
+
+// Enqueue adds a service to the reconciliation workqueue. Used by API
+// handlers (scale, restart, stop) to make changes visible without waiting
+// for the periodic resync.
+func (c *ServiceController) Enqueue(name string) {
+	c.queue.Add(name)
+}

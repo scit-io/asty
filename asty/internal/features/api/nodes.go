@@ -89,7 +89,7 @@ func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
 			if !methodGuard(w, r, http.MethodPost) {
 				return
 			}
-			api.writeError(w, http.StatusNotImplemented, "node pause is not implemented", nil)
+			api.handleNodePause(w, r, nodeID)
 			return
 		default:
 			api.writeError(w, http.StatusBadRequest, "unknown action", nil)
@@ -144,6 +144,47 @@ func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID s
 	}
 
 	api.writeJSON(w, http.StatusOK, status)
+}
+
+// handleNodePause toggles a node's status between NodePaused and NodeReady.
+// Paused nodes keep existing allocations running but the scheduler skips
+// them for new placements (FilterHealthyNodes excludes non-Ready statuses).
+// Request body: `{"pause": true|false}`; missing body defaults to pause=true.
+func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request, nodeID string) {
+	var req struct {
+		Pause bool `json:"pause"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		req.Pause = true
+	}
+
+	node, err := api.ctx.ClusterState().GetNode(nodeID)
+	if err != nil {
+		api.writeError(w, http.StatusNotFound, "node not found", err)
+		return
+	}
+	if node.Status == types.NodeDown {
+		api.writeError(w, http.StatusBadRequest, "node is down", nil)
+		return
+	}
+	if node.Status == types.NodeDraining || node.Status == types.NodeDrained {
+		api.writeError(w, http.StatusBadRequest, "node is draining/drained; resume drain first", nil)
+		return
+	}
+
+	if req.Pause {
+		node.Status = types.NodePaused
+	} else {
+		node.Status = types.NodeReady
+	}
+	if err := api.ctx.ClusterState().UpdateNode(node); err != nil {
+		api.writeError(w, http.StatusInternalServerError, "update node failed", err)
+		return
+	}
+	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		"node_id": nodeID,
+		"status":  node.Status,
+	})
 }
 
 // handleNodeDrainStatus handles GET /api/v1/nodes/:id/drain/status.

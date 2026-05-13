@@ -69,7 +69,7 @@ interface ClusterStore {
 }
 
 const VALID_NODE_STATUSES = new Set<Node['status']>([
-  'ready', 'down', 'draining', 'drained',
+  'ready', 'down', 'draining', 'drained', 'paused',
 ])
 
 // Reusable EventSource lifecycle with exponential backoff reconnect.

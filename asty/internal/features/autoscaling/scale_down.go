@@ -21,6 +21,9 @@ const idleFloorDivisor = 2
 // most-crowded DC (preserves geo-diversity).
 func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*types.ServiceAllocation) *ScalingDecision {
 	floor := as.cfg.Autoscale.MinCopies
+	if override, ok := as.clusterState.GetServiceScale(svc.Name); ok {
+		floor = override
+	}
 	if floor < 1 {
 		floor = 1
 	}

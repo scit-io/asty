@@ -24,6 +24,11 @@ const (
 	// NodeDrained — drain finished; no allocations left.
 	NodeDrained NodeStatus = "drained"
 
+	// NodePaused — operator-set: existing allocations keep running,
+	// but the scheduler will not place new ones here. Unpause by
+	// setting status back to NodeReady via the API.
+	NodePaused NodeStatus = "paused"
+
 	// NodeDown — heartbeat went stale long enough to be considered
 	// gone. Will not host new allocations.
 	NodeDown NodeStatus = "down"
