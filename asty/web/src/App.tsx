@@ -6,7 +6,8 @@ import { Toaster } from 'sonner'
 import { useClusterStore } from '@/store/cluster'
 import Cluster from '@/pages/cluster'
 import NodeDetail from '@/pages/node-detail'
-import ServiceDetail from '@/pages/service-detail'
+import AllocationDetail from '@/pages/allocation-detail'
+import AllocationLogs from '@/pages/allocation-logs'
 import Services from '@/pages/services'
 import ServiceOverview from '@/pages/service-overview'
 import Nodes from '@/pages/nodes'
@@ -39,8 +40,8 @@ export default function App() {
             <Route path="/nodes/:nodeId/logs" element={<NodeLogs />} />
 
             {/* Allocation section (URL parent is /nodes/...) */}
-            <Route path="/nodes/:nodeId/allocations/:allocId" element={<ServiceDetail />} />
-            <Route path="/nodes/:nodeId/allocations/:allocId/logs" element={<Placeholder title="Allocation Logs" phase="D.5" />} />
+            <Route path="/nodes/:nodeId/allocations/:allocId" element={<AllocationDetail />} />
+            <Route path="/nodes/:nodeId/allocations/:allocId/logs" element={<AllocationLogs />} />
 
             {/* Services section */}
             <Route path="/services" element={<Services />} />
