@@ -21,7 +21,7 @@ export default function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="astiui-theme">
       <BrowserRouter>
-        <div className="min-h-screen bg-gradient-to-t from-muted to-muted/30">
+        <div className="min-h-screen bg-linear-to-t from-muted to-muted/30">
           <Header />
           <Routes>
             <Route path="/" element={<Cluster />} />

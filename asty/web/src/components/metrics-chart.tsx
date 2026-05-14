@@ -162,7 +162,7 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
             No data yet
           </div>
         ) : (
-          <div ref={containerRef} className="h-32 w-full [&_.u-wrap]:!bg-transparent" />
+          <div ref={containerRef} className="h-32 w-full [&_.u-wrap]:bg-transparent!" />
         )}
       </CardContent>
     </Card>
