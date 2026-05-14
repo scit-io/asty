@@ -9,6 +9,8 @@ import NodeDetail from '@/pages/node-detail'
 import ServiceDetail from '@/pages/service-detail'
 import Services from '@/pages/services'
 import ServiceOverview from '@/pages/service-overview'
+import Nodes from '@/pages/nodes'
+import ClusterLogs from '@/pages/logs'
 import Placeholder from '@/pages/placeholder'
 
 export default function App() {
@@ -26,8 +28,8 @@ export default function App() {
           <Routes>
             {/* Cluster section */}
             <Route path="/" element={<Cluster />} />
-            <Route path="/nodes" element={<Placeholder title="Nodes" phase="D.3" />} />
-            <Route path="/logs" element={<Placeholder title="Cluster Logs" phase="D.3" />} />
+            <Route path="/nodes" element={<Nodes />} />
+            <Route path="/logs" element={<ClusterLogs />} />
 
             {/* Node section */}
             <Route path="/nodes/:nodeId" element={<NodeDetail />} />

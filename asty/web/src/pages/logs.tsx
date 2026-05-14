@@ -1,0 +1,14 @@
+import { Breadcrumbs } from '@/components/breadcrumbs'
+import { LogsView } from '@/components/logs-view'
+
+// Cluster-wide logs page (/logs). Backend emits cluster_event SSE on
+// the root URL; the dedicated /logs route also serves SSE under the
+// same content-negotiation rule.
+export default function ClusterLogs() {
+  return (
+    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+      <Breadcrumbs items={[{ label: 'Cluster', to: '/' }, { label: 'Logs' }]} />
+      <LogsView title="Cluster events" streamUrl="/logs" />
+    </div>
+  )
+}
