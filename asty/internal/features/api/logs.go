@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/nats-io/nats.go"
@@ -78,7 +79,9 @@ func formatLogEntry(entry map[string]interface{}) string {
 func readQueryLines(r *http.Request) int {
 	n := defaultLogLines
 	if l := r.URL.Query().Get("lines"); l != "" {
-		fmt.Sscanf(l, "%d", &n)
+		if v, err := strconv.Atoi(l); err == nil {
+			n = v
+		}
 	}
 	return n
 }

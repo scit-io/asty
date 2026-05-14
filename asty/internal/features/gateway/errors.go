@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/nats-io/nats.go"
 )
@@ -74,8 +75,8 @@ func newRequestID() string {
 // parseStatus parses an HTTP status string into int, or returns 0
 // when the value is out of range — caller substitutes a default.
 func parseStatus(s string) int {
-	var n int
-	if _, err := fmt.Sscan(s, &n); err != nil || n < 100 || n > 599 {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 100 || n > 599 {
 		return 0
 	}
 	return n

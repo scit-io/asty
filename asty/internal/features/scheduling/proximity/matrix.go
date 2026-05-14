@@ -2,6 +2,7 @@ package proximity
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/rs/zerolog/log"
@@ -39,8 +40,8 @@ func (m *Matrix) LoadFromConfig(config string) error {
 		}
 
 		dc1, dc2 := parts[0], parts[1]
-		var latency int
-		if _, err := fmt.Sscanf(parts[2], "%d", &latency); err != nil {
+		latency, err := strconv.Atoi(parts[2])
+		if err != nil {
 			return fmt.Errorf("invalid latency value: %s", parts[2])
 		}
 

@@ -1,8 +1,8 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -17,7 +17,9 @@ func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
 	service := r.URL.Query().Get("service")
 	limit := 100
 	if l := r.URL.Query().Get("limit"); l != "" {
-		fmt.Sscanf(l, "%d", &limit)
+		if v, err := strconv.Atoi(l); err == nil {
+			limit = v
+		}
 	}
 
 	events := api.ctx.MetricsStore().GetEvents(service, limit)
