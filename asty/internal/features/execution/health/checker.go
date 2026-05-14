@@ -63,7 +63,9 @@ func NewChecker(nc *nats.Conn) *Checker {
 }
 
 // Register adds (or replaces) an HTTP health check for a process.
-func (c *Checker) Register(processName, addr, path string, interval, timeout time.Duration) error {
+// Mirrors RegisterNATS — no error return because nothing in the body
+// can fail (the map write is in-process, the log line never errors).
+func (c *Checker) Register(processName, addr, path string, interval, timeout time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -80,7 +82,6 @@ func (c *Checker) Register(processName, addr, path string, interval, timeout tim
 		Str("url", url).
 		Dur("interval", interval).
 		Msg("health check registered")
-	return nil
 }
 
 // RegisterNATS adds (or replaces) a NATS health check for a process.

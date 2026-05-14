@@ -68,10 +68,8 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	switch svc.Health.Type {
 	case "http":
 		if svc.Health.Addr != "" {
-			if err := a.healthChecker.Register(svc.Name, svc.Health.Addr, svc.Health.Path,
-				svc.Health.GetInterval(), svc.Health.GetTimeout()); err != nil {
-				log.Warn().Err(err).Str("service", svc.Name).Msg("health check registration failed")
-			}
+			a.healthChecker.Register(svc.Name, svc.Health.Addr, svc.Health.Path,
+				svc.Health.GetInterval(), svc.Health.GetTimeout())
 		}
 	case "nats":
 		if svc.Health.Subject != "" {
