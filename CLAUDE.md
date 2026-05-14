@@ -24,7 +24,7 @@ The project consists of two main parts:
 1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui).
 2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite).
 
-**Monitoring:** Asty exposes HTTP JSON API at `:4747`. Web UI (`asty/web/`) connects to it for cluster monitoring.
+**Monitoring:** Asty exposes its HTTP surface at `:8080` (SSE streams, polling endpoints incl. Prometheus, command POSTs). Web UI (`asty/web/`) connects to it for cluster monitoring.
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
 ## Toolchain & dependencies
@@ -76,6 +76,14 @@ all three surfaces and offer the user a one-shot bump:
      change).
   7. Update the `project_deps_last_check` memory with today's date so
      the next session in the same day doesn't repeat the check.
+
+**MCP servers:** `.mcp.json` at the project root holds project-shared
+MCP configs. Claude Code reads it on startup; `/mcp` lists connected
+servers. Today it carries the `shadcn` MCP from
+https://ui.shadcn.com/docs/registry/mcp, pointed at `asty/web/` via
+`cwd` because that's where `components.json` lives. To add a private
+shadcn registry: drop a `registries: { "@name": "url" }` block into
+`asty/web/components.json` — the MCP server picks it up next restart.
 
 ## Build Commands
 

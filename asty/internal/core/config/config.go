@@ -27,7 +27,7 @@ type Config struct {
 	NATS      NATSConfig      `yaml:"nats"`
 	Autoscale AutoscaleConfig `yaml:"autoscale"`
 	Resources ResourcesConfig `yaml:"resources"`
-	UI        UIConfig        `yaml:"ui"`
+	HTTP      HTTPConfig      `yaml:"http"`
 	Agent     AgentConfig     `yaml:"agent"`
 	Gateway   GatewayConfig   `yaml:"gateway"`
 }
@@ -61,8 +61,10 @@ type ResourcesConfig struct {
 	ReservedMemory int `yaml:"reserved_memory"`
 }
 
-// UIConfig — where the read-only HTTP API listens on each node.
-type UIConfig struct {
+// HTTPConfig — where the orchestrator's HTTP surface listens on each
+// node. Serves SSE streams, polling endpoints (incl. Prometheus
+// /metrics via content-negotiation), and command POSTs.
+type HTTPConfig struct {
 	Addr string `yaml:"addr"`
 }
 
@@ -112,7 +114,7 @@ func defaults() *Config {
 			ReservedCPU:    100,
 			ReservedMemory: 250,
 		},
-		UI: UIConfig{Addr: "127.0.0.1:4747"},
+		HTTP: HTTPConfig{Addr: "127.0.0.1:8080"},
 		Agent: AgentConfig{
 			WorkDir:    "/var/lib/asty",
 			ServiceDir: "/etc/asty/services",

@@ -41,11 +41,12 @@ resources:
   reserved_cpu: 100              # Agent + OS overhead in MHz (subtracted before placement)
   reserved_memory: 250           # Agent + OS overhead in MB (subtracted before placement)
 
-# HTTP API for the Web UI and CLI monitoring.
-# Binds to localhost only — not exposed externally.
-# External access goes through the gateway, not the UI API.
-ui:
-  addr: 127.0.0.1:4747  # HTTP API listen address (loopback only — internal access)
+# Orchestrator HTTP surface — SSE streams, polling endpoints (incl.
+# Prometheus /metrics via content-negotiation), and command POSTs.
+# Binds to localhost only — not exposed externally; user traffic goes
+# through the gateway on :80, not here.
+http:
+  addr: 127.0.0.1:8080  # HTTP listen address (loopback only — internal access)
 
 # Agent-specific paths.
 agent:

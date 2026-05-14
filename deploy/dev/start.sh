@@ -236,17 +236,18 @@ start_asty() {
     local addr="127.0.0.$i"
     local server_log="/tmp/asty-dev-server-$i.log"
     local agent_log="/tmp/asty-dev-agent-$i.log"
-    local ui_port=$((4747 + i - 1))
     mkdir -p "$DATA_BASE/node$i"
 
-    # Per-node loopback binds for gateway so N agents on one host
-    # don't collide on a shared port. Gateway HTTP serves traffic, the
-    # metrics endpoint is internal — both bind 127.0.0.$i.
+    # Per-node loopback binds for gateway + orchestrator HTTP so N agents
+    # on one host don't collide on shared ports. Each node gets its own
+    # 127.0.0.$i and listens on :80 (gateway), :8080 (orchestrator), :8081
+    # (gateway metrics).
     local gw_addr="$addr:80"
     local gw_metrics="$addr:8081"
+    local http_addr="$addr:8080"
 
     A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
-      A_UI_ADDR="$addr:$ui_port" A_WORK_DIR="$DATA_BASE/work" \
+      A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
       "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
     local server_pid=$!
     echo "$server_pid" >> "$PID_FILE"
@@ -308,7 +309,7 @@ print_status() {
   echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Asty UI:    http://localhost:4747 (node 1)"
+  info "Asty UI:    http://localhost:8080 (node 1)"
   info "Gateway:    http://127.0.0.1:80 (node 1)"
   info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"

@@ -41,10 +41,11 @@ resources:
   reserved_cpu: 100              # Agent + OS overhead in MHz (subtracted before placement)
   reserved_memory: 250           # Agent + OS overhead in MB (subtracted before placement)
 
-# HTTP API for the Web UI and CLI monitoring.
-# Each node exposes this read-only API; the Web UI at asty/web/ connects here.
-ui:
-  addr: 127.0.0.1:4747  # HTTP API listen address (loopback only — Web UI/CLI access)
+# Orchestrator HTTP surface — SSE streams, polling endpoints (incl.
+# Prometheus /metrics via content-negotiation), and command POSTs.
+# Each node exposes the same surface; the Web UI at asty/web/ connects here.
+http:
+  addr: 127.0.0.1:8080  # HTTP listen address (loopback only — Web UI/CLI/Prometheus access)
 
 # Agent-specific paths.
 agent:

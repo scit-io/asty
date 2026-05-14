@@ -46,7 +46,7 @@ pnpm preview
 
 ## API Integration
 
-The UI connects to Asty API at `http://localhost:4747` (proxied via Vite config).
+The UI connects to Asty's HTTP surface at `http://localhost:8080` (proxied via Vite config).
 
 Required endpoints:
 - `GET /api/v1/status` — cluster status

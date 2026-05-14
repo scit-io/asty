@@ -40,7 +40,7 @@ func applyEnvOverrides(c *Config) {
 	envInt("A_RESERVED_CPU", &c.Resources.ReservedCPU)
 	envInt("A_RESERVED_MEMORY", &c.Resources.ReservedMemory)
 
-	envStr("A_UI_ADDR", &c.UI.Addr)
+	envStr("A_HTTP_ADDR", &c.HTTP.Addr)
 	envStr("A_WORK_DIR", &c.Agent.WorkDir)
 	envStr("A_SERVICE_DIR", &c.Agent.ServiceDir)
 

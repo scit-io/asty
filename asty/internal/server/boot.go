@@ -131,7 +131,7 @@ func (s *Server) initFeatures(ctx context.Context) {
 // startAPI launches the HTTP API in a goroutine and returns immediately.
 // The API runs until ctx is cancelled and logs its own shutdown errors.
 func (s *Server) startAPI(ctx context.Context) error {
-	s.httpAPI = apiPkg.New(s, s.cfg.UI.Addr)
+	s.httpAPI = apiPkg.New(s, s.cfg.HTTP.Addr)
 	go func() {
 		if err := s.httpAPI.Start(ctx); err != nil {
 			log.Error().Err(err).Msg("API server failed")
