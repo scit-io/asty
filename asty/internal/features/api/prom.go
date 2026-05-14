@@ -27,7 +27,7 @@ func (api *API) initProm() {
 
 	reg.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "asty_nodes_total",
+			Name: "asty_cluster_nodes_total",
 			Help: "Total number of nodes known to the orchestrator (cluster.nodes_total in the UI).",
 		},
 		func() float64 {
@@ -41,7 +41,7 @@ func (api *API) initProm() {
 
 	reg.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "asty_nodes_healthy",
+			Name: "asty_cluster_nodes_healthy",
 			Help: "Number of nodes whose last_seen is within the staleness window (cluster.nodes_healthy in the UI).",
 		},
 		func() float64 {
@@ -62,7 +62,7 @@ func (api *API) initProm() {
 
 	reg.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
-			Name: "asty_services_loaded",
+			Name: "asty_cluster_services_loaded",
 			Help: "Number of service definitions currently loaded (services.loaded in the UI).",
 		},
 		func() float64 {

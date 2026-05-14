@@ -175,30 +175,53 @@ All inter-service communication is NATS Pub/Sub. No service-to-service HTTP call
 ## Observability
 
 **Mirror rule — UI and Prometheus stay in lockstep.** Every metric the
-web UI displays must also be exposed on `/metrics` (and vice versa, when
-that direction makes sense). The same number is meaningful to a human
-glancing at the dashboard and to an alerting system parsing the scrape
-output — divergence between the two surfaces is a bug, not a stylistic
-choice.
+web UI displays must also be exposed on `/metrics` (and vice versa,
+when that direction makes sense). The same number is meaningful to a
+human glancing at the dashboard and to an alerting system parsing the
+scrape output — divergence between the two surfaces is a bug, not a
+stylistic choice.
 
-Two endpoints exist today:
+### HTTP surfaces
 
-- **Orchestrator `/metrics`** on the API port — served by
-  `api.handleMetrics` via `promhttp.HandlerFor` over a private
-  `prometheus.Registry`. Gauges live in `api/prom.go` and register Go
-  runtime + process collectors plus `asty_*` instruments. Each gauge
-  carries a UI-mapping note in its Help text.
-- **Gateway `/metrics`** on `:8081` (default) — served from inside the
-  agent (`agent/gateway.go`). Instruments under `gateway/metrics/`
-  count proxied requests, NATS round-trip durations, rate-limit
-  rejections, WS connections.
+Per node, three HTTP listeners contribute to observability:
+
+| Listener | Port | Path | Served by | Purpose |
+|---|---|---|---|---|
+| Orchestrator | `:8080` | `GET /metrics` | `api.handleMetrics` → `promhttp.HandlerFor` over a private `prometheus.Registry` | Cluster + orchestrator-self instruments |
+| Orchestrator | `:8080` | `GET /…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
+| Gateway | `:8081` | `GET /metrics` | `agent.serveGatewayMetrics` (default registerer + `promhttp.Handler`) | Per-node gateway counters: proxied requests, NATS RTT, rate-limit rejects, WS connections |
+| NATS server | `:8222` | `GET /varz`, `/jsz`, `/connz` | NATS itself | Scraped in-process by the agent (Phase C) and re-exported under `nats_*` on the orchestrator's `/metrics` |
+
+The orchestrator's `:8080` is the only HTTP surface for cluster data:
+Web UI subscribes to its SSE flavour, Prometheus polls its `/metrics`,
+CLI tooling fetches JSON from the same paths. No `/api/v1/*` prefix —
+URLs match the navigation hierarchy directly (`/nodes/{id}`,
+`/services/{name}/allocations`, `/nodes/{id}/allocations/{allocId}/logs`).
+
+### Metric naming convention
+
+All orchestrator-emitted gauges/counters carry a domain prefix so
+extension stays orderly:
+
+| Prefix | Scope | Labels | Examples |
+|---|---|---|---|
+| `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded` |
+| `asty_node_*` | per-node | `node_id`, `datacenter` | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `disk_total_mb` (Phase B) |
+| `asty_service_*` | per-service | `service` | `copies_current`, `cooldown_up_active` (Phase B) |
+| `asty_alloc_*` | per-allocation | `service`, `node_id` | `cpu_percent`, `memory_mb`, `restarts_total` (Phase B) |
+| `asty_deploy_*` | per-deployment | `service` | `state`, `progress_percent` (Phase B) |
+| `asty_leader` | leader-election state | `node_id` (1 on leader, 0 elsewhere) | (Phase B) |
+| `gateway_*` | gateway-internal | as-needed | `http_requests_total`, `http_request_duration_seconds`, `ws_connections_active`, `rate_limit_rejected_total`, `nats_request_duration_seconds`, `nats_request_attempts_total` |
+| `nats_*` | scraped from NATS server | `node_id` | `connections_current`, `jetstream_max_lag_msgs` (Phase C) |
+
+### Adding a new metric
 
 When the UI gains a metric (new tile, new chart, new column), add the
-matching Prometheus instrument in the same change. Use
-`prometheus.NewGaugeFunc` with a closure that reads from
-`api.ctx`/`streamHub.Snapshot()` so the value stays consistent with
-what the UI sees. Counters need a real `Inc()` call site, not a
-periodic snapshot.
+matching Prometheus instrument in the same change. Pick a prefix from
+the table above. Use `prometheus.NewGaugeFunc` with a closure that
+reads from `api.ctx` / `streamHub.Snapshot()` so the value stays
+consistent with what the UI sees. Counters need a real `Inc()` call
+site, not a periodic snapshot.
 
 ## Configuration
 
@@ -210,7 +233,7 @@ asty -mode server -config /etc/asty/config.asty
 asty -mode agent  -config /etc/asty/config.asty
 ```
 
-Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `ui:`, `agent:`, `gateway:`). Sample: `deploy/dev/config.asty`.
+Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `http:`, `agent:`, `gateway:`). Sample: `deploy/dev/config.asty`.
 
 **Env-var overrides** (loaded after YAML; `A_` prefix) — useful for per-node values and secrets:
 
@@ -221,9 +244,11 @@ Without `-config`, the default `./config.asty` is consulted and a missing file i
 - `A_UI_ADDR`, `A_WORK_DIR`, `A_SERVICE_DIR`
 - `A_CPU_TOTAL` / `A_MEMORY_TOTAL` — override auto-detected node capacity
 
-**Gateway-specific env vars** (override fields under `gateway:`):
+**Gateway-specific env vars** (override fields under `gateway:`; all
+use the `A_GATEWAY_*` namespace so `A_HTTP_*` unambiguously belongs to
+the orchestrator):
 - `A_GATEWAY_ENABLED` — toggle the embedded gateway on the local node
-- `A_HTTP_ADDR`, `A_HTTP_READ_TIMEOUT`, `A_HTTP_WRITE_TIMEOUT`, `A_HTTP_IDLE_TIMEOUT`
+- `A_GATEWAY_ADDR`, `A_GATEWAY_READ_TIMEOUT`, `A_GATEWAY_WRITE_TIMEOUT`, `A_GATEWAY_IDLE_TIMEOUT`, `A_GATEWAY_READ_HEADER_TIMEOUT`
 - `A_ALLOWED_HOSTS` — comma-separated CORS origins
 - `A_GATEWAY_RATE_LIMIT`, `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`, `A_GATEWAY_TRUSTED_PROXY`
 - `A_GATEWAY_METRICS_ADDR` — Prometheus `/metrics` listener (default `127.0.0.1:8081`)

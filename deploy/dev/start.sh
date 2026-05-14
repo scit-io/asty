@@ -254,7 +254,7 @@ start_asty() {
 
     sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
       A_WORK_DIR="$DATA_BASE/work" \
-      A_HTTP_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
+      A_GATEWAY_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
       "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"

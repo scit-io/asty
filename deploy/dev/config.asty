@@ -59,7 +59,7 @@ agent:
 gateway:
   enabled: true                  # Whether this node serves HTTP/WS traffic (false — control-plane-only node)
   # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
-  # start.sh overrides A_HTTP_ADDR / A_GATEWAY_METRICS_ADDR per node.
+  # start.sh overrides A_GATEWAY_ADDR / A_GATEWAY_METRICS_ADDR per node.
   # Without those overrides every agent would race for the same :80 /
   # 127.0.0.1:8081 and all but the first would fail with "address already in use".
   http:

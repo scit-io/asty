@@ -50,11 +50,11 @@ func applyEnvOverrides(c *Config) {
 func applyGatewayEnv(g *GatewayConfig) {
 	envBool("A_GATEWAY_ENABLED", &g.Enabled)
 
-	envStr("A_HTTP_ADDR", &g.HTTP.Addr)
-	envDur("A_HTTP_READ_HEADER_TIMEOUT", &g.HTTP.ReadHeaderTimeout)
-	envDur("A_HTTP_READ_TIMEOUT", &g.HTTP.ReadTimeout)
-	envDur("A_HTTP_WRITE_TIMEOUT", &g.HTTP.WriteTimeout)
-	envDur("A_HTTP_IDLE_TIMEOUT", &g.HTTP.IdleTimeout)
+	envStr("A_GATEWAY_ADDR", &g.HTTP.Addr)
+	envDur("A_GATEWAY_READ_HEADER_TIMEOUT", &g.HTTP.ReadHeaderTimeout)
+	envDur("A_GATEWAY_READ_TIMEOUT", &g.HTTP.ReadTimeout)
+	envDur("A_GATEWAY_WRITE_TIMEOUT", &g.HTTP.WriteTimeout)
+	envDur("A_GATEWAY_IDLE_TIMEOUT", &g.HTTP.IdleTimeout)
 	envDur("A_GATEWAY_NATS_REQUEST_TIMEOUT", &g.HTTP.NATSRequestTimeout)
 	envDur("A_GATEWAY_NATS_RETRY_DELAY", &g.HTTP.NATSRetryDelay)
 	envDur("A_GATEWAY_WS_CONNECT_TIMEOUT", &g.HTTP.WSConnectTimeout)
