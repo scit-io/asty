@@ -9,6 +9,7 @@ interface MetricsChartProps {
   data: MetricPoint[]
   color?: string
   unit?: string
+  className?: string
 }
 
 function resolveColor(raw: string): string {
@@ -33,7 +34,7 @@ function getThemeColors() {
   }
 }
 
-export const MetricsChart = memo(function MetricsChart({ title, data, color = 'hsl(var(--chart-1))', unit = '%' }: MetricsChartProps) {
+export const MetricsChart = memo(function MetricsChart({ title, data, color = 'hsl(var(--chart-1))', unit = '%', className }: MetricsChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const colorRef = useRef(color)
@@ -152,7 +153,7 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
   }, [createPlot])
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
       </CardHeader>

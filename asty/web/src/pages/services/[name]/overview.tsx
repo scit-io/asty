@@ -12,6 +12,7 @@ import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { StatusTile } from '@/components/status-tile'
 import { api } from '@/api/client'
+import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 
 // Service Overview (/services/:name) — the Overview tab of the
@@ -89,9 +90,9 @@ export default function ServiceOverview() {
               value={`${running} / ${allocations.length}`}
               hint={service.Type === 'service' && runtime?.min_copies !== undefined ? `min ${runtime.min_copies}` : 'running / total'} />
             <StatusTile title="CPU budget" icon={<Cpu className="h-4 w-4" />}
-              value={`${service.Resources.CPU} MHz`} hint="per allocation" />
+              value={formatMHz(service.Resources.CPU)} hint="per allocation" />
             <StatusTile title="Memory budget" icon={<MemoryStick className="h-4 w-4" />}
-              value={`${service.Resources.Memory} MB`} hint="per allocation" />
+              value={formatMB(service.Resources.Memory)} hint="per allocation" />
             <StatusTile title="Health check" icon={<Activity className="h-4 w-4" />}
               value={service.Health.Type || 'none'}
               hint={service.Health.Path || ''} />
@@ -99,7 +100,7 @@ export default function ServiceOverview() {
 
           <div className="grid gap-3 md:grid-cols-3">
             <MetricsChart title="Avg CPU%" data={cpuMetrics} color="hsl(var(--chart-1))" />
-            <MetricsChart title="Avg Memory MB" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" MB" />
+            <MetricsChart title="Avg Memory" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" Mb" />
             <MetricsChart title="Running allocations" data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
           </div>
 

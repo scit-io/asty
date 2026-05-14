@@ -1,7 +1,9 @@
+import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { DataTable, type Column } from '@/components/data-table'
 import { Breadcrumbs } from '@/components/breadcrumbs'
+import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 import type { ServiceDefinition } from '@/types'
 
@@ -10,7 +12,10 @@ import type { ServiceDefinition } from '@/types'
 // snapshot SSE.
 export default function Services() {
   const navigate = useNavigate()
+  const subscribeServices = useClusterStore((s) => s.subscribeServices)
   const services = useClusterStore((s) => s.services)
+
+  useEffect(() => subscribeServices(), [subscribeServices])
 
   const columns: Column<ServiceDefinition>[] = [
     {
@@ -33,12 +38,12 @@ export default function Services() {
     {
       key: 'cpu', label: 'CPU avg',
       sort: (a, b) => (a.avg_cpu_percent ?? 0) - (b.avg_cpu_percent ?? 0),
-      render: (s) => `${Math.round(s.avg_cpu_percent ?? 0)}% (${s.Resources.CPU} MHz limit)`,
+      render: (s) => `${Math.round(s.avg_cpu_percent ?? 0)}% (${formatMHz(s.Resources.CPU)} limit)`,
     },
     {
       key: 'mem', label: 'Memory avg',
       sort: (a, b) => (a.avg_memory_mb ?? 0) - (b.avg_memory_mb ?? 0),
-      render: (s) => `${Math.round(s.avg_memory_mb ?? 0)} / ${s.Resources.Memory} MB`,
+      render: (s) => `${formatMB(s.avg_memory_mb ?? 0)} / ${formatMB(s.Resources.Memory)}`,
     },
     {
       key: 'cooldown', label: 'Cooldown',

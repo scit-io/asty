@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
@@ -7,6 +7,7 @@ import { DataTable, type Column } from '@/components/data-table'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_SECTION_TABS } from '@/components/header'
 import { api } from '@/api/client'
+import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
 import { toast } from 'sonner'
@@ -32,9 +33,12 @@ const percent = (used: number, total: number) => total > 0 ? Math.round((used / 
 // catches up.
 export default function Nodes() {
   const navigate = useNavigate()
+  const subscribeNodes = useClusterStore((s) => s.subscribeNodes)
   const nodes = useClusterStore((s) => s.nodes)
   const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
   const [pending, setPending] = useState<Record<string, boolean>>({})
+
+  useEffect(() => subscribeNodes(), [subscribeNodes])
 
   const handleDrain = async (n: Node, enable: boolean) => {
     setPending((p) => ({ ...p, [n.id]: true }))
@@ -73,7 +77,7 @@ export default function Nodes() {
             <Cpu className="h-4 w-4 text-muted-foreground" />
             <div className="space-y-1">
               <div className="text-sm font-medium">{pct}%</div>
-              <div className="text-xs text-muted-foreground">{used} / {n.cpu_total} MHz</div>
+              <div className="text-xs text-muted-foreground">{formatMHz(used)} / {formatMHz(n.cpu_total)}</div>
             </div>
           </div>
         )
@@ -90,7 +94,7 @@ export default function Nodes() {
             <MemoryStick className="h-4 w-4 text-muted-foreground" />
             <div className="space-y-1">
               <div className="text-sm font-medium">{pct}%</div>
-              <div className="text-xs text-muted-foreground">{used} / {n.memory_total} MB</div>
+              <div className="text-xs text-muted-foreground">{formatMB(used)} / {formatMB(n.memory_total)}</div>
             </div>
           </div>
         )

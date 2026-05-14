@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { AllocationHeader } from '@/components/allocation-header'
 import { ResourceTabs } from '@/components/resource-tabs'
@@ -6,24 +5,19 @@ import { LogsView } from '@/components/logs-view'
 import { API_BASE } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 
-// Logs scoped to a single allocation. The allocation cache may be
-// empty on direct navigation, so we subscribe to populate it for the
-// header's service-name label.
+// Logs scoped to a single allocation. The page owns exactly one
+// EventSource (LogsView). The allocation header pulls whatever is
+// already cached from a prior visit; on a direct deep-link it falls
+// back to a lite header built from URL params — we don't open a
+// second SSE just to label the title.
 export default function AllocationLogs() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
-  const { allocationCache, subscribeAllocation } = useClusterStore()
-  const allocation = allocId ? allocationCache[allocId]?.allocation : null
-
-  useEffect(() => {
-    if (!nodeId || !allocId) return
-    return subscribeAllocation(nodeId, allocId)
-  }, [nodeId, allocId, subscribeAllocation])
-
+  const allocation = useClusterStore((s) => allocId ? s.allocationCache[allocId]?.allocation ?? null : null)
   if (!nodeId || !allocId) return null
   const label = allocation?.service_name || allocId
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
-      {allocation && <AllocationHeader allocation={allocation} tail={[{ label: 'Logs' }]} />}
+      <AllocationHeader allocation={allocation} nodeId={nodeId} allocId={allocId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={[
         { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
         { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },

@@ -8,15 +8,16 @@ interface StatusTileProps {
   // an IP address, or a free-form context line).
   hint?: ReactNode
   icon?: ReactNode
+  className?: string
 }
 
 // StatusTile is the compact sibling of MetricTile — for things that
 // don't have a usage/total relationship: leader identity, healthy %,
 // nodes active count, etc. Same visual rhythm so the dashboard reads
 // as a grid: title left, icon right, bold value, muted hint.
-export function StatusTile({ title, value, hint, icon }: StatusTileProps) {
+export function StatusTile({ title, value, hint, icon, className }: StatusTileProps) {
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {icon && <span className="text-muted-foreground">{icon}</span>}

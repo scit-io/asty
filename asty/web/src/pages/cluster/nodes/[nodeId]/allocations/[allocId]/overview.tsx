@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Clock, Tag, Hash, Heart, HardDrive, RefreshCw, RotateCw, StopCircle, Wrench } from 'lucide-react'
+import { formatMB } from '@/lib/format'
 import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
 import { AllocationHeader } from '@/components/allocation-header'
@@ -35,20 +36,16 @@ const healthVariant = (h?: Allocation['health_status']) =>
 // infrastructure, ResourcesBlock will surface it automatically.
 export default function AllocationDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
-  const { allocationCache, subscribeAllocation, services: servicesList } = useClusterStore()
+  const { allocationCache, subscribeAllocation } = useClusterStore()
   const cached = allocId ? allocationCache[allocId] : undefined
   const allocation = cached?.allocation || null
+  const svcDef = cached?.service || null
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     if (!nodeId || !allocId) return
     return subscribeAllocation(nodeId, allocId)
   }, [nodeId, allocId, subscribeAllocation])
-
-  const svcDef = useMemo(() => {
-    if (!allocation?.service_name) return null
-    return servicesList.find((s) => s.Name === allocation.service_name) || null
-  }, [allocation?.service_name, servicesList])
 
   const cpuTotal = svcDef?.Resources.CPU ?? 100
   const memTotal = svcDef?.Resources.Memory ?? 0
@@ -96,7 +93,7 @@ export default function AllocationDetail() {
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-6">
         <StatusTile title="Disk" icon={<HardDrive className="h-4 w-4" />}
-          value={`${allocation.disk_usage} MB`} hint="on-disk under work_dir" />
+          value={formatMB(allocation.disk_usage)} hint="on-disk under work_dir" />
         <StatusTile title="Version" icon={<Tag className="h-4 w-4" />}
           value={<span className="text-base font-mono">{allocation.version || '—'}</span>} />
         <StatusTile title="PID" icon={<Hash className="h-4 w-4" />}

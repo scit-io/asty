@@ -20,6 +20,21 @@ func (api *API) streamNode(w http.ResponseWriter, r *http.Request, nodeID string
 }
 
 func emitNodeView(w http.ResponseWriter, snap *types.ClusterSnapshot, nodeID string, rps float64) {
+	emitStatus(w, snap)
+
+	// Find the node and emit it as its own event so the page doesn't
+	// need a parallel global subscription to read its NodeInfo.
+	for _, n := range snap.Nodes {
+		if n.ID == nodeID {
+			sseEvent(w, "node", mustJSON(map[string]any{"node": n}))
+			break
+		}
+	}
+
+	// Services list — needed for resource-limit lookups on the per-
+	// node allocations table.
+	sseEvent(w, "services", mustJSON(map[string]any{"services": snap.Services}))
+
 	allocs := snap.AllocsByNode[nodeID]
 	if allocs == nil {
 		allocs = []*types.ServiceAllocation{}

@@ -16,6 +16,7 @@ import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
+import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
@@ -81,9 +82,9 @@ export default function NodeAllocations() {
           <div className="flex items-center gap-2">
             <Cpu className="h-4 w-4 text-muted-foreground" />
             <div className="space-y-1">
-              <div className="text-sm font-medium">{a.cpu_usage}%</div>
+              <div className="text-sm font-medium">{formatPercent(a.cpu_usage)}</div>
               {res && <div className="text-xs text-muted-foreground">
-                {Math.round((a.cpu_usage / 100) * res.CPU)} / {res.CPU} MHz
+                {formatMHz(Math.round((a.cpu_usage / 100) * res.CPU))} / {formatMHz(res.CPU)}
               </div>}
             </div>
           </div>
@@ -100,9 +101,9 @@ export default function NodeAllocations() {
           <div className="flex items-center gap-2">
             <MemoryStick className="h-4 w-4 text-muted-foreground" />
             <div className="space-y-1">
-              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : `${a.memory_usage} MB`}</div>
+              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : formatMB(a.memory_usage)}</div>
               {res && <div className="text-xs text-muted-foreground">
-                {a.memory_usage} / {res.Memory} MB
+                {formatMB(a.memory_usage)} / {formatMB(res.Memory)}
               </div>}
             </div>
           </div>
@@ -112,7 +113,7 @@ export default function NodeAllocations() {
     {
       key: 'disk', label: 'Disk',
       sort: (a, b) => a.disk_usage - b.disk_usage,
-      render: (a) => <span className="text-sm">{a.disk_usage} MB</span>,
+      render: (a) => <span className="text-sm">{formatMB(a.disk_usage)}</span>,
     },
     {
       key: 'restarts', label: 'Restarts',

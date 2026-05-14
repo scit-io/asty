@@ -22,7 +22,12 @@ const statusDot = (s?: Node['status']): string => {
 }
 
 interface NodeHeaderProps {
-  node: Node
+  // Pass node when the page has it; pass nodeId only on pages that
+  // can't justify a parallel SSE (e.g. /nodes/{id}/logs already owns
+  // its log stream). The lite header drops the status dot and ip/dc
+  // strip but keeps the title + breadcrumbs.
+  node?: Node | null
+  nodeId?: string
   // Crumbs the page-specific tail expects (e.g. 'Allocations'); the
   // Cluster › Nodes › {id} prefix is built here so all three pages
   // share it verbatim.
@@ -32,13 +37,15 @@ interface NodeHeaderProps {
 // NodeHeader renders the canonical split-row header for any page
 // inside /nodes/{id}: breadcrumbs left, node-id big title + status
 // dot + ip / datacenter line right-aligned.
-export function NodeHeader({ node, tail = [] }: NodeHeaderProps) {
+export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
+  const id = node?.id ?? nodeId
+  if (!id) return null
   const crumbs: Crumb[] = [
     { label: 'Cluster', to: '/' },
     { label: 'Nodes', to: '/nodes' },
     tail.length === 0
-      ? { label: node.id }
-      : { label: node.id, to: `/nodes/${node.id}` },
+      ? { label: id }
+      : { label: id, to: `/nodes/${id}` },
     ...tail,
   ]
 
@@ -47,21 +54,25 @@ export function NodeHeader({ node, tail = [] }: NodeHeaderProps) {
       <Breadcrumbs items={crumbs} />
       <div className="space-y-2 w-full sm:w-auto">
         <div className="flex items-center gap-3 sm:gap-4 justify-end">
-          <h1 className="text-2xl sm:text-3xl font-bold font-mono">{node.id}</h1>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className={`w-3 h-3 rounded-full ${statusDot(node.status)}`} />
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="capitalize">{node.status}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <h1 className="text-2xl sm:text-3xl font-bold font-mono">{id}</h1>
+          {node && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={`w-3 h-3 rounded-full ${statusDot(node.status)}`} />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="capitalize">{node.status}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
-        <div className="text-sm sm:text-base text-muted-foreground text-right">
-          <span className="font-mono">{node.ip}</span> / {node.datacenter}
-        </div>
+        {node && (
+          <div className="text-sm sm:text-base text-muted-foreground text-right">
+            <span className="font-mono">{node.ip}</span> / {node.datacenter}
+          </div>
+        )}
       </div>
     </div>
   )

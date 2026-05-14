@@ -110,9 +110,11 @@ func (api *API) aggregateClusterMetrics(snap *types.ClusterSnapshot) (cpuPct, me
 }
 
 // streamNodes is the list-view SSE companion to GET /nodes. Emits the
-// full node slice on each snapshot tick.
+// full node slice + compact status on each tick so the page can run
+// without a parallel global subscription.
 func (api *API) streamNodes(w http.ResponseWriter, r *http.Request) {
 	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
+		emitStatus(w, snap)
 		sseEvent(w, "nodes", mustJSON(map[string]any{
 			"nodes": snap.Nodes,
 			"count": len(snap.Nodes),
@@ -121,8 +123,10 @@ func (api *API) streamNodes(w http.ResponseWriter, r *http.Request) {
 }
 
 // streamServices is the list-view SSE companion to GET /services.
+// Same self-sufficiency contract as streamNodes.
 func (api *API) streamServices(w http.ResponseWriter, r *http.Request) {
 	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
+		emitStatus(w, snap)
 		sseEvent(w, "services", mustJSON(map[string]any{
 			"services": snap.Services,
 			"count":    len(snap.Services),

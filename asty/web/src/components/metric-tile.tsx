@@ -9,6 +9,7 @@ interface MetricTileProps {
   icon?: ReactNode
   chart?: ReactNode
   format?: (n: number) => string
+  className?: string
 }
 
 const defaultFormat = (n: number) => {
@@ -36,12 +37,12 @@ function GradientBar({ pct }: { pct: number }) {
 // MetricTile shows a utilisation card in the canonical shadcn dashboard
 // rhythm: title (left) + icon (right), big percentage, small used/total
 // hint, gradient bar at the bottom that colours with load.
-export function MetricTile({ title, usage, total, unit, icon, chart, format }: MetricTileProps) {
+export function MetricTile({ title, usage, total, unit, icon, chart, format, className }: MetricTileProps) {
   const fmt = format ?? defaultFormat
   const pct = total > 0 ? Math.min(100, (usage / total) * 100) : 0
 
   return (
-    <Card>
+    <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {icon && <span className="text-muted-foreground">{icon}</span>}

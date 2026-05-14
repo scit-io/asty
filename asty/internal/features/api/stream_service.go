@@ -19,12 +19,14 @@ func (api *API) streamService(w http.ResponseWriter, r *http.Request, serviceNam
 }
 
 func emitServiceView(w http.ResponseWriter, snap *types.ClusterSnapshot, name string) {
-	var svcDef *types.ServiceDefinition
+	emitStatus(w, snap)
+
+	var svcWithUsage *types.ServiceWithUsage
 	var avgCPU, avgMem float64
 	var running int
-	for _, svc := range snap.Services {
+	for i, svc := range snap.Services {
 		if svc.Name == name {
-			svcDef = svc.ServiceDefinition
+			svcWithUsage = &snap.Services[i]
 			avgCPU = svc.AvgCPUPercent
 			avgMem = svc.AvgMemoryMB
 			running = svc.CurrentCopies
@@ -35,8 +37,11 @@ func emitServiceView(w http.ResponseWriter, snap *types.ClusterSnapshot, name st
 	if allocs == nil {
 		allocs = []*types.ServiceAllocation{}
 	}
+	// detail.service carries the full ServiceWithUsage so the SPA gets
+	// runtime fields (min_copies, target_*, cooldown_*, last_action*)
+	// from the page stream instead of a parallel global subscription.
 	sseEvent(w, "detail", mustJSON(map[string]any{
-		"service":     svcDef,
+		"service":     svcWithUsage,
 		"allocations": allocs,
 	}))
 

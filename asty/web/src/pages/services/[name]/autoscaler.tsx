@@ -21,10 +21,17 @@ import type { ScalingEvent } from '@/types'
 // scaling-event history polled from /services/{name}/autoscaler.
 export default function ServiceAutoscaler() {
   const { name } = useParams<{ name: string }>()
-  const { services } = useClusterStore()
+  const { services, subscribeService } = useClusterStore()
   const status = useMemo(() => services.find((s) => s.Name === name) || null, [name, services])
   const [events, setEvents] = useState<ScalingEvent[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Live config comes from the service SSE; scaling-events history
+  // is REST-polled because backend doesn't (yet) push it.
+  useEffect(() => {
+    if (!name) return
+    return subscribeService(name)
+  }, [name, subscribeService])
 
   useEffect(() => {
     if (!name) return
@@ -73,7 +80,7 @@ export default function ServiceAutoscaler() {
               <dt className="text-muted-foreground">Min copies</dt><dd className="font-mono">{status.min_copies ?? 0}</dd>
               <dt className="text-muted-foreground">Target CPU</dt><dd className="font-mono">{status.target_cpu ?? 0}%</dd>
               <dt className="text-muted-foreground">Target Memory</dt><dd className="font-mono">{status.target_memory ?? 0}%</dd>
-              <dt className="text-muted-foreground">Traffic threshold</dt><dd className="font-mono">{status.traffic_threshold ?? 0} rps</dd>
+              <dt className="text-muted-foreground">Traffic threshold</dt><dd className="font-mono">{status.traffic_threshold ?? 0} Requests per second</dd>
               <dt className="text-muted-foreground">Cooldown</dt>
               <dd className="flex gap-2">
                 {status.cooldown_up_active && <Badge variant="secondary">up</Badge>}

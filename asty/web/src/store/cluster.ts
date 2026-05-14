@@ -39,33 +39,38 @@ interface ServiceData {
 
 interface AllocationData {
   allocation: Allocation | null
+  service: ServiceDefinition | null
 }
 
 interface ClusterStore {
-  // Cluster-level (populated by global SSE)
+  // Globals — populated by `status` / `services` events that every
+  // per-resource stream emits, so any active page keeps these warm.
   clusterStatus: ClusterStatus | null
   nodes: Node[]
   services: ServiceDefinition[]
+
+  // Cluster overview timeseries (only populated by subscribeCluster).
   clusterCpuMetrics: MetricPoint[]
   clusterMemoryMetrics: MetricPoint[]
   clusterRpsMetrics: MetricPoint[]
 
-  // Detail caches (populated by per-page SSE subscriptions)
+  // Per-resource page caches.
   nodeCache: Record<string, NodeData>
   serviceCache: Record<string, ServiceData>
   allocationCache: Record<string, AllocationData>
 
-  sseConnected: boolean
-
-  // Global SSE (cluster status / nodes / services / cluster_metrics / drain_progress)
-  initSSE: () => () => void
-
-  // Per-page SSE subscriptions — return unsubscribe fn
+  // Page subscriptions — each opens exactly ONE EventSource for its
+  // page. Cluster status, services list, nodes list are folded into
+  // every per-resource stream so the Header stays live without a
+  // parallel global subscription.
+  subscribeCluster: () => () => void
+  subscribeNodes: () => () => void
+  subscribeServices: () => () => void
   subscribeNode: (nodeId: string) => () => void
   subscribeService: (name: string) => () => void
   subscribeAllocation: (nodeId: string, allocId: string) => () => void
 
-  // Optimistic mutation (used by drain action before SSE catches up)
+  // Optimistic mutation (used by drain before SSE catches up).
   updateNodeStatus: (nodeId: string, status: Node['status']) => void
 }
 
@@ -113,7 +118,24 @@ const emptyServiceData = (): ServiceData => ({
   service: null, allocations: [], cpuMetrics: [], memoryMetrics: [], allocCountMetrics: [],
 })
 
-export const useClusterStore = create<ClusterStore>((set, get) => ({
+// Common handler for the compact `status` event that every stream
+// emits. Header reads clusterStatus from the store regardless of
+// which page is open.
+function attachStatusHandler(es: EventSource, set: (fn: (s: ClusterStore) => Partial<ClusterStore>) => void) {
+  es.addEventListener('status', (event) => {
+    try {
+      const data = JSON.parse((event as MessageEvent).data)
+      set(() => ({
+        clusterStatus: {
+          cluster: data.cluster,
+          services: data.services || { loaded: 0 },
+        },
+      }))
+    } catch { /* ignore */ }
+  })
+}
+
+export const useClusterStore = create<ClusterStore>((set) => ({
   clusterStatus: null,
   nodes: [],
   services: [],
@@ -123,52 +145,25 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
   nodeCache: {},
   serviceCache: {},
   allocationCache: {},
-  sseConnected: false,
 
-  initSSE: () => {
-    if (get().sseConnected) return () => {}
-    set({ sseConnected: true })
-
-    const close = openStream(`${API_BASE}/`, (es) => {
-      es.addEventListener('status', (event) => {
-        try {
-          const data = JSON.parse(event.data)
-          set({
-            clusterStatus: {
-              cluster: data.cluster,
-              services: data.services || { loaded: 0 },
-            },
-          })
-        } catch { /* ignore */ }
-      })
-
+  subscribeCluster: () => {
+    return openStream(`${API_BASE}/`, (es) => {
+      attachStatusHandler(es, set)
       es.addEventListener('nodes', (event) => {
         try {
-          const data = JSON.parse(event.data)
-          const nodes: Node[] = data.nodes || []
-          const state = get()
-          const updatedCache = { ...state.nodeCache }
-          let cacheChanged = false
-          for (const n of nodes) {
-            if (updatedCache[n.id]) {
-              updatedCache[n.id] = { ...updatedCache[n.id], node: n }
-              cacheChanged = true
-            }
-          }
-          set(cacheChanged ? { nodes, nodeCache: updatedCache } : { nodes })
+          const data = JSON.parse((event as MessageEvent).data)
+          set(() => ({ nodes: data.nodes || [] }))
         } catch { /* ignore */ }
       })
-
       es.addEventListener('services', (event) => {
         try {
-          const data = JSON.parse(event.data)
-          set({ services: data.services || [] })
+          const data = JSON.parse((event as MessageEvent).data)
+          set(() => ({ services: data.services || [] }))
         } catch { /* ignore */ }
       })
-
       es.addEventListener('cluster_metrics', (event) => {
         try {
-          const data = JSON.parse(event.data)
+          const data = JSON.parse((event as MessageEvent).data)
           set((state) => ({
             clusterCpuMetrics: appendMetrics(state.clusterCpuMetrics, data.cpu || []),
             clusterMemoryMetrics: appendMetrics(state.clusterMemoryMetrics, data.memory || []),
@@ -176,55 +171,87 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
           }))
         } catch { /* ignore */ }
       })
-
       es.addEventListener('drain_progress', (event) => {
         try {
-          const data = JSON.parse(event.data)
+          const data = JSON.parse((event as MessageEvent).data)
           if (data.node_id && data.status && VALID_NODE_STATUSES.has(data.status)) {
-            const cached = get().nodeCache[data.node_id]
-            if (cached?.node) {
-              set((state) => ({
-                nodeCache: {
-                  ...state.nodeCache,
-                  [data.node_id]: { ...cached, node: { ...cached.node, status: data.status } },
-                },
-              }))
-            }
+            set((state) => ({
+              nodes: state.nodes.map((n) => n.id === data.node_id ? { ...n, status: data.status } : n),
+            }))
           }
         } catch { /* ignore */ }
       })
     })
+  },
 
-    return () => {
-      close()
-      set({ sseConnected: false })
-    }
+  subscribeNodes: () => {
+    return openStream(`${API_BASE}/nodes`, (es) => {
+      attachStatusHandler(es, set)
+      es.addEventListener('nodes', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          set(() => ({ nodes: data.nodes || [] }))
+        } catch { /* ignore */ }
+      })
+    })
+  },
+
+  subscribeServices: () => {
+    return openStream(`${API_BASE}/services`, (es) => {
+      attachStatusHandler(es, set)
+      es.addEventListener('services', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          set(() => ({ services: data.services || [] }))
+        } catch { /* ignore */ }
+      })
+    })
   },
 
   subscribeNode: (nodeId) => {
-    // Seed cache with node from global list so detail page has data immediately.
-    const state = get()
-    if (!state.nodeCache[nodeId]?.node) {
+    // Seed from any nodes list that's already in memory so the
+    // first paint isn't a Skeleton when navigating from /nodes.
+    set((state) => {
       const existing = state.nodeCache[nodeId] || emptyNodeData()
-      const found = state.nodes.find((n) => n.id === nodeId) || null
-      set({ nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: found } } })
-    }
+      const seed = state.nodes.find((n) => n.id === nodeId) || existing.node
+      return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: seed } } }
+    })
+
     return openStream(`${API_BASE}/nodes/${nodeId}`, (es) => {
-      es.addEventListener('allocations', (event) => {
+      attachStatusHandler(es, set)
+      es.addEventListener('node', (event) => {
         try {
-          const data = JSON.parse(event.data)
-          const allocations: Allocation[] = data.allocations || []
+          const data = JSON.parse((event as MessageEvent).data)
+          if (!data.node) return
           set((state) => {
             const existing = state.nodeCache[nodeId] || emptyNodeData()
-            return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, allocations } } }
+            return {
+              nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: data.node } },
+              nodes: state.nodes.some((n) => n.id === data.node.id)
+                ? state.nodes.map((n) => n.id === data.node.id ? data.node : n)
+                : state.nodes,
+            }
           })
         } catch { /* ignore */ }
       })
-
-      // Delta append: server sends only new points since last tick.
+      es.addEventListener('services', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          set(() => ({ services: data.services || [] }))
+        } catch { /* ignore */ }
+      })
+      es.addEventListener('allocations', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          set((state) => {
+            const existing = state.nodeCache[nodeId] || emptyNodeData()
+            return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, allocations: data.allocations || [] } } }
+          })
+        } catch { /* ignore */ }
+      })
       es.addEventListener('metrics', (event) => {
         try {
-          const data = JSON.parse(event.data)
+          const data = JSON.parse((event as MessageEvent).data)
           set((state) => {
             const existing = state.nodeCache[nodeId] || emptyNodeData()
             return {
@@ -246,12 +273,22 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
 
   subscribeService: (name) => {
     return openStream(`${API_BASE}/services/${name}`, (es) => {
+      attachStatusHandler(es, set)
       es.addEventListener('detail', (event) => {
         try {
-          const data = JSON.parse(event.data)
+          const data = JSON.parse((event as MessageEvent).data)
           set((state) => {
             const existing = state.serviceCache[name] || emptyServiceData()
+            // Mirror the service into the shared services list so
+            // pages reading state.services (e.g. Header dropdowns)
+            // see the runtime fields even without subscribeServices.
+            const updatedServices = data.service
+              ? (state.services.some((s) => s.Name === name)
+                ? state.services.map((s) => s.Name === name ? data.service : s)
+                : state.services.concat(data.service))
+              : state.services
             return {
+              services: updatedServices,
               serviceCache: {
                 ...state.serviceCache,
                 [name]: {
@@ -264,11 +301,9 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
           })
         } catch { /* ignore */ }
       })
-
-      // Delta append for service metrics.
       es.addEventListener('metrics', (event) => {
         try {
-          const data = JSON.parse(event.data)
+          const data = JSON.parse((event as MessageEvent).data)
           set((state) => {
             const existing = state.serviceCache[name] || emptyServiceData()
             return {
@@ -290,15 +325,34 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
 
   subscribeAllocation: (nodeId, allocId) => {
     return openStream(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}`, (es) => {
+      attachStatusHandler(es, set)
       es.addEventListener('detail', (event) => {
         try {
-          const data = JSON.parse(event.data)
-          set((state) => ({
-            allocationCache: {
-              ...state.allocationCache,
-              [allocId]: { allocation: data.allocation || null },
-            },
-          }))
+          const data = JSON.parse((event as MessageEvent).data)
+          set((state) => {
+            const existing = state.allocationCache[allocId] || { allocation: null, service: null }
+            return {
+              allocationCache: {
+                ...state.allocationCache,
+                [allocId]: { ...existing, allocation: data.allocation || null },
+              },
+            }
+          })
+        } catch { /* ignore */ }
+      })
+      es.addEventListener('service', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          if (!data.service) return
+          set((state) => {
+            const existing = state.allocationCache[allocId] || { allocation: null, service: null }
+            return {
+              allocationCache: {
+                ...state.allocationCache,
+                [allocId]: { ...existing, service: data.service },
+              },
+            }
+          })
         } catch { /* ignore */ }
       })
     })
@@ -306,14 +360,19 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
 
   updateNodeStatus: (nodeId, status) => {
     set((state) => {
+      const next: Partial<ClusterStore> = {}
+      // Mirror in both the per-node cache and the shared nodes list.
       const cached = state.nodeCache[nodeId]
-      if (!cached?.node) return state
-      return {
-        nodeCache: {
+      if (cached?.node) {
+        next.nodeCache = {
           ...state.nodeCache,
           [nodeId]: { ...cached, node: { ...cached.node, status } },
-        },
+        }
       }
+      if (state.nodes.some((n) => n.id === nodeId)) {
+        next.nodes = state.nodes.map((n) => n.id === nodeId ? { ...n, status } : n)
+      }
+      return next
     })
   },
 }))

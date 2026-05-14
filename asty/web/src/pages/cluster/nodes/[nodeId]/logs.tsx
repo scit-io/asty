@@ -5,9 +5,10 @@ import { LogsView } from '@/components/logs-view'
 import { API_BASE } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 
-// Logs scoped to a single node. The agent's NATSWriter publishes
-// agent logs under asty.v1.agent.{nodeID}.logs.*; the orchestrator
-// exposes them on /nodes/{id}/logs via content-negotiated SSE.
+// Logs scoped to a single node. The page owns exactly one
+// EventSource (LogsView). NodeHeader reads whatever is already
+// cached from a prior visit and falls back to a lite header on a
+// direct deep-link — we don't open a second SSE for the title.
 export default function NodeLogs() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const node = useClusterStore((s) => nodeId
@@ -16,7 +17,7 @@ export default function NodeLogs() {
   if (!nodeId) return null
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
-      {node && <NodeHeader node={node} tail={[{ label: 'Logs' }]} />}
+      <NodeHeader node={node} nodeId={nodeId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={[
         { to: `/nodes/${nodeId}`, label: 'Overview' },
         { to: `/nodes/${nodeId}/allocations`, label: 'Allocations' },
