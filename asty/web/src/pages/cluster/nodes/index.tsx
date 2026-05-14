@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
+import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
-import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_SECTION_TABS } from '@/components/header'
 import { api } from '@/api/client'
@@ -11,14 +11,16 @@ import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
 import { toast } from 'sonner'
 
-const statusVariant = (s: Node['status']): 'default' | 'secondary' | 'destructive' | 'outline' => {
+// statusVariant maps a node lifecycle into one of the project's
+// custom Badge variants so colour matches operator expectation:
+// green = ready, yellow = transitioning, red = down.
+const statusVariant = (s: Node['status']): 'success' | 'warning' | 'destructive' | 'secondary' => {
   switch (s) {
-    case 'ready': return 'default'
+    case 'ready': return 'success'
     case 'down': return 'destructive'
     case 'draining':
-    case 'drained':
-    case 'paused': return 'secondary'
-    default: return 'outline'
+    case 'drained': return 'warning'
+    default: return 'secondary'
   }
 }
 
@@ -51,7 +53,7 @@ export default function Nodes() {
     {
       key: 'id', label: 'Node',
       sort: (a, b) => a.id.localeCompare(b.id),
-      render: (n) => <span className="font-mono text-sm">{n.id}</span>,
+      render: (n) => <span className="font-mono font-medium">{n.id}</span>,
     },
     { key: 'dc', label: 'DC', render: (n) => n.datacenter },
     { key: 'ip', label: 'IP', render: (n) => <span className="font-mono text-sm">{n.ip || '—'}</span> },
@@ -63,17 +65,41 @@ export default function Nodes() {
     {
       key: 'cpu', label: 'CPU',
       sort: (a, b) => percent(a.cpu_total - a.cpu_available, a.cpu_total) - percent(b.cpu_total - b.cpu_available, b.cpu_total),
-      render: (n) => `${percent(n.cpu_total - n.cpu_available, n.cpu_total)}%`,
+      render: (n) => {
+        const used = n.cpu_total - n.cpu_available
+        const pct = percent(used, n.cpu_total)
+        return (
+          <div className="flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct}%</div>
+              <div className="text-xs text-muted-foreground">{used} / {n.cpu_total} MHz</div>
+            </div>
+          </div>
+        )
+      },
     },
     {
       key: 'mem', label: 'Memory',
       sort: (a, b) => percent(a.memory_total - a.memory_available, a.memory_total) - percent(b.memory_total - b.memory_available, b.memory_total),
-      render: (n) => `${percent(n.memory_total - n.memory_available, n.memory_total)}%`,
+      render: (n) => {
+        const used = n.memory_total - n.memory_available
+        const pct = percent(used, n.memory_total)
+        return (
+          <div className="flex items-center gap-2">
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct}%</div>
+              <div className="text-xs text-muted-foreground">{used} / {n.memory_total} MB</div>
+            </div>
+          </div>
+        )
+      },
     },
     {
-      key: 'allocs', label: 'Allocations',
+      key: 'allocs', label: 'Allocations', className: 'text-right',
       sort: (a, b) => a.allocations_running - b.allocations_running,
-      render: (n) => <span className="font-mono text-sm">{n.allocations_running} / {n.allocations_planned}</span>,
+      render: (n) => <span className="text-sm"><b>{n.allocations_running}</b> / {n.allocations_planned}</span>,
     },
     {
       key: 'drain', label: 'Drain',
@@ -91,7 +117,6 @@ export default function Nodes() {
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <ResourceTabs items={CLUSTER_SECTION_TABS} />
-      <Breadcrumbs items={[{ label: 'Cluster', to: '/' }, { label: 'Nodes' }]} />
       <DataTable
         rows={nodes}
         columns={columns}

@@ -61,16 +61,16 @@ export default function ServiceOverview() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <Breadcrumbs items={[
           { label: 'Cluster', to: '/' },
           { label: 'Services', to: '/services' },
           { label: name },
         ]} />
-        <h1 className="text-2xl font-bold mt-1 flex items-center gap-2">
-          {name}
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
           {service && <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>{service.Type}</Badge>}
-        </h1>
+        </div>
       </div>
 
       <ResourceTabs items={[

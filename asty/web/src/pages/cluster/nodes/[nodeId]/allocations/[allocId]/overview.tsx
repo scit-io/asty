@@ -16,9 +16,9 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Clock, Tag, Hash, Heart, HardDrive, RefreshCw, RotateCw, StopCircle, Wrench } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
-import { Breadcrumbs } from '@/components/breadcrumbs'
+import { AllocationHeader } from '@/components/allocation-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { StatusTile } from '@/components/status-tile'
@@ -26,10 +26,8 @@ import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
-const statusVariant = (s?: Allocation['status']) =>
-  s === 'running' ? 'default' : s === 'failed' ? 'destructive' : s === 'pending' || s === 'starting' ? 'secondary' : 'outline'
 const healthVariant = (h?: Allocation['health_status']) =>
-  h === 'healthy' ? 'default' : h === 'unhealthy' ? 'destructive' : 'outline'
+  h === 'healthy' ? 'success' : h === 'unhealthy' ? 'destructive' : 'secondary'
 
 // Allocation Overview (/nodes/:id/allocations/:allocId) — first tab
 // of the allocation section. RPS tile is absent: the backend has no
@@ -79,21 +77,7 @@ export default function AllocationDetail() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <Breadcrumbs items={[
-            { label: 'Cluster', to: '/' },
-            { label: 'Nodes', to: '/nodes' },
-            { label: nodeId ?? '', to: `/nodes/${nodeId}` },
-            { label: 'Allocations', to: `/nodes/${nodeId}/allocations` },
-            { label: allocation.service_name },
-          ]} />
-          <h1 className="text-2xl font-bold mt-1">
-            {allocation.service_name} <Badge variant={statusVariant(allocation.status)}>{allocation.status}</Badge>
-          </h1>
-          <p className="text-xs text-muted-foreground font-mono mt-1">{allocation.id}</p>
-        </div>
-      </div>
+      <AllocationHeader allocation={allocation} />
 
       <ResourceTabs items={[
         { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
@@ -119,11 +103,22 @@ export default function AllocationDetail() {
           value={<span className="text-base font-mono">{allocation.pid || '—'}</span>} />
         <StatusTile title="Health" icon={<Heart className="h-4 w-4" />}
           value={<Badge variant={healthVariant(allocation.health_status)}>{allocation.health_status || 'unknown'}</Badge>} />
-        <StatusTile title="Uptime" icon={<Clock className="h-4 w-4" />}
-          value={allocation.started_at && allocation.status === 'running'
-            ? formatDistanceToNow(new Date(allocation.started_at), { addSuffix: false })
-            : '—'}
-          hint={allocation.started_at || ''} />
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Uptime</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm font-bold mt-1 mb-2">
+              {uptimeLabel(allocation.started_at, allocation.status)}
+            </div>
+            {allocation.started_at && !allocation.started_at.startsWith('0001-') && (
+              <p className="text-xs text-muted-foreground">
+                {new Date(allocation.started_at).toLocaleString()}
+              </p>
+            )}
+          </CardContent>
+        </Card>
         <StatusTile title="Restarts" icon={<RefreshCw className="h-4 w-4" />}
           value={allocation.restarts}
           hint={`${allocation.consecutive_failures} consecutive failures`} />

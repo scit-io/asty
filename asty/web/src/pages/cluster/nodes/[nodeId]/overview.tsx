@@ -11,26 +11,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Clock, Layers, Wrench } from 'lucide-react'
+import { Clock, HelpCircle, Layers, Wrench } from 'lucide-react'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
 import { MetricsChart } from '@/components/metrics-chart'
-import { Breadcrumbs } from '@/components/breadcrumbs'
+import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { StatusTile } from '@/components/status-tile'
 import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
-
-const statusVariant = (s?: string): 'default' | 'secondary' | 'destructive' | 'outline' => {
-  if (s === 'ready') return 'default'
-  if (s === 'down') return 'destructive'
-  if (s === 'draining' || s === 'drained' || s === 'paused') return 'secondary'
-  return 'outline'
-}
 
 // Node Overview (/nodes/:id) — first tab of the node section.
 // Maintenance section (drain switch) + Asty/NATS sub-blocks land
@@ -75,16 +73,7 @@ export default function NodeDetail() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <Breadcrumbs items={[
-            { label: 'Cluster', to: '/' },
-            { label: 'Nodes', to: '/nodes' },
-            { label: node.id },
-          ]} />
-          <h1 className="text-2xl font-bold mt-1">{node.id} <Badge variant={statusVariant(node.status)}>{node.status}</Badge></h1>
-        </div>
-      </div>
+      <NodeHeader node={node} />
 
       <ResourceTabs items={[
         { to: `/nodes/${node.id}`, label: 'Overview' },
@@ -114,24 +103,53 @@ export default function NodeDetail() {
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
         <StatusTile title="Allocations" icon={<Layers className="h-4 w-4" />}
           value={`${node.allocations_running} / ${node.allocations_planned}`} hint="running / planned" />
-        <StatusTile title="Started At" icon={<Clock className="h-4 w-4" />}
-          value={node.created_at ? formatDistanceToNow(new Date(node.created_at), { addSuffix: true }) : '—'}
-          hint={node.created_at || ''} />
         <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Wrench className="h-4 w-4" /> Maintenance
-            </CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Started At</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm">Drain</span>
-              <Switch checked={draining}
-                onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)} />
+          <CardContent>
+            <div className="text-sm font-bold mt-1 mb-2">
+              {node.created_at ? formatDistanceToNow(new Date(node.created_at), { addSuffix: true }) : '—'}
             </div>
-            <div className="text-xs text-muted-foreground">
-              {draining ? 'Allocations migrating to peers' : 'Accepting new allocations'}
+            {node.created_at && (
+              <p className="text-xs text-muted-foreground">
+                {new Date(node.created_at).toLocaleString()}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Maintenance</CardTitle>
+            <Wrench className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2 mt-1 mb-2">
+              <div className="text-sm font-bold">Drain</div>
+              <Switch
+                checked={draining}
+                onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
+                disabled={node.status === 'draining'}
+              />
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger>
+                    <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>Gracefully migrate all allocations to other nodes.</p>
+                    <p>Node remains in cluster but won't receive new allocations.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {node.status === 'ready' ? 'Normal'
+                : node.status === 'draining' ? 'Migrating…'
+                : node.status === 'drained' ? 'Drained'
+                : node.status}
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -9,19 +9,20 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import { MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
+import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
-import { Breadcrumbs } from '@/components/breadcrumbs'
+import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
-const healthVariant = (h: Allocation['health_status']) => h === 'healthy' ? 'default' : h === 'unhealthy' ? 'destructive' : 'outline'
+const healthVariant = (h: Allocation['health_status']) =>
+  h === 'healthy' ? 'success' : h === 'unhealthy' ? 'destructive' : 'secondary'
 const statusVariant = (s: Allocation['status']) =>
-  s === 'running' ? 'default' : s === 'failed' ? 'destructive' : s === 'pending' || s === 'starting' ? 'secondary' : 'outline'
+  s === 'running' ? 'success' : s === 'failed' ? 'destructive' : 'secondary'
 
 // Per-node allocations list. Same DataTable contract as /nodes but
 // scoped to one node; per-row dropdown lets the operator
@@ -29,11 +30,13 @@ const statusVariant = (s: Allocation['status']) =>
 export default function NodeAllocations() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
-  const { nodeCache, subscribeNode } = useClusterStore()
+  const { nodeCache, subscribeNode, services } = useClusterStore()
   const cached = nodeId ? nodeCache[nodeId] : undefined
   const node = cached?.node || null
   const allocations = cached?.allocations || []
   const [pending, setPending] = useState<Record<string, boolean>>({})
+
+  const limits = (name: string) => services.find((s) => s.Name === name)?.Resources
 
   useEffect(() => {
     if (!nodeId) return
@@ -57,7 +60,7 @@ export default function NodeAllocations() {
     {
       key: 'service', label: 'Service',
       sort: (a, b) => a.service_name.localeCompare(b.service_name),
-      render: (a) => <span className="font-mono text-sm">{a.service_name}</span>,
+      render: (a) => <span className="font-medium">{a.service_name}</span>,
     },
     {
       key: 'status', label: 'Status',
@@ -70,19 +73,46 @@ export default function NodeAllocations() {
       render: (a) => <Badge variant={healthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
     },
     {
-      key: 'cpu', label: 'CPU%',
+      key: 'cpu', label: 'CPU',
       sort: (a, b) => a.cpu_usage - b.cpu_usage,
-      render: (a) => `${a.cpu_usage}%`,
+      render: (a) => {
+        const res = limits(a.service_name)
+        return (
+          <div className="flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{a.cpu_usage}%</div>
+              {res && <div className="text-xs text-muted-foreground">
+                {Math.round((a.cpu_usage / 100) * res.CPU)} / {res.CPU} MHz
+              </div>}
+            </div>
+          </div>
+        )
+      },
     },
     {
       key: 'mem', label: 'Memory',
       sort: (a, b) => a.memory_usage - b.memory_usage,
-      render: (a) => `${a.memory_usage} MB`,
+      render: (a) => {
+        const res = limits(a.service_name)
+        const pct = res ? Math.round((a.memory_usage / res.Memory) * 100) : null
+        return (
+          <div className="flex items-center gap-2">
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : `${a.memory_usage} MB`}</div>
+              {res && <div className="text-xs text-muted-foreground">
+                {a.memory_usage} / {res.Memory} MB
+              </div>}
+            </div>
+          </div>
+        )
+      },
     },
     {
       key: 'disk', label: 'Disk',
       sort: (a, b) => a.disk_usage - b.disk_usage,
-      render: (a) => `${a.disk_usage} MB`,
+      render: (a) => <span className="text-sm">{a.disk_usage} MB</span>,
     },
     {
       key: 'restarts', label: 'Restarts',
@@ -91,20 +121,13 @@ export default function NodeAllocations() {
     },
     {
       key: 'uptime', label: 'Uptime',
-      render: (a) => a.started_at && a.status === 'running'
-        ? formatDistanceToNow(new Date(a.started_at), { addSuffix: false })
-        : '—',
+      render: (a) => <span className="text-sm">{uptimeLabel(a.started_at, a.status)}</span>,
     },
   ]
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
-      <Breadcrumbs items={[
-        { label: 'Cluster', to: '/' },
-        { label: 'Nodes', to: '/nodes' },
-        { label: node?.id || nodeId || '', to: `/nodes/${nodeId}` },
-        { label: 'Allocations' },
-      ]} />
+      {node && <NodeHeader node={node} tail={[{ label: 'Allocations' }]} />}
       {nodeId && (
         <ResourceTabs items={[
           { to: `/nodes/${nodeId}`, label: 'Overview' },

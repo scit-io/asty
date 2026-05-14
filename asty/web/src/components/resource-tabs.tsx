@@ -42,7 +42,7 @@ export function ResourceTabs({ items }: ResourceTabsProps) {
     <Tabs value={active} onValueChange={(v) => navigate(v)} className="w-full">
       <TabsList className={layout}>
         {items.map((item) => (
-          <TabsTrigger key={item.to} value={item.to}>{item.label}</TabsTrigger>
+          <TabsTrigger key={item.to} value={item.to} className="cursor-pointer">{item.label}</TabsTrigger>
         ))}
       </TabsList>
     </Tabs>

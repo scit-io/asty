@@ -13,19 +13,17 @@ interface StatusTileProps {
 // StatusTile is the compact sibling of MetricTile — for things that
 // don't have a usage/total relationship: leader identity, healthy %,
 // nodes active count, etc. Same visual rhythm so the dashboard reads
-// as a grid.
+// as a grid: title left, icon right, bold value, muted hint.
 export function StatusTile({ title, value, hint, icon }: StatusTileProps) {
   return (
     <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-          {icon}
-          {title}
-        </CardTitle>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        {icon && <span className="text-muted-foreground">{icon}</span>}
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-semibold">{value}</div>
-        {hint && <div className="text-sm text-muted-foreground mt-1">{hint}</div>}
+        <div className="text-2xl font-bold">{value}</div>
+        {hint && <p className="text-xs text-muted-foreground mt-1">{hint}</p>}
       </CardContent>
     </Card>
   )

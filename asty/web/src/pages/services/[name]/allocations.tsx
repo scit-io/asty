@@ -9,8 +9,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import { MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
-import { formatDistanceToNow } from 'date-fns'
+import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
+import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
@@ -19,9 +19,10 @@ import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
-const healthVariant = (h: Allocation['health_status']) => h === 'healthy' ? 'default' : h === 'unhealthy' ? 'destructive' : 'outline'
+const healthVariant = (h: Allocation['health_status']) =>
+  h === 'healthy' ? 'success' : h === 'unhealthy' ? 'destructive' : 'secondary'
 const statusVariant = (s: Allocation['status']) =>
-  s === 'running' ? 'default' : s === 'failed' ? 'destructive' : s === 'pending' || s === 'starting' ? 'secondary' : 'outline'
+  s === 'running' ? 'success' : s === 'failed' ? 'destructive' : 'secondary'
 
 // All allocations for a single service, regardless of node. Subscribes
 // to the service stream (which already returns the alloc list); the
@@ -30,10 +31,11 @@ const statusVariant = (s: Allocation['status']) =>
 export default function ServiceAllocations() {
   const { name } = useParams<{ name: string }>()
   const navigate = useNavigate()
-  const { serviceCache, subscribeService } = useClusterStore()
+  const { serviceCache, subscribeService, services } = useClusterStore()
   const cached = name ? serviceCache[name] : undefined
   const allocations = cached?.allocations || []
   const [pending, setPending] = useState<Record<string, boolean>>({})
+  const res = name ? services.find((s) => s.Name === name)?.Resources : undefined
 
   useEffect(() => {
     if (!name) return
@@ -57,7 +59,7 @@ export default function ServiceAllocations() {
     {
       key: 'node', label: 'Node',
       sort: (a, b) => a.node_id.localeCompare(b.node_id),
-      render: (a) => <span className="font-mono text-sm">{a.node_id}</span>,
+      render: (a) => <span className="font-mono font-medium">{a.node_id}</span>,
     },
     {
       key: 'status', label: 'Status',
@@ -68,15 +70,44 @@ export default function ServiceAllocations() {
       key: 'health', label: 'Health',
       render: (a) => <Badge variant={healthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
     },
-    { key: 'cpu', label: 'CPU%', sort: (a, b) => a.cpu_usage - b.cpu_usage, render: (a) => `${a.cpu_usage}%` },
-    { key: 'mem', label: 'Memory', sort: (a, b) => a.memory_usage - b.memory_usage, render: (a) => `${a.memory_usage} MB` },
-    { key: 'disk', label: 'Disk', sort: (a, b) => a.disk_usage - b.disk_usage, render: (a) => `${a.disk_usage} MB` },
+    {
+      key: 'cpu', label: 'CPU',
+      sort: (a, b) => a.cpu_usage - b.cpu_usage,
+      render: (a) => (
+        <div className="flex items-center gap-2">
+          <Cpu className="h-4 w-4 text-muted-foreground" />
+          <div className="space-y-1">
+            <div className="text-sm font-medium">{a.cpu_usage}%</div>
+            {res && <div className="text-xs text-muted-foreground">
+              {Math.round((a.cpu_usage / 100) * res.CPU)} / {res.CPU} MHz
+            </div>}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'mem', label: 'Memory',
+      sort: (a, b) => a.memory_usage - b.memory_usage,
+      render: (a) => {
+        const pct = res ? Math.round((a.memory_usage / res.Memory) * 100) : null
+        return (
+          <div className="flex items-center gap-2">
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : `${a.memory_usage} MB`}</div>
+              {res && <div className="text-xs text-muted-foreground">
+                {a.memory_usage} / {res.Memory} MB
+              </div>}
+            </div>
+          </div>
+        )
+      },
+    },
+    { key: 'disk', label: 'Disk', sort: (a, b) => a.disk_usage - b.disk_usage, render: (a) => <span className="text-sm">{a.disk_usage} MB</span> },
     { key: 'restarts', label: 'Restarts', sort: (a, b) => a.restarts - b.restarts, render: (a) => a.restarts },
     {
       key: 'uptime', label: 'Uptime',
-      render: (a) => a.started_at && a.status === 'running'
-        ? formatDistanceToNow(new Date(a.started_at), { addSuffix: false })
-        : '—',
+      render: (a) => <span className="text-sm">{uptimeLabel(a.started_at, a.status)}</span>,
     },
   ]
 
