@@ -62,7 +62,7 @@ interface ClusterStore {
   // Per-page SSE subscriptions — return unsubscribe fn
   subscribeNode: (nodeId: string) => () => void
   subscribeService: (name: string) => () => void
-  subscribeAllocation: (allocId: string) => () => void
+  subscribeAllocation: (nodeId: string, allocId: string) => () => void
 
   // Optimistic mutation (used by drain action before SSE catches up)
   updateNodeStatus: (nodeId: string, status: Node['status']) => void
@@ -128,7 +128,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
     if (get().sseConnected) return () => {}
     set({ sseConnected: true })
 
-    const close = openStream('/api/v1/stream', (es) => {
+    const close = openStream('/', (es) => {
       es.addEventListener('status', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -208,7 +208,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
       const found = state.nodes.find((n) => n.id === nodeId) || null
       set({ nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: found } } })
     }
-    return openStream(`/api/v1/stream/node/${nodeId}`, (es) => {
+    return openStream(`/nodes/${nodeId}`, (es) => {
       es.addEventListener('allocations', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -244,7 +244,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
   },
 
   subscribeService: (name) => {
-    return openStream(`/api/v1/stream/service/${name}`, (es) => {
+    return openStream(`/services/${name}`, (es) => {
       es.addEventListener('detail', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -287,8 +287,8 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
     })
   },
 
-  subscribeAllocation: (allocId) => {
-    return openStream(`/api/v1/stream/allocation/${allocId}`, (es) => {
+  subscribeAllocation: (nodeId, allocId) => {
+    return openStream(`/nodes/${nodeId}/allocations/${allocId}`, (es) => {
       es.addEventListener('detail', (event) => {
         try {
           const data = JSON.parse(event.data)

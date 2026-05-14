@@ -106,7 +106,7 @@ export default function NodeDetail() {
 
     const startStreaming = () => {
       if (cancelled) return
-      eventSource = new EventSource(`/api/v1/logs/node/${nodeId}?follow=true&lines=100`)
+      eventSource = new EventSource(`/nodes/${nodeId}/logs`)
 
       eventSource.onmessage = (event) => {
         try {
@@ -426,7 +426,7 @@ export default function NodeDetail() {
                       <TableRow
                         key={alloc.id}
                         className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`/nodes/${nodeId}/alloc/${alloc.id}`)}
+                        onClick={() => navigate(`/nodes/${nodeId}/allocations/${alloc.id}`)}
                       >
                         <TableCell className="font-medium">{alloc.service_name}</TableCell>
                         <TableCell>

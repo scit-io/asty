@@ -52,8 +52,8 @@ export default function ServiceOverview() {
 
     const poll = async () => {
       try {
-        const eventsRes = await api.getAutoscalerEvents(name, 50)
-        if (!cancelled) setEvents(eventsRes.events || [])
+        const res = await api.getServiceAutoscaler(name) as { events?: typeof events }
+        if (!cancelled) setEvents(res.events || [])
       } catch { /* keep current */ }
       if (!cancelled) timer = setTimeout(poll, 15000)
     }
@@ -226,7 +226,7 @@ export default function ServiceOverview() {
                       <TableRow
                         key={alloc.id}
                         className="cursor-pointer hover:bg-muted/50"
-                        onClick={() => navigate(`/nodes/${alloc.node_id}/alloc/${alloc.id}`)}
+                        onClick={() => navigate(`/nodes/${alloc.node_id}/allocations/${alloc.id}`)}
                       >
                         <TableCell className="font-mono text-xs">{alloc.id.slice(0, 8)}</TableCell>
                         <TableCell className="font-mono">{alloc.node_id}</TableCell>

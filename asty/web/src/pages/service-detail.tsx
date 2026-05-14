@@ -43,9 +43,9 @@ export default function ServiceDetail() {
 
   // Subscribe to allocation detail SSE
   useEffect(() => {
-    if (!allocId) return
-    return subscribeAllocation(allocId)
-  }, [allocId, subscribeAllocation])
+    if (!nodeId || !allocId) return
+    return subscribeAllocation(nodeId, allocId)
+  }, [nodeId, allocId, subscribeAllocation])
 
   useEffect(() => {
     if (!allocId) return
@@ -56,7 +56,7 @@ export default function ServiceDetail() {
 
     const startStreaming = () => {
       if (cancelled) return
-      eventSource = new EventSource(`/api/v1/logs/allocation/${allocId}?follow=true&lines=100`)
+      eventSource = new EventSource(`/nodes/${nodeId}/allocations/${allocId}/logs`)
 
       eventSource.onmessage = (event) => {
         try {
@@ -93,21 +93,21 @@ export default function ServiceDetail() {
       if (retryTimer) clearTimeout(retryTimer)
       eventSource?.close()
     }
-  }, [allocId])
+  }, [nodeId, allocId])
 
   const handleRestart = async () => {
-    if (!allocId) return
+    if (!nodeId || !allocId) return
     try {
-      await api.restartAllocation(allocId)
+      await api.restartAllocation(nodeId, allocId)
     } catch (error) {
       console.error('Failed to restart allocation:', error)
     }
   }
 
   const handleStop = async () => {
-    if (!allocId) return
+    if (!nodeId || !allocId) return
     try {
-      await api.stopAllocation(allocId)
+      await api.stopAllocation(nodeId, allocId)
     } catch (error) {
       console.error('Failed to stop allocation:', error)
     }

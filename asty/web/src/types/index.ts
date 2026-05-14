@@ -3,10 +3,26 @@ export interface Node {
   datacenter: string
   ip: string
   status: 'ready' | 'down' | 'draining' | 'drained' | 'paused'
-  cpu_total: number
-  cpu_available: number
-  memory_total: number
-  memory_available: number
+  cpu_total: number          // MHz
+  cpu_available: number      // MHz
+  memory_total: number       // MB
+  memory_available: number   // MB
+  disk_total: number         // MB
+  disk_available: number     // MB
+  // Asty agent process itself
+  self_cpu_percent: number
+  self_memory_mb: number
+  self_disk_mb: number
+  // Local NATS server stats (zero when nats -m 8222 isn't on)
+  nats_cpu_percent: number
+  nats_memory_mb: number
+  nats_connections: number
+  nats_subscriptions: number
+  nats_slow_consumers: number
+  nats_in_msgs: number
+  nats_out_msgs: number
+  nats_jetstream_messages: number
+  nats_jetstream_bytes: number
   processes: string[]
   created_at: string
   last_seen: string
@@ -31,8 +47,9 @@ export interface Allocation {
   pid: number
   started_at: string
   health_status: 'healthy' | 'unhealthy' | 'unknown'
-  cpu_usage: number
-  memory_usage: number
+  cpu_usage: number         // percentage
+  memory_usage: number      // MB
+  disk_usage: number        // MB, on-disk size under <work_dir>/<service>
   restarts: number
   consecutive_failures: number
   created_at: string
@@ -80,7 +97,7 @@ export interface ServiceDefinition {
   }
 
   // Runtime fields populated by streamHub in the global SSE 'services' event.
-  // Optional because /api/v1/services REST endpoint returns the bare definition.
+  // Optional because GET /services returns the bare definition without runtime.
   current_copies?: number
   avg_cpu_percent?: number
   avg_memory_percent?: number

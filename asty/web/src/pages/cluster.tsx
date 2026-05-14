@@ -33,7 +33,7 @@ export default function Cluster() {
 
     const startStreaming = () => {
       if (cancelled) return
-      eventSource = new EventSource('/api/v1/logs/cluster?follow=true&lines=100')
+      eventSource = new EventSource('/logs')
 
       eventSource.onmessage = (event) => {
         try {

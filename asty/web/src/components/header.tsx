@@ -6,9 +6,10 @@ export function Header() {
   const location = useLocation()
 
   const navItems = [
-    { to: '/', label: 'Nodes' },
+    { to: '/', label: 'Cluster' },
+    { to: '/nodes', label: 'Nodes' },
     { to: '/services', label: 'Services' },
-    { to: '/deploy', label: 'Deploy' },
+    { to: '/logs', label: 'Logs' },
   ]
 
   return (
