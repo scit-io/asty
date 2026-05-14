@@ -16,14 +16,17 @@ import (
 
 // API provides HTTP API endpoints.
 type API struct {
-	ctx        ServerContext
-	httpServer *http.Server
-	addr       string
+	ctx         ServerContext
+	httpServer  *http.Server
+	addr        string
+	promHandler http.Handler // serves /metrics via promhttp.HandlerFor(privateRegistry).
 }
 
 // New creates a new API server.
 func New(ctx ServerContext, addr string) *API {
-	return &API{ctx: ctx, addr: addr}
+	api := &API{ctx: ctx, addr: addr}
+	api.initProm()
+	return api
 }
 
 // Start starts the API server.

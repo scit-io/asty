@@ -155,6 +155,34 @@ HTTP Client → Gateway (:80) → NATS (127.0.0.1:4222) → [xhttp | xauth | xws
 
 All inter-service communication is NATS Pub/Sub. No service-to-service HTTP calls.
 
+## Observability
+
+**Mirror rule — UI and Prometheus stay in lockstep.** Every metric the
+web UI displays must also be exposed on `/metrics` (and vice versa, when
+that direction makes sense). The same number is meaningful to a human
+glancing at the dashboard and to an alerting system parsing the scrape
+output — divergence between the two surfaces is a bug, not a stylistic
+choice.
+
+Two endpoints exist today:
+
+- **Orchestrator `/metrics`** on the API port — served by
+  `api.handleMetrics` via `promhttp.HandlerFor` over a private
+  `prometheus.Registry`. Gauges live in `api/prom.go` and register Go
+  runtime + process collectors plus `asty_*` instruments. Each gauge
+  carries a UI-mapping note in its Help text.
+- **Gateway `/metrics`** on `:8081` (default) — served from inside the
+  agent (`agent/gateway.go`). Instruments under `gateway/metrics/`
+  count proxied requests, NATS round-trip durations, rate-limit
+  rejections, WS connections.
+
+When the UI gains a metric (new tile, new chart, new column), add the
+matching Prometheus instrument in the same change. Use
+`prometheus.NewGaugeFunc` with a closure that reads from
+`api.ctx`/`streamHub.Snapshot()` so the value stays consistent with
+what the UI sees. Counters need a real `Inc()` call site, not a
+periodic snapshot.
+
 ## Configuration
 
 ### Orchestrator (Asty)

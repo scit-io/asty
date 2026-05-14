@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"net/http"
 	"time"
 )
@@ -99,31 +98,13 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleMetrics returns Prometheus metrics.
+// handleMetrics delegates to promhttp.HandlerFor over the private
+// Registry initialised in initProm. The Go runtime collector, process
+// collector, and asty_* gauges (mirroring the UI's cluster/services
+// counters) all live on that registry.
 func (api *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if !methodGuard(w, r, http.MethodGet) {
 		return
 	}
-
-	nodes, _ := api.ctx.ClusterState().ListNodes()
-	healthyNodes := 0
-	now := time.Now()
-	for _, node := range nodes {
-		if node.IsHealthy(now) {
-			healthyNodes++
-		}
-	}
-
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	fmt.Fprintf(w, "# HELP asty_nodes_total Total number of nodes\n")
-	fmt.Fprintf(w, "# TYPE asty_nodes_total gauge\n")
-	fmt.Fprintf(w, "asty_nodes_total %d\n", len(nodes))
-	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "# HELP asty_nodes_healthy Number of healthy nodes\n")
-	fmt.Fprintf(w, "# TYPE asty_nodes_healthy gauge\n")
-	fmt.Fprintf(w, "asty_nodes_healthy %d\n", healthyNodes)
-	fmt.Fprintf(w, "\n")
-	fmt.Fprintf(w, "# HELP asty_services_loaded Number of loaded services\n")
-	fmt.Fprintf(w, "# TYPE asty_services_loaded gauge\n")
-	fmt.Fprintf(w, "asty_services_loaded %d\n", len(api.ctx.Services()))
+	api.promHandler.ServeHTTP(w, r)
 }
