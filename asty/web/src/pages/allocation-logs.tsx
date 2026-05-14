@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
+import { API_BASE } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single allocation. The allocation cache may be
@@ -34,7 +35,7 @@ export default function AllocationLogs() {
         { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
         { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },
       ]} />
-      <LogsView title={`Logs · ${label}`} streamUrl={`/nodes/${nodeId}/allocations/${allocId}/logs`} />
+      <LogsView title={`Logs · ${label}`} streamUrl={`${API_BASE}/nodes/${nodeId}/allocations/${allocId}/logs`} />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { API_BASE } from '@/api/client'
 import type {
   Node,
   ClusterStatus,
@@ -128,7 +129,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
     if (get().sseConnected) return () => {}
     set({ sseConnected: true })
 
-    const close = openStream('/', (es) => {
+    const close = openStream(`${API_BASE}/`, (es) => {
       es.addEventListener('status', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -208,7 +209,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
       const found = state.nodes.find((n) => n.id === nodeId) || null
       set({ nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: found } } })
     }
-    return openStream(`/nodes/${nodeId}`, (es) => {
+    return openStream(`${API_BASE}/nodes/${nodeId}`, (es) => {
       es.addEventListener('allocations', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -244,7 +245,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
   },
 
   subscribeService: (name) => {
-    return openStream(`/services/${name}`, (es) => {
+    return openStream(`${API_BASE}/services/${name}`, (es) => {
       es.addEventListener('detail', (event) => {
         try {
           const data = JSON.parse(event.data)
@@ -288,7 +289,7 @@ export const useClusterStore = create<ClusterStore>((set, get) => ({
   },
 
   subscribeAllocation: (nodeId, allocId) => {
-    return openStream(`/nodes/${nodeId}/allocations/${allocId}`, (es) => {
+    return openStream(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}`, (es) => {
       es.addEventListener('detail', (event) => {
         try {
           const data = JSON.parse(event.data)

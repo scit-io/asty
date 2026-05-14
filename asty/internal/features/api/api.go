@@ -11,6 +11,12 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// apiPrefix is the single source of truth for the HTTP namespace under
+// which every data route is registered. Changing this string moves all
+// of the SPA's API calls in one place; the SPA reads the matching
+// constant from api/base.ts.
+const apiPrefix = "/api/v1"
+
 // API provides the orchestrator's HTTP surface: SSE streams, polling
 // endpoints, and command POSTs — all on a single port. Content-
 // negotiation per route picks the response form (JSON snapshot vs.
@@ -29,43 +35,47 @@ func New(ctx ServerContext, addr string) *API {
 	return api
 }
 
-// Start starts the API server. Routes are organised by resource path
-// (no `/api/v1` prefix); methods on the same path are separate
-// registrations so the stdlib mux can fan them out.
+// Start starts the API server. Data routes register on a sub-mux
+// with bare paths; the namespace lives in apiPrefix and is added once
+// via http.StripPrefix at the outer mux. Methods on the same path
+// are separate registrations so the stdlib mux can fan them out.
 func (api *API) Start(ctx context.Context) error {
-	mux := http.NewServeMux()
-
-	// Root: cluster overview.
-	mux.HandleFunc("GET /{$}", api.handleCluster)
-
-	// Liveness + Prometheus scrape.
-	mux.HandleFunc("GET /health", api.handleHealth)
-	mux.HandleFunc("GET /metrics", api.handleMetrics)
-
-	// Cluster events / log stream.
-	mux.HandleFunc("GET /logs", api.handleClusterLogs)
+	// Data routes register on a sub-mux with bare paths; the prefix
+	// gets added once below via http.StripPrefix(apiPrefix, …) so
+	// every route reads naturally and the prefix moves in one place.
+	data := http.NewServeMux()
+	data.HandleFunc("GET /{$}", api.handleCluster)
+	data.HandleFunc("GET /logs", api.handleClusterLogs)
 
 	// Nodes.
-	mux.HandleFunc("GET /nodes", api.handleNodes)
-	mux.HandleFunc("GET /nodes/{id}", api.handleNode)
-	mux.HandleFunc("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
-	mux.HandleFunc("POST /nodes/{id}/drain", api.handleNodeDrain)
-	mux.HandleFunc("POST /nodes/{id}/pause", api.handleNodePause)
-	mux.HandleFunc("GET /nodes/{id}/logs", api.handleNodeLogs)
-	mux.HandleFunc("GET /nodes/{id}/allocations", api.handleNodeAllocations)
-	mux.HandleFunc("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
-	mux.HandleFunc("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
-	mux.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", api.handleAllocationRestart)
-	mux.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", api.handleAllocationStop)
+	data.HandleFunc("GET /nodes", api.handleNodes)
+	data.HandleFunc("GET /nodes/{id}", api.handleNode)
+	data.HandleFunc("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
+	data.HandleFunc("POST /nodes/{id}/drain", api.handleNodeDrain)
+	data.HandleFunc("POST /nodes/{id}/pause", api.handleNodePause)
+	data.HandleFunc("GET /nodes/{id}/logs", api.handleNodeLogs)
+	data.HandleFunc("GET /nodes/{id}/allocations", api.handleNodeAllocations)
+	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
+	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
+	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", api.handleAllocationRestart)
+	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", api.handleAllocationStop)
 
 	// Services.
-	mux.HandleFunc("GET /services", api.handleServices)
-	mux.HandleFunc("GET /services/{name}", api.handleService)
-	mux.HandleFunc("POST /services/{name}/scale", api.handleServiceScale)
-	mux.HandleFunc("GET /services/{name}/allocations", api.handleServiceAllocations)
-	mux.HandleFunc("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
-	mux.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
-	mux.HandleFunc("POST /services/{name}/deploy", api.handleServiceDeploy)
+	data.HandleFunc("GET /services", api.handleServices)
+	data.HandleFunc("GET /services/{name}", api.handleService)
+	data.HandleFunc("POST /services/{name}/scale", api.handleServiceScale)
+	data.HandleFunc("GET /services/{name}/allocations", api.handleServiceAllocations)
+	data.HandleFunc("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
+	data.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
+	data.HandleFunc("POST /services/{name}/deploy", api.handleServiceDeploy)
+
+	// Outer mux: infra endpoints at the root, data namespace nested.
+	// /health and /metrics stay at the root because the probes and
+	// Prometheus scrape don't know about our prefix.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", api.handleHealth)
+	mux.HandleFunc("GET /metrics", api.handleMetrics)
+	mux.Handle(apiPrefix+"/", http.StripPrefix(apiPrefix, data))
 
 	api.httpServer = &http.Server{
 		Addr:              api.addr,

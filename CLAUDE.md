@@ -188,7 +188,7 @@ Per node, three HTTP listeners contribute to observability:
 | Listener | Port | Path | Served by | Purpose |
 |---|---|---|---|---|
 | Orchestrator | `:8080` | `GET /metrics` | `api.handleMetrics` → `promhttp.HandlerFor` over a private `prometheus.Registry` | Cluster + orchestrator-self instruments |
-| Orchestrator | `:8080` | `GET /…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
+| Orchestrator | `:8080` | `GET /api/v1/…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
 | Gateway | `:8081` | `GET /metrics` | `agent.serveGatewayMetrics` (default registerer + `promhttp.Handler`) | Per-node gateway counters: proxied requests, NATS RTT, rate-limit rejects, WS connections |
 | NATS server | `:8222` | `GET /varz`, `/jsz`, `/connz` | NATS itself | Scraped in-process by the agent and re-exported under `asty_node_nats_*` / `asty_cluster_nats_*` on the orchestrator's `/metrics` |
 
@@ -203,9 +203,14 @@ docker-compose under `deploy/dev/` sets `http_port: 8222` and
 
 The orchestrator's `:8080` is the only HTTP surface for cluster data:
 Web UI subscribes to its SSE flavour, Prometheus polls its `/metrics`,
-CLI tooling fetches JSON from the same paths. No `/api/v1/*` prefix —
-URLs match the navigation hierarchy directly (`/nodes/{id}`,
-`/services/{name}/allocations`, `/nodes/{id}/allocations/{allocId}/logs`).
+CLI tooling fetches JSON from the same paths. Data lives under
+`/api/v1/*` so the SPA can own the bare paths (`/`, `/nodes`,
+`/services`) for navigation without a URL clash; inside the prefix
+the URLs still match the navigation hierarchy 1:1 (e.g.
+`/api/v1/nodes/{id}`, `/api/v1/services/{name}/allocations`,
+`/api/v1/nodes/{id}/allocations/{allocId}/logs`). `/health` and
+`/metrics` stay at the root because infrastructure (kube-probes,
+Prometheus) doesn't know about the prefix.
 
 ### Metric naming convention
 
