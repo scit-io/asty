@@ -205,12 +205,12 @@ extension stays orderly:
 
 | Prefix | Scope | Labels | Examples |
 |---|---|---|---|
-| `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded` |
+| `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded`, `cpu_total_mhz`, `cpu_available_mhz`, `cpu_used_mhz`, `memory_total_mb`, `memory_available_mb`, `memory_used_mb`, `disk_total_mb`, `disk_available_mb`, `disk_used_mb`, `rps`, `health_percent` |
 | `asty_node_*` | per-node | `node_id`, `datacenter` (+ `status` on `_status`) | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `memory_available_mb`, `disk_total_mb`, `disk_available_mb`, `allocations_running`, `allocations_planned`, `status`, `self_cpu_percent`, `self_memory_mb`, `self_disk_mb` |
-| `asty_service_*` | per-service | `service` | `copies_current`, `cooldown_up_active` (Phase B.3) |
+| `asty_service_*` | per-service | `service` | `copies_current`, `min_copies`, `cpu_avg_percent`, `memory_avg_mb`, `cooldown_up_active`, `cooldown_down_active` |
 | `asty_alloc_*` | per-allocation | `service`, `node_id`, `alloc_id` (+ `state` on `_health`, `status` on `_status`) | `cpu_percent`, `memory_mb`, `disk_mb`, `restarts_total`, `uptime_seconds`, `health`, `status` |
-| `asty_deploy_*` | per-deployment | `service` | `state`, `progress_percent` (Phase B.3) |
-| `asty_leader` | leader-election state | `node_id` (1 on leader, 0 elsewhere) | (Phase B.3) |
+| `asty_deploy_*` | per-deployment | `service` (+ `state` on `_state`) | `state`, `progress_percent` |
+| `asty_leader` | leader-election state | `node_id` | 1 on the current leader; the row simply doesn't exist on followers because /metrics is only served on the leader's API |
 | `gateway_*` | gateway-internal | as-needed | `http_requests_total`, `http_request_duration_seconds`, `ws_connections_active`, `rate_limit_rejected_total`, `nats_request_duration_seconds`, `nats_request_attempts_total` |
 | `nats_*` | scraped from NATS server | `node_id` | `connections_current`, `jetstream_max_lag_msgs` (Phase C) |
 

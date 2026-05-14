@@ -72,8 +72,11 @@ func (api *API) initProm() {
 
 	// Per-resource collectors pull a fresh snapshot on each scrape, so
 	// labels for departed nodes/allocations disappear automatically.
+	reg.MustRegister(newClusterCollector(api))
 	reg.MustRegister(newNodeCollector(api))
 	reg.MustRegister(newAllocCollector(api))
+	reg.MustRegister(newServiceCollector(api))
+	reg.MustRegister(newDeployCollector(api))
 
 	api.promHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }
