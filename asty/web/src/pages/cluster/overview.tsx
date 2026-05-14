@@ -3,6 +3,8 @@ import { Server, Activity, Shield, Heart } from 'lucide-react'
 import { MetricsChart } from '@/components/metrics-chart'
 import { StatusTile } from '@/components/status-tile'
 import { ResourcesBlock } from '@/components/resources-block'
+import { ResourceTabs } from '@/components/resource-tabs'
+import { CLUSTER_SECTION_TABS } from '@/components/header'
 import { useClusterStore } from '@/store/cluster'
 
 // Cluster overview — the model's top page. Three concentric layers:
@@ -51,6 +53,8 @@ export default function Cluster() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-6">
+      <ResourceTabs items={CLUSTER_SECTION_TABS} />
+
       <ResourcesBlock title="Cluster" data={aggregates.cluster} />
 
       <div className="grid gap-3 md:grid-cols-3">

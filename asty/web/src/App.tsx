@@ -4,19 +4,21 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Header } from '@/components/header'
 import { Toaster } from 'sonner'
 import { useClusterStore } from '@/store/cluster'
-import Cluster from '@/pages/cluster'
-import NodeDetail from '@/pages/node-detail'
-import AllocationDetail from '@/pages/allocation-detail'
-import AllocationLogs from '@/pages/allocation-logs'
+
+import ClusterOverview from '@/pages/cluster/overview'
+import ClusterLogs from '@/pages/cluster/logs'
+import Nodes from '@/pages/cluster/nodes'
+import NodeOverview from '@/pages/cluster/nodes/[nodeId]/overview'
+import NodeLogs from '@/pages/cluster/nodes/[nodeId]/logs'
+import NodeAllocations from '@/pages/cluster/nodes/[nodeId]/allocations'
+import AllocationOverview from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/overview'
+import AllocationLogs from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/logs'
+
 import Services from '@/pages/services'
-import ServiceOverview from '@/pages/service-overview'
-import ServiceAllocations from '@/pages/service-allocations'
-import ServiceAutoscaler from '@/pages/service-autoscaler'
-import ServiceDeploy from '@/pages/service-deploy'
-import Nodes from '@/pages/nodes'
-import NodeAllocations from '@/pages/node-allocations'
-import NodeLogs from '@/pages/node-logs'
-import ClusterLogs from '@/pages/logs'
+import ServiceOverview from '@/pages/services/[name]/overview'
+import ServiceAllocations from '@/pages/services/[name]/allocations'
+import ServiceAutoscaler from '@/pages/services/[name]/autoscaler'
+import ServiceDeploy from '@/pages/services/[name]/deploy'
 
 export default function App() {
   const initSSE = useClusterStore((s) => s.initSSE)
@@ -32,17 +34,17 @@ export default function App() {
           <Header />
           <Routes>
             {/* Cluster section */}
-            <Route path="/" element={<Cluster />} />
+            <Route path="/" element={<ClusterOverview />} />
             <Route path="/nodes" element={<Nodes />} />
             <Route path="/logs" element={<ClusterLogs />} />
 
             {/* Node section */}
-            <Route path="/nodes/:nodeId" element={<NodeDetail />} />
+            <Route path="/nodes/:nodeId" element={<NodeOverview />} />
             <Route path="/nodes/:nodeId/allocations" element={<NodeAllocations />} />
             <Route path="/nodes/:nodeId/logs" element={<NodeLogs />} />
 
-            {/* Allocation section (URL parent is /nodes/...) */}
-            <Route path="/nodes/:nodeId/allocations/:allocId" element={<AllocationDetail />} />
+            {/* Allocation section */}
+            <Route path="/nodes/:nodeId/allocations/:allocId" element={<AllocationOverview />} />
             <Route path="/nodes/:nodeId/allocations/:allocId/logs" element={<AllocationLogs />} />
 
             {/* Services section */}

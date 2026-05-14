@@ -26,9 +26,21 @@ export function ResourceTabs({ items }: ResourceTabsProps) {
     return best
   }, items[0]?.to ?? '')
 
+  // grid-cols-{n} can't be templated through Tailwind's JIT, so we
+  // pick from a small enumerated set covering the realistic tab
+  // counts (2 = allocation/alloc-logs; 3 = node section; 4 = service
+  // section). Falls back to flex layout if the count slips outside.
+  const colsClass: Record<number, string> = {
+    2: 'grid-cols-2',
+    3: 'grid-cols-3',
+    4: 'grid-cols-4',
+    5: 'grid-cols-5',
+  }
+  const layout = colsClass[items.length] ? `grid w-full ${colsClass[items.length]}` : 'flex w-full'
+
   return (
-    <Tabs value={active} onValueChange={(v) => navigate(v)}>
-      <TabsList>
+    <Tabs value={active} onValueChange={(v) => navigate(v)} className="w-full">
+      <TabsList className={layout}>
         {items.map((item) => (
           <TabsTrigger key={item.to} value={item.to}>{item.label}</TabsTrigger>
         ))}

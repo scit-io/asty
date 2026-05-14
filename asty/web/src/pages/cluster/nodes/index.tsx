@@ -4,6 +4,8 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { DataTable, type Column } from '@/components/data-table'
 import { Breadcrumbs } from '@/components/breadcrumbs'
+import { ResourceTabs } from '@/components/resource-tabs'
+import { CLUSTER_SECTION_TABS } from '@/components/header'
 import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
@@ -88,6 +90,7 @@ export default function Nodes() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
+      <ResourceTabs items={CLUSTER_SECTION_TABS} />
       <Breadcrumbs items={[{ label: 'Cluster', to: '/' }, { label: 'Nodes' }]} />
       <DataTable
         rows={nodes}
