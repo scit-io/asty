@@ -10,11 +10,13 @@ import AllocationDetail from '@/pages/allocation-detail'
 import AllocationLogs from '@/pages/allocation-logs'
 import Services from '@/pages/services'
 import ServiceOverview from '@/pages/service-overview'
+import ServiceAllocations from '@/pages/service-allocations'
+import ServiceAutoscaler from '@/pages/service-autoscaler'
+import ServiceDeploy from '@/pages/service-deploy'
 import Nodes from '@/pages/nodes'
 import NodeAllocations from '@/pages/node-allocations'
 import NodeLogs from '@/pages/node-logs'
 import ClusterLogs from '@/pages/logs'
-import Placeholder from '@/pages/placeholder'
 
 export default function App() {
   const initSSE = useClusterStore((s) => s.initSSE)
@@ -46,9 +48,9 @@ export default function App() {
             {/* Services section */}
             <Route path="/services" element={<Services />} />
             <Route path="/services/:name" element={<ServiceOverview />} />
-            <Route path="/services/:name/allocations" element={<Placeholder title="Service Allocations" phase="D.6" />} />
-            <Route path="/services/:name/autoscaler" element={<Placeholder title="Service Autoscaler" phase="D.6" />} />
-            <Route path="/services/:name/deploy" element={<Placeholder title="Service Deploy" phase="D.6" />} />
+            <Route path="/services/:name/allocations" element={<ServiceAllocations />} />
+            <Route path="/services/:name/autoscaler" element={<ServiceAutoscaler />} />
+            <Route path="/services/:name/deploy" element={<ServiceDeploy />} />
           </Routes>
         </div>
         <Toaster position="top-right" />
