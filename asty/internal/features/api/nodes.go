@@ -3,95 +3,63 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/features/draining"
 )
 
-// nodeAllocCounts lives in lookup.go (snapshot-first lookups).
-
+// applyAllocCounts fills the in-memory AllocationsRunning/Planned
+// counters on a node from a precomputed map (see lookup.go).
 func applyAllocCounts(node *types.NodeInfo, counts map[string]allocCounts) {
 	c := counts[node.ID]
 	node.AllocationsRunning = c.Running
 	node.AllocationsPlanned = c.Planned
 }
 
-// handleNodes returns cluster nodes.
+// handleNodes serves GET /nodes — list every node, with allocation
+// counts attached. SSE flavour streams the same shape on each tick.
 func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
+	if wantsSSE(r) {
+		api.streamNodes(w, r)
 		return
 	}
-
 	nodes, err := api.ctx.ClusterState().ListNodes()
 	if err != nil {
 		api.writeError(w, http.StatusInternalServerError, "failed to list nodes", err)
 		return
 	}
-
 	counts := api.nodeAllocCounts()
 	for _, node := range nodes {
 		applyAllocCounts(node, counts)
 	}
-
 	api.writeJSON(w, http.StatusOK, map[string]any{
 		"nodes": nodes,
 		"count": len(nodes),
 	})
 }
 
-// handleNodesWithID handles /api/v1/nodes/:id and /api/v1/nodes/:id/action.
-func (api *API) handleNodesWithID(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path[len("/api/v1/nodes/"):]
-	if path == "" {
-		api.handleNodes(w, r)
+// handleNode serves GET /nodes/{id} — single node detail. SSE flavour
+// streams the same node + its per-node metrics + allocations.
+func (api *API) handleNode(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
+	if wantsSSE(r) {
+		api.streamNode(w, r, nodeID)
 		return
 	}
-
-	nodeID, action, _ := strings.Cut(path, "/")
-
-	if action != "" {
-		switch action {
-		case "drain":
-			if !methodGuard(w, r, http.MethodPost) {
-				return
-			}
-			api.handleNodeDrain(w, r, nodeID)
-			return
-		case "drain/status":
-			if !methodGuard(w, r, http.MethodGet) {
-				return
-			}
-			api.handleNodeDrainStatus(w, r, nodeID)
-			return
-		case "pause":
-			if !methodGuard(w, r, http.MethodPost) {
-				return
-			}
-			api.handleNodePause(w, r, nodeID)
-			return
-		default:
-			api.writeError(w, http.StatusBadRequest, "unknown action", nil)
-			return
-		}
-	}
-
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-
 	node, err := api.ctx.ClusterState().GetNode(nodeID)
 	if err != nil {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
 	}
-
 	applyAllocCounts(node, api.nodeAllocCounts())
 	api.writeJSON(w, http.StatusOK, node)
 }
 
-// handleNodeDrain handles POST /api/v1/nodes/:id/drain.
-func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
+// handleNodeDrain serves POST /nodes/{id}/drain — start or cancel a
+// drain. Body `{"enable": true}` (default) starts; `{"enable":false}`
+// resumes the node.
+func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
 	var req struct {
 		Enable bool `json:"enable"`
 	}
@@ -121,15 +89,15 @@ func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID s
 		api.writeError(w, http.StatusBadRequest, "drain failed", err)
 		return
 	}
-
 	api.writeJSON(w, http.StatusOK, status)
 }
 
-// handleNodePause toggles a node's status between NodePaused and NodeReady.
-// Paused nodes keep existing allocations running but the scheduler skips
-// them for new placements (FilterHealthyNodes excludes non-Ready statuses).
-// Request body: `{"pause": true|false}`; missing body defaults to pause=true.
-func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request, nodeID string) {
+// handleNodePause serves POST /nodes/{id}/pause — toggle the node's
+// status between NodePaused and NodeReady. Paused nodes keep existing
+// allocations running but the scheduler skips them for new placements.
+// Body `{"pause": true|false}`; missing body defaults to pause=true.
+func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
 	var req struct {
 		Pause bool `json:"pause"`
 	}
@@ -150,7 +118,6 @@ func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request, nodeID s
 		api.writeError(w, http.StatusBadRequest, "node is draining/drained; resume drain first", nil)
 		return
 	}
-
 	if req.Pause {
 		node.Status = types.NodePaused
 	} else {
@@ -166,8 +133,10 @@ func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request, nodeID s
 	})
 }
 
-// handleNodeDrainStatus handles GET /api/v1/nodes/:id/drain/status.
-func (api *API) handleNodeDrainStatus(w http.ResponseWriter, _ *http.Request, nodeID string) {
+// handleNodeDrainStatus serves GET /nodes/{id}/drain — drain progress
+// or the steady-state node status if no drain is running.
+func (api *API) handleNodeDrainStatus(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
 	status := api.ctx.DrainManager().GetStatus(nodeID)
 	if status == nil {
 		node, err := api.ctx.ClusterState().GetNode(nodeID)

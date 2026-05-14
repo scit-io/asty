@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"asty/asty/internal/core/types"
 )
@@ -10,88 +9,42 @@ import (
 // Snapshot-first allocation lookups (allocByID, allocsByNode,
 // nodeAllocCounts) live in lookup.go.
 
-// handleAllocations returns service allocations.
-func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-
-	serviceName := r.URL.Query().Get("service")
-	nodeID := r.URL.Query().Get("node_id")
-
-	if serviceName != "" {
-		allocs, err := api.ctx.ClusterState().ListAllocations(serviceName)
-		if err != nil {
-			api.writeError(w, http.StatusInternalServerError, "failed to list allocations", err)
-			return
-		}
-
-		api.writeJSON(w, http.StatusOK, map[string]any{
-			"service":     serviceName,
-			"allocations": allocs,
-			"count":       len(allocs),
-		})
-		return
-	}
-
-	if nodeID != "" {
-		allAllocs := api.allocsByNode(nodeID)
-		api.writeJSON(w, http.StatusOK, map[string]any{
-			"node_id":     nodeID,
-			"allocations": allAllocs,
-			"count":       len(allAllocs),
-		})
-		return
-	}
-
+// handleNodeAllocations serves GET /nodes/{id}/allocations.
+func (api *API) handleNodeAllocations(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
+	allocs := api.allocsByNode(nodeID)
 	api.writeJSON(w, http.StatusOK, map[string]any{
-		"message": "use ?service=<name> or ?node_id=<id> to get allocations",
+		"node_id":     nodeID,
+		"allocations": allocs,
+		"count":       len(allocs),
 	})
 }
 
-// handleAllocationWithID handles /api/v1/allocations/:id and /api/v1/allocations/:id/action.
-func (api *API) handleAllocationWithID(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path[len("/api/v1/allocations/"):]
-	if path == "" {
-		api.handleAllocations(w, r)
+// handleAllocation serves GET /nodes/{id}/allocations/{allocId}.
+// Falls back to looking up by alloc ID alone if the {id} path slot
+// doesn't match the allocation's current node (e.g. UI deep-links a
+// stale URL after a migration).
+func (api *API) handleAllocation(w http.ResponseWriter, r *http.Request) {
+	allocID := r.PathValue("allocId")
+	if wantsSSE(r) {
+		api.streamAllocation(w, r, allocID)
 		return
 	}
-
-	allocID, action, _ := strings.Cut(path, "/")
-
-	if action != "" {
-		if !methodGuard(w, r, http.MethodPost) {
-			return
-		}
-
-		switch action {
-		case "restart":
-			api.handleAllocationRestart(w, r, allocID)
-			return
-		case "stop":
-			api.handleAllocationStop(w, r, allocID)
-			return
-		default:
-			api.writeError(w, http.StatusBadRequest, "unknown action", nil)
-			return
-		}
-	}
-
-	if !methodGuard(w, r, http.MethodGet) {
+	alloc := api.allocByID(allocID)
+	if alloc == nil {
+		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 		return
 	}
-
-	if alloc := api.allocByID(allocID); alloc != nil {
-		api.writeJSON(w, http.StatusOK, alloc)
-		return
-	}
-	api.writeError(w, http.StatusNotFound, "allocation not found", nil)
+	api.writeJSON(w, http.StatusOK, alloc)
 }
 
-// handleAllocationRestart stops the existing process and resets the alloc to
-// pending so the controller re-dispatches a start command to the same node.
-// Live copy count stays at N.
-func (api *API) handleAllocationRestart(w http.ResponseWriter, _ *http.Request, allocID string) {
+// handleAllocationRestart serves POST
+// /nodes/{id}/allocations/{allocId}/restart. Stops the existing
+// process and resets the alloc to pending so the controller
+// re-dispatches a start command to the same node. Live copy count
+// stays at N.
+func (api *API) handleAllocationRestart(w http.ResponseWriter, r *http.Request) {
+	allocID := r.PathValue("allocId")
 	alloc := api.allocByID(allocID)
 	if alloc == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
@@ -118,12 +71,14 @@ func (api *API) handleAllocationRestart(w http.ResponseWriter, _ *http.Request, 
 	})
 }
 
-// handleAllocationStop terminates the process and deletes the allocation
-// record. The scheduler will pick a fresh node on the next reconcile if the
-// service is still below its target copy count — useful for moving a workload
-// off a noisy neighbour. To stop permanently, scale the service down or drain
-// the node.
-func (api *API) handleAllocationStop(w http.ResponseWriter, _ *http.Request, allocID string) {
+// handleAllocationStop serves POST
+// /nodes/{id}/allocations/{allocId}/stop. Terminates the process and
+// deletes the allocation record. The scheduler will pick a fresh node
+// on the next reconcile if the service is still below its target copy
+// count — useful for moving a workload off a noisy neighbour. To stop
+// permanently, scale the service down or drain the node.
+func (api *API) handleAllocationStop(w http.ResponseWriter, r *http.Request) {
+	allocID := r.PathValue("allocId")
 	alloc := api.allocByID(allocID)
 	if alloc == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)

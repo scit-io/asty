@@ -4,36 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog/log"
 )
 
-// handleLogsAllocation returns logs for an allocation. Without
-// ?follow=true it RPCs the agent for a snapshot; with it, it streams
-// live lines via SSE.
-func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-	allocID := strings.TrimPrefix(r.URL.Path, "/api/v1/logs/allocation/")
-	if allocID == "" {
-		api.writeError(w, http.StatusBadRequest, "allocation ID required", nil)
-		return
-	}
-
-	nLines := readQueryLines(r)
-	follow := r.URL.Query().Get("follow") == "true"
-
+// handleAllocationLogs serves GET
+// /nodes/{id}/allocations/{allocId}/logs. Accept-negotiated:
+// SSE streams live lines from the agent's per-service log subject;
+// JSON returns a snapshot fetched via NATS RPC.
+func (api *API) handleAllocationLogs(w http.ResponseWriter, r *http.Request) {
+	allocID := r.PathValue("allocId")
 	allocation := api.allocByID(allocID)
 	if allocation == nil {
 		api.writeError(w, http.StatusNotFound, "allocation not found", nil)
 		return
 	}
+	nLines := readQueryLines(r)
 
-	if !follow {
+	if !wantsSSE(r) {
 		api.respondAllocSnapshot(w, allocation, allocID, nLines)
 		return
 	}
@@ -42,16 +32,12 @@ func (api *API) handleLogsAllocation(w http.ResponseWriter, r *http.Request) {
 	if flusher == nil {
 		return
 	}
-
 	bufKey := "node." + allocation.NodeID + ".svc." + allocation.ServiceName
 	api.emitBufferedLines(w, bufKey, nLines)
 	flusher.Flush()
-
 	subject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", allocation.NodeID, allocation.ServiceName)
 	api.streamFromNATS(w, r, flusher, subject, true)
 }
-
-// allocByID lives in lookup.go (snapshot-first lookups).
 
 // respondAllocSnapshot sends a "fetch logs" RPC to the owning agent and
 // returns the response as JSON.

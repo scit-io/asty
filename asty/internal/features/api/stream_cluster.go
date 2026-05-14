@@ -9,15 +9,11 @@ import (
 	autometrics "asty/asty/internal/features/autoscaling/metrics"
 )
 
-// handleStream is the cluster-wide SSE feed. It publishes status,
-// nodes, services, cluster-level metrics, drain progress, and cluster
-// events. Bigger than the per-resource streams because it folds in
-// extra subscriptions (drain, events).
-func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-
+// streamCluster is the SSE feed for GET / (Accept: text/event-stream).
+// Publishes status, nodes, services, cluster-level metrics, drain
+// progress, and cluster events. Bigger than the per-resource streams
+// because it folds in extra subscriptions (drain, events).
+func (api *API) streamCluster(w http.ResponseWriter, r *http.Request) {
 	flusher := sseSetup(w)
 	if flusher == nil {
 		return
@@ -69,8 +65,7 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // emitClusterSnapshot writes the per-snapshot events: status, nodes,
-// services, and aggregate cluster metrics. Pulled out so handleStream
-// stays readable.
+// services, and aggregate cluster metrics.
 func (api *API) emitClusterSnapshot(w http.ResponseWriter, snap *types.ClusterSnapshot) {
 	sseEvent(w, "status", mustJSON(map[string]any{
 		"cluster":   snap.Cluster,
@@ -112,4 +107,25 @@ func (api *API) aggregateClusterMetrics(snap *types.ClusterSnapshot) (cpuPct, me
 		memPct = memUsed / memTotal * 100
 	}
 	return cpuPct, memPct, rps
+}
+
+// streamNodes is the list-view SSE companion to GET /nodes. Emits the
+// full node slice on each snapshot tick.
+func (api *API) streamNodes(w http.ResponseWriter, r *http.Request) {
+	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
+		sseEvent(w, "nodes", mustJSON(map[string]any{
+			"nodes": snap.Nodes,
+			"count": len(snap.Nodes),
+		}))
+	})
+}
+
+// streamServices is the list-view SSE companion to GET /services.
+func (api *API) streamServices(w http.ResponseWriter, r *http.Request) {
+	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
+		sseEvent(w, "services", mustJSON(map[string]any{
+			"services": snap.Services,
+			"count":    len(snap.Services),
+		}))
+	})
 }

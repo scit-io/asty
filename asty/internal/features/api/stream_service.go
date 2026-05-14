@@ -2,24 +2,17 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"asty/asty/internal/core/types"
 	autometrics "asty/asty/internal/features/autoscaling/metrics"
 )
 
-// handleStreamService streams definition + allocations + metrics for a
-// service.
-func (api *API) handleStreamService(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-	serviceName := strings.TrimPrefix(r.URL.Path, "/api/v1/stream/service/")
+// streamService is the SSE companion to GET /services/{name}.
+func (api *API) streamService(w http.ResponseWriter, r *http.Request, serviceName string) {
 	if serviceName == "" {
 		http.Error(w, "service name required", http.StatusBadRequest)
 		return
 	}
-
 	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
 		emitServiceView(w, snap, serviceName)
 	})

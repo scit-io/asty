@@ -11,10 +11,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// mustJSON is a package-local alias for types.MustJSON; SSE handlers use
-// it directly so their JSON-emitting one-liners stay readable.
-
-// API provides HTTP API endpoints.
+// API provides the orchestrator's HTTP surface: SSE streams, polling
+// endpoints, and command POSTs — all on a single port. Content-
+// negotiation per route picks the response form (JSON snapshot vs.
+// SSE stream vs. Prometheus text) based on the Accept header.
 type API struct {
 	ctx         ServerContext
 	httpServer  *http.Server
@@ -29,33 +29,43 @@ func New(ctx ServerContext, addr string) *API {
 	return api
 }
 
-// Start starts the API server.
+// Start starts the API server. Routes are organised by resource path
+// (no `/api/v1` prefix); methods on the same path are separate
+// registrations so the stdlib mux can fan them out.
 func (api *API) Start(ctx context.Context) error {
 	mux := http.NewServeMux()
 
-	// Register routes
-	mux.HandleFunc("/", api.handleRoot)
-	mux.HandleFunc("/health", api.handleHealth)
-	mux.HandleFunc("/api/v1/nodes/", api.handleNodesWithID)
-	mux.HandleFunc("/api/v1/nodes", api.handleNodes)
-	mux.HandleFunc("/api/v1/services/", api.handleServicesWithActions)
-	mux.HandleFunc("/api/v1/services", api.handleServices)
-	mux.HandleFunc("/api/v1/allocations/", api.handleAllocationWithID)
-	mux.HandleFunc("/api/v1/allocations", api.handleAllocations)
-	mux.HandleFunc("/api/v1/deploy", api.handleDeploy)
-	mux.HandleFunc("/api/v1/deployments", api.handleDeployments)
-	mux.HandleFunc("/api/v1/status", api.handleStatus)
-	mux.HandleFunc("/api/v1/events", api.handleEvents)
-	mux.HandleFunc("/api/v1/stream/node/", api.handleStreamNode)
-	mux.HandleFunc("/api/v1/stream/service/", api.handleStreamService)
-	mux.HandleFunc("/api/v1/stream/allocation/", api.handleStreamAllocation)
-	mux.HandleFunc("/api/v1/stream", api.handleStream)
-	mux.HandleFunc("/api/v1/autoscaler/events", api.handleAutoscalerEvents)
-	mux.HandleFunc("/api/v1/autoscaler/status", api.handleAutoscalerStatus)
-	mux.HandleFunc("/api/v1/logs/cluster", api.handleLogsCluster)
-	mux.HandleFunc("/api/v1/logs/allocation/", api.handleLogsAllocation)
-	mux.HandleFunc("/api/v1/logs/node/", api.handleLogsNode)
-	mux.HandleFunc("/metrics", api.handleMetrics)
+	// Root: cluster overview.
+	mux.HandleFunc("GET /{$}", api.handleCluster)
+
+	// Liveness + Prometheus scrape.
+	mux.HandleFunc("GET /health", api.handleHealth)
+	mux.HandleFunc("GET /metrics", api.handleMetrics)
+
+	// Cluster events / log stream.
+	mux.HandleFunc("GET /logs", api.handleClusterLogs)
+
+	// Nodes.
+	mux.HandleFunc("GET /nodes", api.handleNodes)
+	mux.HandleFunc("GET /nodes/{id}", api.handleNode)
+	mux.HandleFunc("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
+	mux.HandleFunc("POST /nodes/{id}/drain", api.handleNodeDrain)
+	mux.HandleFunc("POST /nodes/{id}/pause", api.handleNodePause)
+	mux.HandleFunc("GET /nodes/{id}/logs", api.handleNodeLogs)
+	mux.HandleFunc("GET /nodes/{id}/allocations", api.handleNodeAllocations)
+	mux.HandleFunc("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
+	mux.HandleFunc("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
+	mux.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", api.handleAllocationRestart)
+	mux.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", api.handleAllocationStop)
+
+	// Services.
+	mux.HandleFunc("GET /services", api.handleServices)
+	mux.HandleFunc("GET /services/{name}", api.handleService)
+	mux.HandleFunc("POST /services/{name}/scale", api.handleServiceScale)
+	mux.HandleFunc("GET /services/{name}/allocations", api.handleServiceAllocations)
+	mux.HandleFunc("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
+	mux.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
+	mux.HandleFunc("POST /services/{name}/deploy", api.handleServiceDeploy)
 
 	api.httpServer = &http.Server{
 		Addr:              api.addr,
@@ -75,7 +85,6 @@ func (api *API) Start(ctx context.Context) error {
 
 	<-ctx.Done()
 
-	// Graceful shutdown
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

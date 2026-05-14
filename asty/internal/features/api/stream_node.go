@@ -2,23 +2,18 @@ package api
 
 import (
 	"net/http"
-	"strings"
 
 	"asty/asty/internal/core/types"
 	autometrics "asty/asty/internal/features/autoscaling/metrics"
 )
 
-// handleStreamNode streams allocations + metrics for a single node.
-func (api *API) handleStreamNode(w http.ResponseWriter, r *http.Request) {
-	if !methodGuard(w, r, http.MethodGet) {
-		return
-	}
-	nodeID := strings.TrimPrefix(r.URL.Path, "/api/v1/stream/node/")
+// streamNode is the SSE companion to GET /nodes/{id}. Emits the
+// node's allocations + per-node CPU/Memory/RPS on every snapshot tick.
+func (api *API) streamNode(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if nodeID == "" {
 		http.Error(w, "node ID required", http.StatusBadRequest)
 		return
 	}
-
 	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
 		emitNodeView(w, snap, nodeID, api.ctx.MetricsStore().GetLatestRPS(nodeID))
 	})
