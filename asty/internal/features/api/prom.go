@@ -77,6 +77,7 @@ func (api *API) initProm() {
 	reg.MustRegister(newAllocCollector(api))
 	reg.MustRegister(newServiceCollector(api))
 	reg.MustRegister(newDeployCollector(api))
+	reg.MustRegister(newNATSCollector(api))
 
 	api.promHandler = promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
 }

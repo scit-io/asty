@@ -68,21 +68,42 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		}
 	}
 
+	a.natsStats.mu.RLock()
+	natsCPU := a.natsStats.cpuPercent
+	natsMem := a.natsStats.memoryMB
+	natsConn := a.natsStats.connections
+	natsSubs := a.natsStats.subscriptions
+	natsSlow := a.natsStats.slowConsumers
+	natsIn := a.natsStats.inMsgs
+	natsOut := a.natsStats.outMsgs
+	natsJSMsg := a.natsStats.jetStreamMessages
+	natsJSBytes := a.natsStats.jetStreamBytes
+	a.natsStats.mu.RUnlock()
+
 	return &types.NodeInfo{
-		ID:              a.nodeID,
-		Datacenter:      a.cfg.Datacenter,
-		IP:              nodeIP,
-		Status:          status,
-		LastSeen:        time.Now(),
-		CPUTotal:        cpuTotal,
-		CPUAvailable:    cpuAvail,
-		MemoryTotal:     memTotal,
-		MemoryAvailable: memAvail,
-		DiskTotal:       diskTotal,
-		DiskAvailable:   diskAvail,
-		SelfCPUPercent:  selfCPU,
-		SelfMemoryMB:    selfMem,
-		SelfDiskMB:      selfDisk,
-		Processes:       processes,
+		ID:                    a.nodeID,
+		Datacenter:            a.cfg.Datacenter,
+		IP:                    nodeIP,
+		Status:                status,
+		LastSeen:              time.Now(),
+		CPUTotal:              cpuTotal,
+		CPUAvailable:          cpuAvail,
+		MemoryTotal:           memTotal,
+		MemoryAvailable:       memAvail,
+		DiskTotal:             diskTotal,
+		DiskAvailable:         diskAvail,
+		SelfCPUPercent:        selfCPU,
+		SelfMemoryMB:          selfMem,
+		SelfDiskMB:            selfDisk,
+		NATSCPUPercent:        natsCPU,
+		NATSMemoryMB:          natsMem,
+		NATSConnections:       natsConn,
+		NATSSubscriptions:     natsSubs,
+		NATSSlowConsumers:     natsSlow,
+		NATSInMsgs:            natsIn,
+		NATSOutMsgs:           natsOut,
+		NATSJetStreamMessages: natsJSMsg,
+		NATSJetStreamBytes:    natsJSBytes,
+		Processes:             processes,
 	}
 }

@@ -47,6 +47,7 @@ type Agent struct {
 	metricsCollector   *metrics.Collector
 	artifactDownloader *artifacts.Downloader
 	clusterState       *state.ClusterState
+	natsStats          natsStats
 
 	workDir string
 
@@ -149,6 +150,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.publishHeartbeat(ctx)
 	go a.publishProcessMetrics(ctx)
 	go a.monitorProcesses(ctx)
+	go a.scrapeNATSLoop(ctx)
 
 	if err := a.runGateway(ctx); err != nil {
 		return fmt.Errorf("failed to start gateway: %w", err)

@@ -62,6 +62,19 @@ type NodeInfo struct {
 	SelfMemoryMB   int64   `json:"self_memory_mb"`
 	SelfDiskMB     int64   `json:"self_disk_mb"` // bytes-on-disk of work_dir (binaries + logs)
 
+	// NATS — stats scraped from the local NATS server's monitoring port.
+	// Zero values mean monitoring is unreachable; the UI/dashboards
+	// should render "N/A" rather than literal zeros in that case.
+	NATSCPUPercent        float64 `json:"nats_cpu_percent"`
+	NATSMemoryMB          int64   `json:"nats_memory_mb"`
+	NATSConnections       int     `json:"nats_connections"`
+	NATSSubscriptions     int     `json:"nats_subscriptions"`
+	NATSSlowConsumers     int64   `json:"nats_slow_consumers"`
+	NATSInMsgs            int64   `json:"nats_in_msgs"`  // monotonic counter
+	NATSOutMsgs           int64   `json:"nats_out_msgs"` // monotonic counter
+	NATSJetStreamMessages int64   `json:"nats_jetstream_messages"`
+	NATSJetStreamBytes    int64   `json:"nats_jetstream_bytes"` // JetStream on-disk size
+
 	// Processes
 	Processes []string `json:"processes"` // list of service names
 

@@ -23,6 +23,7 @@ func applyEnvOverrides(c *Config) {
 
 	envStr("A_NATS_HOST", &c.NATS.Host)
 	envStr("A_NATS_PORT", &c.NATS.Port)
+	envStr("A_NATS_MONITORING_PORT", &c.NATS.MonitoringPort)
 	envStr("A_NATS_USER", &c.NATS.User)
 	envStr("A_NATS_PASSWORD", &c.NATS.Password)
 

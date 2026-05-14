@@ -34,10 +34,11 @@ type Config struct {
 
 // NATSConfig — where the local NATS sits and how to authenticate.
 type NATSConfig struct {
-	Host     string `yaml:"host"`
-	Port     string `yaml:"port"`
-	User     string `yaml:"user"`
-	Password string `yaml:"password"`
+	Host           string `yaml:"host"`
+	Port           string `yaml:"port"`
+	MonitoringPort string `yaml:"monitoring_port"`
+	User           string `yaml:"user"`
+	Password       string `yaml:"password"`
 }
 
 // AutoscaleConfig — controller and scaling thresholds.
@@ -96,8 +97,9 @@ func defaults() *Config {
 		Datacenter: "dc1",
 		LogLevel:   "info",
 		NATS: NATSConfig{
-			Host: "127.0.0.1",
-			Port: "4222",
+			Host:           "127.0.0.1",
+			Port:           "4222",
+			MonitoringPort: "8222",
 		},
 		Autoscale: AutoscaleConfig{
 			MinCopies:           3,

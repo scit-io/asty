@@ -17,8 +17,9 @@ dev_mode: false     # Skip required-field validation (false — full validation,
 # In dev, start.sh overrides A_NATS_PORT per node so multiple agents
 # can coexist on the same machine without port conflicts.
 nats:
-  host: 127.0.0.1   # Local NATS server address (always loopback by design)
-  port: "4222"      # Local NATS server port (overridden per node in dev via A_NATS_PORT)
+  host: 127.0.0.1            # Local NATS server address (always loopback by design)
+  port: "4222"               # Local NATS server port (overridden per node in dev via A_NATS_PORT)
+  monitoring_port: "8222"    # NATS /varz /jsz endpoint (overridden per node in dev via A_NATS_MONITORING_PORT)
 
 # Autoscaler thresholds.
 # The controller evaluates these every eval_interval and decides

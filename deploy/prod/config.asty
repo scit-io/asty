@@ -17,8 +17,14 @@ dev_mode: false     # Skip required-field validation (false — required fields 
 # Every node runs a local NATS server — services always connect to localhost.
 # Credentials are injected via A_NATS_USER / A_NATS_PASSWORD env vars.
 nats:
-  host: 127.0.0.1   # Local NATS server address (always loopback by design)
-  port: "4222"      # Local NATS server port
+  host: 127.0.0.1            # Local NATS server address (always loopback by design)
+  port: "4222"               # Local NATS server port
+  # NATS /varz + /jsz endpoint scraped in-process by the agent to fill
+  # asty_node_nats_* / asty_cluster_nats_* metrics. Requires nats-server
+  # to be launched with `-m 8222` (or `http_port: 8222` in its own conf);
+  # without that the scraper logs a single warning and the NATS metric
+  # tiles in the UI render as zero.
+  monitoring_port: "8222"    # NATS HTTP monitoring port (must match nats-server's -m / http_port)
 
 # Autoscaler thresholds.
 # The controller evaluates these every eval_interval and decides whether

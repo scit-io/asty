@@ -218,7 +218,10 @@ start_asty() {
   local nats_host_port
   nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
   [[ -n "$nats_host_port" ]] || die "failed to detect NATS host port"
-  info "NATS host port: $nats_host_port"
+  local nats_monitor_port
+  nats_monitor_port=$(docker port dev-nats-1 8222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
+  [[ -n "$nats_monitor_port" ]] || die "failed to detect NATS monitoring host port"
+  info "NATS host port: $nats_host_port | monitoring: $nats_monitor_port"
 
   # Asty reads $SCRIPT_DIR/config.asty via -config; we only export the
   # per-node and secret bits that have to be runtime-different per node
@@ -247,12 +250,14 @@ start_asty() {
     local http_addr="$addr:8080"
 
     A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
+      A_NATS_MONITORING_PORT="$nats_monitor_port" \
       A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
       "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
     local server_pid=$!
     echo "$server_pid" >> "$PID_FILE"
 
     sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
+      A_NATS_MONITORING_PORT="$nats_monitor_port" \
       A_WORK_DIR="$DATA_BASE/work" \
       A_GATEWAY_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
       "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
