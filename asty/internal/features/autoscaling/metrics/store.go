@@ -5,7 +5,13 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
+	"asty/asty/internal/core/util/ringbuf"
 )
+
+// eventsCapacity caps the in-memory scaling-event history. 1000 covers
+// roughly a week at one decision per ~10 minutes; older events fall
+// off the back of the ring.
+const eventsCapacity = 1000
 
 // MetricPoint represents a single metric data point
 type MetricPoint struct {
@@ -31,14 +37,14 @@ type Store struct {
 	maxAge time.Duration
 
 	eventsMu sync.RWMutex
-	events   []ScalingEvent
+	events   *ringbuf.Ring[ScalingEvent]
 }
 
 func NewStore(maxAge time.Duration) *Store {
 	return &Store{
 		rps:    make(map[string][]MetricPoint),
 		maxAge: maxAge,
-		events: make([]ScalingEvent, 0, 1000),
+		events: ringbuf.New[ScalingEvent](eventsCapacity),
 	}
 }
 
@@ -102,7 +108,8 @@ func (s *Store) cleanOld(key string) {
 	s.rps[key] = points[keepFrom:]
 }
 
-// AddEvent records a scaling event.
+// AddEvent records a scaling event. Pushing past the ring's capacity
+// silently drops the oldest entry.
 func (s *Store) AddEvent(event ScalingEvent) {
 	s.eventsMu.Lock()
 	defer s.eventsMu.Unlock()
@@ -110,13 +117,12 @@ func (s *Store) AddEvent(event ScalingEvent) {
 	if event.Timestamp == 0 {
 		event.Timestamp = time.Now().Unix()
 	}
-	if len(s.events) >= 1000 {
-		s.events = s.events[1:]
-	}
-	s.events = append(s.events, event)
+	s.events.Push(event)
 }
 
-// GetEvents returns scaling events, newest first.
+// GetEvents returns scaling events, newest first, optionally filtered
+// by service. limit <= 0 falls back to 100 (the typical "tail" count
+// requested by the UI).
 func (s *Store) GetEvents(service string, limit int) []ScalingEvent {
 	s.eventsMu.RLock()
 	defer s.eventsMu.RUnlock()
@@ -124,10 +130,11 @@ func (s *Store) GetEvents(service string, limit int) []ScalingEvent {
 	if limit <= 0 {
 		limit = 100
 	}
-	var filtered []ScalingEvent
-	for i := len(s.events) - 1; i >= 0 && len(filtered) < limit; i-- {
-		if service == "" || s.events[i].Service == service {
-			filtered = append(filtered, s.events[i])
+	snap := s.events.Snapshot()
+	filtered := make([]ScalingEvent, 0, limit)
+	for i := len(snap) - 1; i >= 0 && len(filtered) < limit; i-- {
+		if service == "" || snap[i].Service == service {
+			filtered = append(filtered, snap[i])
 		}
 	}
 	return filtered
