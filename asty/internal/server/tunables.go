@@ -47,8 +47,8 @@ const (
 	// nodes the dev mode injects to demo scheduling without real
 	// agents. Picked to look like a small cloud VM (4 vCPU @ 1 GHz,
 	// 8 GiB RAM) with most of it free.
-	devMockNodeCPUTotal     = 4000
-	devMockNodeCPUAvail     = 3500
-	devMockNodeMemoryTotal  = 8192
-	devMockNodeMemoryAvail  = 6144
+	devMockNodeCPUTotal    = 4000
+	devMockNodeCPUAvail    = 3500
+	devMockNodeMemoryTotal = 8192
+	devMockNodeMemoryAvail = 6144
 )

@@ -201,11 +201,11 @@ type delayedItem struct {
 
 type delayedHeap []*delayedItem
 
-func (h delayedHeap) Len() int            { return len(h) }
-func (h delayedHeap) Less(i, j int) bool  { return h[i].ready.Before(h[j].ready) }
-func (h delayedHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *delayedHeap) Push(x interface{}) { *h = append(*h, x.(*delayedItem)) }
-func (h *delayedHeap) Pop() interface{} {
+func (h delayedHeap) Len() int           { return len(h) }
+func (h delayedHeap) Less(i, j int) bool { return h[i].ready.Before(h[j].ready) }
+func (h delayedHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *delayedHeap) Push(x any)        { *h = append(*h, x.(*delayedItem)) }
+func (h *delayedHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]

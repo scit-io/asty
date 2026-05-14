@@ -42,13 +42,13 @@ func emitServiceView(w http.ResponseWriter, snap *types.ClusterSnapshot, name st
 	if allocs == nil {
 		allocs = []*types.ServiceAllocation{}
 	}
-	sseEvent(w, "detail", mustJSON(map[string]interface{}{
+	sseEvent(w, "detail", mustJSON(map[string]any{
 		"service":     svcDef,
 		"allocations": allocs,
 	}))
 
 	now := snap.Timestamp
-	sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+	sseEvent(w, "metrics", mustJSON(map[string]any{
 		"cpu":               []autometrics.MetricPoint{{Timestamp: now, Value: avgCPU}},
 		"memory":            []autometrics.MetricPoint{{Timestamp: now, Value: avgMem}},
 		"allocations_count": []autometrics.MetricPoint{{Timestamp: now, Value: float64(running)}},

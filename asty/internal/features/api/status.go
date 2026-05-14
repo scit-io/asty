@@ -16,7 +16,7 @@ func (api *API) handleRoot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"service": "Asty Orchestrator",
 		"version": "0.1.0",
 		"api":     "/api/v1",
@@ -51,7 +51,7 @@ func (api *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"status":    "ok",
 		"timestamp": time.Now().Unix(),
 	}
@@ -84,15 +84,15 @@ func (api *API) handleStatus(w http.ResponseWriter, r *http.Request) {
 		leaderNodeID = leaderInfo.ID
 	}
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"cluster": map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
+		"cluster": map[string]any{
 			"leader":        leaderNodeID,
 			"leader_ip":     leaderInfo.IP,
 			"is_leader":     isLeader,
 			"nodes_total":   len(nodes),
 			"nodes_healthy": healthyNodes,
 		},
-		"services": map[string]interface{}{
+		"services": map[string]any{
 			"loaded": len(api.ctx.Services()),
 		},
 	})

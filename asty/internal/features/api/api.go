@@ -83,7 +83,7 @@ func (api *API) Start(ctx context.Context) error {
 }
 
 // writeJSON writes JSON response.
-func (api *API) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func (api *API) writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 
@@ -94,7 +94,7 @@ func (api *API) writeJSON(w http.ResponseWriter, status int, data interface{}) {
 
 // writeError writes JSON error response.
 func (api *API) writeError(w http.ResponseWriter, status int, message string, err error) {
-	response := map[string]interface{}{
+	response := map[string]any{
 		"error":  message,
 		"status": status,
 	}

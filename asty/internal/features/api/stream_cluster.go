@@ -72,17 +72,17 @@ func (api *API) handleStream(w http.ResponseWriter, r *http.Request) {
 // services, and aggregate cluster metrics. Pulled out so handleStream
 // stays readable.
 func (api *API) emitClusterSnapshot(w http.ResponseWriter, snap *types.ClusterSnapshot) {
-	sseEvent(w, "status", mustJSON(map[string]interface{}{
+	sseEvent(w, "status", mustJSON(map[string]any{
 		"cluster":   snap.Cluster,
-		"services":  map[string]interface{}{"loaded": len(snap.Services)},
+		"services":  map[string]any{"loaded": len(snap.Services)},
 		"timestamp": snap.Timestamp,
 	}))
-	sseEvent(w, "nodes", mustJSON(map[string]interface{}{"nodes": snap.Nodes}))
-	sseEvent(w, "services", mustJSON(map[string]interface{}{"services": snap.Services}))
+	sseEvent(w, "nodes", mustJSON(map[string]any{"nodes": snap.Nodes}))
+	sseEvent(w, "services", mustJSON(map[string]any{"services": snap.Services}))
 
 	cpu, mem, rps := api.aggregateClusterMetrics(snap)
 	now := snap.Timestamp
-	sseEvent(w, "cluster_metrics", mustJSON(map[string]interface{}{
+	sseEvent(w, "cluster_metrics", mustJSON(map[string]any{
 		"cpu":    []autometrics.MetricPoint{{Timestamp: now, Value: cpu}},
 		"memory": []autometrics.MetricPoint{{Timestamp: now, Value: mem}},
 		"rps":    []autometrics.MetricPoint{{Timestamp: now, Value: rps}},

@@ -139,4 +139,3 @@ func kvEnvForAllocation(svc *types.ServiceDefinition, kvEnv map[string]string) {
 func (s *Server) DiscoveredServersCount() int {
 	return len(s.nc.DiscoveredServers()) + 1
 }
-

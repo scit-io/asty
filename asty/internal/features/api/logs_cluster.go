@@ -21,7 +21,7 @@ func (api *API) handleLogsCluster(w http.ResponseWriter, r *http.Request) {
 		for i, e := range history {
 			lines[i] = e.Line
 		}
-		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		api.writeJSON(w, http.StatusOK, map[string]any{
 			"logs": lines, "line_count": len(lines),
 		})
 		return

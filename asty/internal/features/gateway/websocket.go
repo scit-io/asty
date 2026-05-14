@@ -197,4 +197,3 @@ func (gw *Gateway) wsReadLoop(ctx context.Context, conn *websocket.Conn, s *wsSe
 		}
 	}
 }
-

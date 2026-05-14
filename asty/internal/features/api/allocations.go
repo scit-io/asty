@@ -26,7 +26,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		api.writeJSON(w, http.StatusOK, map[string]any{
 			"service":     serviceName,
 			"allocations": allocs,
 			"count":       len(allocs),
@@ -36,7 +36,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 
 	if nodeID != "" {
 		allAllocs := api.allocsByNode(nodeID)
-		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		api.writeJSON(w, http.StatusOK, map[string]any{
 			"node_id":     nodeID,
 			"allocations": allAllocs,
 			"count":       len(allAllocs),
@@ -44,7 +44,7 @@ func (api *API) handleAllocations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"message": "use ?service=<name> or ?node_id=<id> to get allocations",
 	})
 }
@@ -112,7 +112,7 @@ func (api *API) handleAllocationRestart(w http.ResponseWriter, _ *http.Request, 
 		return
 	}
 	api.ctx.ReconcileService(alloc.ServiceName)
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"allocation_id": allocID,
 		"status":        types.AllocPending,
 	})
@@ -138,9 +138,8 @@ func (api *API) handleAllocationStop(w http.ResponseWriter, _ *http.Request, all
 		return
 	}
 	api.ctx.ReconcileService(alloc.ServiceName)
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"allocation_id": allocID,
 		"status":        "deleted",
 	})
 }
-

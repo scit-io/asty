@@ -123,4 +123,3 @@ func (gw *Gateway) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusServiceUnavailable)
 	_, _ = w.Write([]byte(`{"status":"error","nats":"disconnected"}`))
 }
-

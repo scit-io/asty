@@ -46,7 +46,7 @@ func (s *Server) startLogBuffering() {
 // Splitting it out keeps startLogBuffering focused on subscription wiring.
 func (s *Server) makeLogAppender() func(source string, data []byte) {
 	return func(source string, data []byte) {
-		var entry map[string]interface{}
+		var entry map[string]any
 		if err := json.Unmarshal(data, &entry); err != nil {
 			return
 		}

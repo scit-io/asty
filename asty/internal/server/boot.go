@@ -8,8 +8,8 @@ import (
 
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
-	autometrics "asty/asty/internal/features/autoscaling/metrics"
 	"asty/asty/internal/features/autoscaling"
+	autometrics "asty/asty/internal/features/autoscaling/metrics"
 	"asty/asty/internal/features/clustering/discovery"
 	"asty/asty/internal/features/clustering/leader"
 	"asty/asty/internal/features/clustering/state"

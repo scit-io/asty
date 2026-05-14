@@ -24,7 +24,7 @@ func (api *API) handleAutoscalerEvents(w http.ResponseWriter, r *http.Request) {
 
 	events := api.ctx.MetricsStore().GetEvents(service, limit)
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"events": events,
 		"count":  len(events),
 	})
@@ -37,7 +37,7 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := api.ctx.Config()
-	servicesStatus := make(map[string]interface{})
+	servicesStatus := make(map[string]any)
 	now := time.Now()
 
 	for _, svc := range api.ctx.Services() {
@@ -54,7 +54,7 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 			cooldown = cd.Status(now, cfg.Autoscale.CooldownUp, cfg.Autoscale.CooldownDown)
 		}
 
-		servicesStatus[svc.Name] = map[string]interface{}{
+		servicesStatus[svc.Name] = map[string]any{
 			"current_copies":       running,
 			"min_copies":           cfg.Autoscale.MinCopies,
 			"target_cpu":           cfg.Autoscale.TargetCPU,
@@ -67,7 +67,7 @@ func (api *API) handleAutoscalerStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"services": servicesStatus,
 	})
 }
@@ -79,7 +79,7 @@ func (api *API) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	events := api.ctx.EventBuffer().GetLast(200)
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"events": events,
 		"count":  len(events),
 	})

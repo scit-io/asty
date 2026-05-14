@@ -77,7 +77,7 @@ func (api *API) respondAllocSnapshot(w http.ResponseWriter, allocation *types.Se
 		api.writeError(w, http.StatusInternalServerError, "agent failed to retrieve logs", fmt.Errorf("%s", resp.Error))
 		return
 	}
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"allocation_id": allocID,
 		"service_name":  allocation.ServiceName,
 		"node_id":       allocation.NodeID,

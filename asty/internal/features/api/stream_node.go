@@ -29,11 +29,11 @@ func emitNodeView(w http.ResponseWriter, snap *types.ClusterSnapshot, nodeID str
 	if allocs == nil {
 		allocs = []*types.ServiceAllocation{}
 	}
-	sseEvent(w, "allocations", mustJSON(map[string]interface{}{"allocations": allocs}))
+	sseEvent(w, "allocations", mustJSON(map[string]any{"allocations": allocs}))
 
 	cpuPct, memPct := nodeUsagePercents(snap, nodeID)
 	now := snap.Timestamp
-	sseEvent(w, "metrics", mustJSON(map[string]interface{}{
+	sseEvent(w, "metrics", mustJSON(map[string]any{
 		"cpu":    []autometrics.MetricPoint{{Timestamp: now, Value: cpuPct}},
 		"memory": []autometrics.MetricPoint{{Timestamp: now, Value: memPct}},
 		"rps":    []autometrics.MetricPoint{{Timestamp: now, Value: rps}},

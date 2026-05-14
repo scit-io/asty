@@ -34,7 +34,7 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 		applyAllocCounts(node, counts)
 	}
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"nodes": nodes,
 		"count": len(nodes),
 	})
@@ -104,7 +104,7 @@ func (api *API) handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID s
 			api.writeError(w, http.StatusBadRequest, "resume failed", err)
 			return
 		}
-		api.writeJSON(w, http.StatusOK, map[string]interface{}{
+		api.writeJSON(w, http.StatusOK, map[string]any{
 			"node_id": nodeID,
 			"status":  "ready",
 			"message": "drain cancelled, node resumed",
@@ -160,7 +160,7 @@ func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request, nodeID s
 		api.writeError(w, http.StatusInternalServerError, "update node failed", err)
 		return
 	}
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"node_id": nodeID,
 		"status":  node.Status,
 	})

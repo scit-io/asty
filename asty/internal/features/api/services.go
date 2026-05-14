@@ -16,7 +16,7 @@ func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"services": api.ctx.Services(),
 		"count":    len(api.ctx.Services()),
 	})
@@ -64,7 +64,7 @@ func (api *API) handleServicesWithActions(w http.ResponseWriter, r *http.Request
 
 	allocs, _ := api.ctx.ClusterState().ListAllocations(serviceName)
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"service":     service,
 		"allocations": allocs,
 	})
@@ -135,10 +135,10 @@ func (api *API) handleServiceScale(w http.ResponseWriter, r *http.Request, servi
 	}
 
 	api.ctx.ReconcileService(serviceName)
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"service":     serviceName,
-		"desired":     req.Count,
-		"current":     len(live),
+	api.writeJSON(w, http.StatusOK, map[string]any{
+		"service": serviceName,
+		"desired": req.Count,
+		"current": len(live),
 	})
 }
 
@@ -200,7 +200,7 @@ func (api *API) handleDeployments(w http.ResponseWriter, r *http.Request) {
 
 	history := api.ctx.Deployer().GetHistory()
 
-	api.writeJSON(w, http.StatusOK, map[string]interface{}{
+	api.writeJSON(w, http.StatusOK, map[string]any{
 		"deployments": history,
 		"count":       len(history),
 	})

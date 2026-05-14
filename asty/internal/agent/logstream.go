@@ -51,7 +51,7 @@ func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 				log.Info().Str("service", serviceName).Msg("log channel closed, ending stream")
 				return
 			}
-			entry, err := json.Marshal(map[string]interface{}{
+			entry, err := json.Marshal(map[string]any{
 				"line":      line,
 				"timestamp": time.Now().Unix(),
 			})

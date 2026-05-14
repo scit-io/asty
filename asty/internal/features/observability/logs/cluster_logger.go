@@ -27,7 +27,7 @@ func (w *NATSWriter) Write(p []byte) (n int, err error) {
 		return len(p), nil
 	}
 
-	var entry map[string]interface{}
+	var entry map[string]any
 	if err := json.Unmarshal(p, &entry); err != nil {
 		return len(p), nil
 	}

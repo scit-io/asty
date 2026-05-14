@@ -40,7 +40,7 @@ func sseSetup(w http.ResponseWriter) http.Flusher {
 // formatLogEntry turns a parsed zerolog JSON entry into a readable
 // display string. Unknown fields are appended as a JSON object to keep
 // structured context visible without flooding the main line.
-func formatLogEntry(entry map[string]interface{}) string {
+func formatLogEntry(entry map[string]any) string {
 	level, _ := entry["level"].(string)
 	message, _ := entry["message"].(string)
 
@@ -58,7 +58,7 @@ func formatLogEntry(entry map[string]interface{}) string {
 
 	line := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
 
-	extra := make(map[string]interface{})
+	extra := make(map[string]any)
 	for k, v := range entry {
 		switch k {
 		case "level", "message", "time", "timestamp":
@@ -92,7 +92,7 @@ func readQueryLines(r *http.Request) int {
 // override this where they want stricter behaviour.
 func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher http.Flusher, subject string, fallthroughOnParse bool) {
 	sub, err := api.ctx.NATSConn().Subscribe(subject, func(msg *nats.Msg) {
-		var entry map[string]interface{}
+		var entry map[string]any
 		if err := json.Unmarshal(msg.Data, &entry); err != nil {
 			if fallthroughOnParse {
 				fmt.Fprintf(w, "data: %s\n\n", msg.Data)
@@ -101,7 +101,7 @@ func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher h
 			return
 		}
 		line := formatLogEntry(entry)
-		data, _ := json.Marshal(map[string]interface{}{"line": line, "timestamp": entry["timestamp"]})
+		data, _ := json.Marshal(map[string]any{"line": line, "timestamp": entry["timestamp"]})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	})
@@ -119,7 +119,7 @@ func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher h
 // with history before the live tail starts.
 func (api *API) emitBufferedLines(w http.ResponseWriter, source string, lines int) {
 	for _, entry := range api.ctx.LogBuffer().GetLast(source, lines) {
-		data, _ := json.Marshal(map[string]interface{}{"line": entry.Line, "timestamp": entry.Timestamp})
+		data, _ := json.Marshal(map[string]any{"line": entry.Line, "timestamp": entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 }

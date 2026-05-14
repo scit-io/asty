@@ -194,4 +194,3 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		AllocByID:       allocByID,
 	}
 }
-

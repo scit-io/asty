@@ -20,6 +20,6 @@ func (api *API) handleStreamAllocation(w http.ResponseWriter, r *http.Request) {
 
 	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
 		alloc := snap.AllocByID[allocID]
-		sseEvent(w, "detail", mustJSON(map[string]interface{}{"allocation": alloc}))
+		sseEvent(w, "detail", mustJSON(map[string]any{"allocation": alloc}))
 	})
 }
