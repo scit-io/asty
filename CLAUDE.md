@@ -50,6 +50,15 @@ by `npm outdated` and must be done deliberately (e.g. Tailwind 3 → 4
 needs a config-and-class migration, not just a version line). Surface
 those to the user before applying.
 
+**No vendoring.** `vendor/` stays gitignored. We rely on
+`proxy.golang.org` — Google's promise is that any module version
+fetched through the proxy is cached permanently, so even abandoned
+indirect deps (e.g. `github.com/munnerz/goautoneg`, pulled in via
+`prometheus/common/expfmt`) won't break a future build. If supply-
+chain isolation ever becomes critical, the surgical move is a per-
+module `replace` directive in `go.mod` into `third_party/<name>/`,
+not a 190 MB blanket vendor.
+
 **Daily-update protocol:** at the first prompt of each new day, check
 all three surfaces and offer the user a one-shot bump:
 
