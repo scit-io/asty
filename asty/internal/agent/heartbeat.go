@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -74,10 +75,12 @@ func (a *Agent) pushOneMetricsSample() {
 		}
 		cpu := int(m.CPUPercent)
 		mem := int(m.MemoryMB)
+		disk := dirSizeMB(filepath.Join(a.workDir, name))
 		health := a.healthChecker.HealthStatus(name)
 		err := a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
 			alloc.CPUUsage = cpu
 			alloc.MemoryUsage = mem
+			alloc.DiskUsage = disk
 			if health != types.HealthUnknown {
 				alloc.HealthStatus = health
 			}

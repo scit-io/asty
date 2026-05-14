@@ -137,6 +137,7 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	go a.healthChecker.Start(ctx)
 	go a.metricsCollector.Start(ctx)
+	a.metricsCollector.Register(os.Getpid(), "asty-agent")
 
 	if err := a.subscribeCommands(); err != nil {
 		return fmt.Errorf("failed to subscribe to commands: %w", err)

@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/rs/zerolog/log"
 )
@@ -62,4 +63,28 @@ func detectMemoryMB() int64 {
 	}
 
 	return bytes / (1024 * 1024)
+}
+
+// detectDiskMB inspects the filesystem hosting `path` and reports total
+// and available space in MB. Falls back to (0, 0) if statfs fails — the
+// UI renders empty tiles instead of bogus numbers in that case.
+// A_DISK_TOTAL overrides the total, mirroring A_CPU_TOTAL / A_MEMORY_TOTAL.
+func detectDiskMB(path string) (total, available int64) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		log.Warn().Err(err).Str("path", path).Msg("statfs failed; disk metrics unavailable")
+		return 0, 0
+	}
+	const mib = 1024 * 1024
+	bsize := int64(st.Bsize)
+	total = int64(st.Blocks) * bsize / mib
+	available = int64(st.Bavail) * bsize / mib
+
+	if override := os.Getenv("A_DISK_TOTAL"); override != "" {
+		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
+			log.Info().Int64("disk_mb", val).Msg("using Disk override from A_DISK_TOTAL")
+			total = val
+		}
+	}
+	return total, available
 }

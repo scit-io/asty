@@ -45,6 +45,7 @@ type ServiceAllocation struct {
 	HealthStatus        HealthState      `json:"health_status"`
 	CPUUsage            int              `json:"cpu_usage"`    // percentage
 	MemoryUsage         int              `json:"memory_usage"` // MB
+	DiskUsage           int64            `json:"disk_usage"`   // MB, bytes-on-disk under <work_dir>/<service>
 	Restarts            int              `json:"restarts"`
 	ConsecutiveFailures int              `json:"consecutive_failures"`
 	CreatedAt           time.Time        `json:"created_at"`

@@ -52,6 +52,15 @@ type NodeInfo struct {
 	CPUAvailable    int   `json:"cpu_available"`
 	MemoryTotal     int64 `json:"memory_total"`     // MB
 	MemoryAvailable int64 `json:"memory_available"`
+	DiskTotal       int64 `json:"disk_total"`       // MB, capacity of the filesystem hosting work_dir
+	DiskAvailable   int64 `json:"disk_available"`   // MB
+
+	// Self — resource use of the asty agent process itself on this node.
+	// Sampled by the agent so the UI can show "Asty CPU/RAM/Disk" tiles
+	// separately from the services it manages.
+	SelfCPUPercent float64 `json:"self_cpu_percent"`
+	SelfMemoryMB   int64   `json:"self_memory_mb"`
+	SelfDiskMB     int64   `json:"self_disk_mb"` // bytes-on-disk of work_dir (binaries + logs)
 
 	// Processes
 	Processes []string `json:"processes"` // list of service names

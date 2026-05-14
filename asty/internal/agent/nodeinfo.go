@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"os"
 	"time"
 
 	"asty/asty/internal/core/netutil"
@@ -40,6 +41,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 
 	cpuTotal := detectCPUMHz()
 	memTotal := detectMemoryMB()
+	diskTotal, diskAvail := detectDiskMB(a.workDir)
 
 	cpuAvail := cpuTotal - cpuUsed
 	if cpuAvail < 0 {
@@ -49,6 +51,14 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	if memAvail < 0 {
 		memAvail = 0
 	}
+
+	var selfCPU float64
+	var selfMem int64
+	if m, ok := a.metricsCollector.GetMetrics(os.Getpid()); ok {
+		selfCPU = m.CPUPercent
+		selfMem = m.MemoryMB
+	}
+	selfDisk := dirSizeMB(a.workDir)
 
 	status := types.NodeReady
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
@@ -68,6 +78,11 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		CPUAvailable:    cpuAvail,
 		MemoryTotal:     memTotal,
 		MemoryAvailable: memAvail,
+		DiskTotal:       diskTotal,
+		DiskAvailable:   diskAvail,
+		SelfCPUPercent:  selfCPU,
+		SelfMemoryMB:    selfMem,
+		SelfDiskMB:      selfDisk,
 		Processes:       processes,
 	}
 }
