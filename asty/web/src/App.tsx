@@ -10,6 +10,8 @@ import ServiceDetail from '@/pages/service-detail'
 import Services from '@/pages/services'
 import ServiceOverview from '@/pages/service-overview'
 import Nodes from '@/pages/nodes'
+import NodeAllocations from '@/pages/node-allocations'
+import NodeLogs from '@/pages/node-logs'
 import ClusterLogs from '@/pages/logs'
 import Placeholder from '@/pages/placeholder'
 
@@ -33,8 +35,8 @@ export default function App() {
 
             {/* Node section */}
             <Route path="/nodes/:nodeId" element={<NodeDetail />} />
-            <Route path="/nodes/:nodeId/allocations" element={<Placeholder title="Node Allocations" phase="D.4" />} />
-            <Route path="/nodes/:nodeId/logs" element={<Placeholder title="Node Logs" phase="D.4" />} />
+            <Route path="/nodes/:nodeId/allocations" element={<NodeAllocations />} />
+            <Route path="/nodes/:nodeId/logs" element={<NodeLogs />} />
 
             {/* Allocation section (URL parent is /nodes/...) */}
             <Route path="/nodes/:nodeId/allocations/:allocId" element={<ServiceDetail />} />
