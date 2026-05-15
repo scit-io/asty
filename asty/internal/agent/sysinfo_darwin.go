@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"asty/asty/internal/core/types"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -88,3 +90,69 @@ func detectDiskMB(path string) (total, available int64) {
 	}
 	return total, available
 }
+
+// detectSwapMB inspects the system swap (sysctl vm.swapusage) and
+// reports total + available space in MB. Falls back to (0, 0) on
+// failure. A_SWAP_TOTAL overrides the total (and pins available =
+// total) — handy in dev when we want a fake swap budget regardless
+// of what the host actually has.
+func detectSwapMB() (total, available int64) {
+	out, err := exec.Command("sysctl", "-n", "vm.swapusage").Output()
+	if err == nil {
+		// Format: "total = 5120.00M  used = 3168.00M  free = 1952.00M  (encrypted)"
+		fields := strings.Fields(string(out))
+		var used int64
+		for i, f := range fields {
+			switch f {
+			case "total":
+				total = parseSwapField(fields, i)
+			case "used":
+				used = parseSwapField(fields, i)
+			case "free":
+				available = parseSwapField(fields, i)
+			}
+		}
+		if available == 0 && total > 0 {
+			available = total - used
+		}
+	}
+
+	if override := os.Getenv("A_SWAP_TOTAL"); override != "" {
+		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val >= 0 {
+			log.Info().Int64("swap_mb", val).Msg("using Swap override from A_SWAP_TOTAL")
+			total = val
+			available = val
+		}
+	}
+	return total, available
+}
+
+// parseSwapField pulls "5120.00M" out of vm.swapusage's "k = vvvv.vvU"
+// triplet at index i (the key). Drops the trailing M/G suffix.
+func parseSwapField(fields []string, i int) int64 {
+	if i+2 >= len(fields) {
+		return 0
+	}
+	v := strings.TrimRight(fields[i+2], "MG")
+	mult := int64(1)
+	if strings.HasSuffix(fields[i+2], "G") {
+		mult = 1024
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil {
+		return int64(f) * mult
+	}
+	return 0
+}
+
+// detectDiskType reports the physical class (ssd | hdd | unknown) of
+// the disk hosting the agent work_dir. On macOS we default to ssd —
+// every shipping Mac since 2018 is solid-state, and parsing diskutil
+// output reliably is more work than it's worth. A_DISK_TYPE overrides.
+func detectDiskType() types.DiskType {
+	if override := os.Getenv("A_DISK_TYPE"); override != "" {
+		log.Info().Str("disk_type", override).Msg("using DiskType override from A_DISK_TYPE")
+		return normaliseDiskType(override)
+	}
+	return types.DiskSSD
+}
+

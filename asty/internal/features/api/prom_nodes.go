@@ -19,6 +19,9 @@ type nodeCollector struct {
 	memoryAvail    *prometheus.Desc
 	diskTotal      *prometheus.Desc
 	diskAvail      *prometheus.Desc
+	diskType       *prometheus.Desc
+	swapTotal      *prometheus.Desc
+	swapAvail      *prometheus.Desc
 	allocsRunning  *prometheus.Desc
 	allocsPlanned  *prometheus.Desc
 	status         *prometheus.Desc
@@ -30,6 +33,7 @@ type nodeCollector struct {
 func newNodeCollector(api *API) *nodeCollector {
 	common := []string{"node_id", "datacenter"}
 	statusLabels := []string{"node_id", "datacenter", "status"}
+	diskTypeLabels := []string{"node_id", "datacenter", "disk_type"}
 	return &nodeCollector{
 		api: api,
 		cpuTotal: prometheus.NewDesc("asty_node_cpu_total_mhz",
@@ -44,6 +48,12 @@ func newNodeCollector(api *API) *nodeCollector {
 			"Total capacity of the filesystem hosting the agent work_dir, in MB.", common, nil),
 		diskAvail: prometheus.NewDesc("asty_node_disk_available_mb",
 			"Available space on the filesystem hosting the agent work_dir, in MB.", common, nil),
+		diskType: prometheus.NewDesc("asty_node_disk_type",
+			"Physical disk class of the node; value is always 1 — the meaning lives on the `disk_type` label (ssd|hdd|unknown).", diskTypeLabels, nil),
+		swapTotal: prometheus.NewDesc("asty_node_swap_total_mb",
+			"Total swap configured on the node, in MB.", common, nil),
+		swapAvail: prometheus.NewDesc("asty_node_swap_available_mb",
+			"Swap currently free on the node, in MB.", common, nil),
 		allocsRunning: prometheus.NewDesc("asty_node_allocations_running",
 			"Allocations currently in the running state on the node.", common, nil),
 		allocsPlanned: prometheus.NewDesc("asty_node_allocations_planned",
@@ -66,6 +76,9 @@ func (c *nodeCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.memoryAvail
 	ch <- c.diskTotal
 	ch <- c.diskAvail
+	ch <- c.diskType
+	ch <- c.swapTotal
+	ch <- c.swapAvail
 	ch <- c.allocsRunning
 	ch <- c.allocsPlanned
 	ch <- c.status
@@ -94,6 +107,8 @@ func (c *nodeCollector) emit(ch chan<- prometheus.Metric, n *types.NodeInfo) {
 	g(c.memoryAvail, float64(n.MemoryAvailable))
 	g(c.diskTotal, float64(n.DiskTotal))
 	g(c.diskAvail, float64(n.DiskAvailable))
+	g(c.swapTotal, float64(n.SwapTotal))
+	g(c.swapAvail, float64(n.SwapAvailable))
 	g(c.allocsRunning, float64(n.AllocationsRunning))
 	g(c.allocsPlanned, float64(n.AllocationsPlanned))
 	g(c.selfCPUPercent, n.SelfCPUPercent)
@@ -102,4 +117,11 @@ func (c *nodeCollector) emit(ch chan<- prometheus.Metric, n *types.NodeInfo) {
 
 	ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 1,
 		n.ID, n.Datacenter, string(n.Status))
+
+	dt := n.DiskType
+	if dt == "" {
+		dt = types.DiskUnknown
+	}
+	ch <- prometheus.MustNewConstMetric(c.diskType, prometheus.GaugeValue, 1,
+		n.ID, n.Datacenter, string(dt))
 }

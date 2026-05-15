@@ -38,6 +38,23 @@ const (
 	NodeDeleted NodeStatus = "deleted"
 )
 
+// DiskType is the physical class of the disk hosting work_dir. Typed
+// string so the wire format stays human-readable and JSON-stable
+// while the compiler catches stray literals.
+type DiskType string
+
+const (
+	// DiskUnknown — agent couldn't determine the disk class
+	// (no /sys/block on Linux, diskutil failed on macOS, etc.).
+	DiskUnknown DiskType = "unknown"
+
+	// DiskSSD — solid-state device (NVMe, SATA SSD, eMMC).
+	DiskSSD DiskType = "ssd"
+
+	// DiskHDD — rotational (spinning) drive.
+	DiskHDD DiskType = "hdd"
+)
+
 // NodeInfo represents information about a cluster node.
 type NodeInfo struct {
 	ID         string     `json:"id"`
@@ -54,6 +71,9 @@ type NodeInfo struct {
 	MemoryAvailable int64 `json:"memory_available"`
 	DiskTotal       int64 `json:"disk_total"`       // MB, capacity of the filesystem hosting work_dir
 	DiskAvailable   int64 `json:"disk_available"`   // MB
+	DiskType        DiskType `json:"disk_type"`     // ssd | hdd | unknown
+	SwapTotal       int64 `json:"swap_total"`       // MB
+	SwapAvailable   int64 `json:"swap_available"`   // MB
 
 	// Self — resource use of the asty agent process itself on this node.
 	// Sampled by the agent so the UI can show "Asty CPU/RAM/Disk" tiles

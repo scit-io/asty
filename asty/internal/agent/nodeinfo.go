@@ -42,15 +42,8 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	cpuTotal := detectCPUMHz()
 	memTotal := detectMemoryMB()
 	diskTotal, diskAvail := detectDiskMB(a.workDir)
-
-	cpuAvail := cpuTotal - cpuUsed
-	if cpuAvail < 0 {
-		cpuAvail = 0
-	}
-	memAvail := memTotal - memUsed
-	if memAvail < 0 {
-		memAvail = 0
-	}
+	swapTotal, swapAvail := detectSwapMB()
+	diskType := detectDiskType()
 
 	var selfCPU float64
 	var selfMem int64
@@ -59,6 +52,18 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		selfMem = m.MemoryMB
 	}
 	selfDisk := dirSizeMB(a.workDir)
+
+	// When A_DISK_TOTAL fakes the disk size (dev), the real-filesystem
+	// `available` from statfs is unrelated to the fake total — it
+	// reflects the entire host volume, not the pretend-node disk.
+	// Recompute available as (fake total − actual agent footprint) so
+	// usage tracks what Asty really occupies under work_dir.
+	if os.Getenv("A_DISK_TOTAL") != "" {
+		diskAvail = diskTotal - selfDisk
+		if diskAvail < 0 {
+			diskAvail = 0
+		}
+	}
 
 	status := types.NodeReady
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
@@ -80,6 +85,23 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	natsJSBytes := a.natsStats.jetStreamBytes
 	a.natsStats.mu.RUnlock()
 
+	// Total used = managed processes + Asty agent + local NATS server.
+	// CPU sums in MHz (selfCPU/natsCPU are %, converted with the same
+	// factor as the per-process loop). OS overhead stays outside this
+	// accounting — fixing that needs a real MemAvailable reader from
+	// /proc/meminfo (Linux) / vm_stat (Darwin).
+	cpuUsed += int(selfCPU*cpuPctToMHzFactor) + int(natsCPU*cpuPctToMHzFactor)
+	memUsed += selfMem + natsMem
+
+	cpuAvail := cpuTotal - cpuUsed
+	if cpuAvail < 0 {
+		cpuAvail = 0
+	}
+	memAvail := memTotal - memUsed
+	if memAvail < 0 {
+		memAvail = 0
+	}
+
 	return &types.NodeInfo{
 		ID:                    a.nodeID,
 		Datacenter:            a.cfg.Datacenter,
@@ -92,6 +114,9 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		MemoryAvailable:       memAvail,
 		DiskTotal:             diskTotal,
 		DiskAvailable:         diskAvail,
+		DiskType:              diskType,
+		SwapTotal:             swapTotal,
+		SwapAvailable:         swapAvail,
 		SelfCPUPercent:        selfCPU,
 		SelfMemoryMB:          selfMem,
 		SelfDiskMB:            selfDisk,

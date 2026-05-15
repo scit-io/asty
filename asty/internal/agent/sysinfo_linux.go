@@ -8,6 +8,8 @@ import (
 	"strings"
 	"syscall"
 
+	"asty/asty/internal/core/types"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -101,4 +103,81 @@ func detectDiskMB(path string) (total, available int64) {
 		}
 	}
 	return total, available
+}
+
+// detectSwapMB reads SwapTotal/SwapFree from /proc/meminfo and returns
+// them in MB. Falls back to (0, 0) if the file is unreadable or both
+// entries are missing. A_SWAP_TOTAL overrides total (and pins available
+// = total) — handy in dev to fake a swap budget on a swap-less host.
+func detectSwapMB() (total, available int64) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) < 2 {
+				continue
+			}
+			kb, perr := strconv.ParseInt(fields[1], 10, 64)
+			if perr != nil {
+				continue
+			}
+			switch fields[0] {
+			case "SwapTotal:":
+				total = kb / 1024
+			case "SwapFree:":
+				available = kb / 1024
+			}
+		}
+	}
+
+	if override := os.Getenv("A_SWAP_TOTAL"); override != "" {
+		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val >= 0 {
+			log.Info().Int64("swap_mb", val).Msg("using Swap override from A_SWAP_TOTAL")
+			total = val
+			available = val
+		}
+	}
+	return total, available
+}
+
+// detectDiskType walks /sys/block to classify the host's storage. Any
+// non-rotational device flips the result to SSD; we report HDD only
+// when every block device reports rotational=1. This is a reasonable
+// approximation in containerised dev too: the host's /sys is exposed
+// read-only and reflects real hardware. A_DISK_TYPE overrides.
+func detectDiskType() types.DiskType {
+	if override := os.Getenv("A_DISK_TYPE"); override != "" {
+		log.Info().Str("disk_type", override).Msg("using DiskType override from A_DISK_TYPE")
+		return normaliseDiskType(override)
+	}
+
+	entries, err := os.ReadDir("/sys/block")
+	if err != nil {
+		return types.DiskUnknown
+	}
+	sawRot, sawNonRot := false, false
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "loop") || strings.HasPrefix(name, "ram") {
+			continue
+		}
+		b, err := os.ReadFile("/sys/block/" + name + "/queue/rotational")
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(string(b)) {
+		case "0":
+			sawNonRot = true
+		case "1":
+			sawRot = true
+		}
+	}
+	switch {
+	case sawNonRot:
+		return types.DiskSSD
+	case sawRot:
+		return types.DiskHDD
+	default:
+		return types.DiskUnknown
+	}
 }

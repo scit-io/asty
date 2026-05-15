@@ -126,7 +126,8 @@ export default function NodeDetail() {
           <MetricTile className="col-span-6 lg:col-span-3"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
             usage={node.disk_total - node.disk_available} total={node.disk_total}
-            unit="" format={formatMB} />
+            unit={node.disk_type === 'ssd' || node.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''}
+            format={formatMB} />
           <StatusTile className="col-span-6 lg:col-span-3"
             title="RPS" icon={<Activity className="h-4 w-4" />}
             value={Math.round(rps)} hint="Requests per second" />

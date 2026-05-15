@@ -219,8 +219,8 @@ extension stays orderly:
 
 | Prefix | Scope | Labels | Examples |
 |---|---|---|---|
-| `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded`, `cpu_total_mhz`, `cpu_available_mhz`, `cpu_used_mhz`, `memory_total_mb`, `memory_available_mb`, `memory_used_mb`, `disk_total_mb`, `disk_available_mb`, `disk_used_mb`, `rps`, `health_percent` |
-| `asty_node_*` | per-node | `node_id`, `datacenter` (+ `status` on `_status`) | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `memory_available_mb`, `disk_total_mb`, `disk_available_mb`, `allocations_running`, `allocations_planned`, `status`, `self_cpu_percent`, `self_memory_mb`, `self_disk_mb` |
+| `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded`, `cpu_total_mhz`, `cpu_available_mhz`, `cpu_used_mhz`, `memory_total_mb`, `memory_available_mb`, `memory_used_mb`, `disk_total_mb`, `disk_available_mb`, `disk_used_mb`, `disks_ssd`, `disks_hdd`, `disks_unknown`, `swap_total_mb`, `swap_available_mb`, `swap_used_mb`, `rps`, `health_percent` |
+| `asty_node_*` | per-node | `node_id`, `datacenter` (+ `status` on `_status`, + `disk_type` on `_disk_type`) | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `memory_available_mb`, `disk_total_mb`, `disk_available_mb`, `disk_type`, `swap_total_mb`, `swap_available_mb`, `allocations_running`, `allocations_planned`, `status`, `self_cpu_percent`, `self_memory_mb`, `self_disk_mb` |
 | `asty_service_*` | per-service | `service` | `copies_current`, `min_copies`, `cpu_avg_percent`, `memory_avg_mb`, `cooldown_up_active`, `cooldown_down_active` |
 | `asty_alloc_*` | per-allocation | `service`, `node_id`, `alloc_id` (+ `state` on `_health`, `status` on `_status`) | `cpu_percent`, `memory_mb`, `disk_mb`, `restarts_total`, `uptime_seconds`, `health`, `status` |
 | `asty_deploy_*` | per-deployment | `service` (+ `state` on `_state`) | `state`, `progress_percent` |
@@ -258,7 +258,8 @@ Without `-config`, the default `./config.asty` is consulted and a missing file i
 - `A_NATS_HOST`, `A_NATS_PORT`, `A_NATS_MONITORING_PORT`, `A_NATS_USER`, `A_NATS_PASSWORD`
 - `A_MIN_COPIES`, `A_TARGET_CPU`, `A_TARGET_MEMORY`, `A_TRAFFIC_RPS_THRESHOLD`, `A_EVAL_INTERVAL`, `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`
 - `A_UI_ADDR`, `A_WORK_DIR`, `A_SERVICE_DIR`
-- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` / `A_DISK_TOTAL` — override auto-detected node capacity
+- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` / `A_DISK_TOTAL` / `A_SWAP_TOTAL` — override auto-detected node capacity (the swap override pins available = total)
+- `A_DISK_TYPE` — override auto-detected disk class (`ssd` | `hdd`; anything else collapses to `unknown`). Useful in dev to fake a heterogeneous cluster.
 
 **Gateway-specific env vars** (override fields under `gateway:`; all
 use the `A_GATEWAY_*` namespace so `A_HTTP_*` unambiguously belongs to

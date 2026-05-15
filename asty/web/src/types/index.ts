@@ -9,6 +9,9 @@ export interface Node {
   memory_available: number   // MB
   disk_total: number         // MB
   disk_available: number     // MB
+  disk_type: 'ssd' | 'hdd' | 'unknown'
+  swap_total: number         // MB
+  swap_available: number     // MB
   // Asty agent process itself
   self_cpu_percent: number
   self_memory_mb: number

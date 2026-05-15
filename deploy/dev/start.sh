@@ -228,10 +228,15 @@ start_asty() {
   # (NodeID/IP/Ports) or kept out of the checked-in YAML (secrets).
   local config_file="$SCRIPT_DIR/config.asty"
 
-  # sudo (agent) needs A_CPU_TOTAL/A_MEMORY_TOTAL from the parent
-  # environment; sudo -E preserves them.
+  # sudo (agent) needs A_CPU_TOTAL/A_MEMORY_TOTAL/A_DISK_TOTAL/A_SWAP_TOTAL
+  # from the parent environment; sudo -E preserves them.
   export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"
   export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}"
+  # Per-node fake disk budget: 20 GiB (20480 MiB). Aligns prod-style
+  # capacity planning with a small dev footprint.
+  export A_DISK_TOTAL="${A_DISK_TOTAL:-20480}"
+  # 1 GiB swap — Red Hat's "swap ≈ 5% of disk" rule for a 20 GiB volume.
+  export A_SWAP_TOTAL="${A_SWAP_TOTAL:-1024}"
 
   # Each node runs server + agent — both attach to the same NATS endpoint.
   # sudo is required to bind port 80 (the gateway).
@@ -249,6 +254,12 @@ start_asty() {
     local gw_metrics="$addr:8081"
     local http_addr="$addr:8080"
 
+    # Random disk type per node so the cluster aggregates exercise
+    # both ssd and hdd branches. Server inherits no disk-type env —
+    # only the agent reports physical hardware.
+    local disk_type
+    if (( RANDOM % 2 == 0 )); then disk_type="ssd"; else disk_type="hdd"; fi
+
     A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
       A_NATS_MONITORING_PORT="$nats_monitor_port" \
       A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
@@ -260,11 +271,12 @@ start_asty() {
       A_NATS_MONITORING_PORT="$nats_monitor_port" \
       A_WORK_DIR="$DATA_BASE/work" \
       A_GATEWAY_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
+      A_DISK_TYPE="$disk_type" \
       "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
     local agent_pid=$!
     echo "$agent_pid" >> "$PID_FILE"
 
-    info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | server PID=$server_pid | agent PID=$agent_pid"
+    info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
     info "  logs: $server_log | $agent_log"
     # Pause so JetStream confirms the KV bucket before the next agent
     # races to (re)create it — without it: "nats: no response from stream".
