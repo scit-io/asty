@@ -17,8 +17,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 466M
+          cpus: "${A_DOCKER_CPUS}"
+          memory: ${A_MEMORY_TOTAL}M
     networks:
       - asty
 
@@ -35,8 +35,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 466M
+          cpus: "${A_DOCKER_CPUS}"
+          memory: ${A_MEMORY_TOTAL}M
     networks:
       - asty
 

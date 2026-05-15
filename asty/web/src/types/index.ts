@@ -26,6 +26,7 @@ export interface Node {
   nats_out_msgs: number
   nats_jetstream_messages: number
   nats_jetstream_bytes: number
+  nats_disk_mb: number
   processes: string[]
   created_at: string
   last_seen: string

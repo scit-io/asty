@@ -226,7 +226,7 @@ extension stays orderly:
 | `asty_deploy_*` | per-deployment | `service` (+ `state` on `_state`) | `state`, `progress_percent` |
 | `asty_leader` | leader-election state | `node_id` | 1 on the current leader; the row simply doesn't exist on followers because /metrics is only served on the leader's API |
 | `gateway_*` | gateway-internal | as-needed | `http_requests_total`, `http_request_duration_seconds`, `ws_connections_active`, `rate_limit_rejected_total`, `nats_request_duration_seconds`, `nats_request_attempts_total` |
-| `asty_node_nats_*` | scraped from local NATS `/varz` + `/jsz` | `node_id`, `datacenter` | `cpu_percent`, `memory_mb`, `connections`, `subscriptions`, `slow_consumers`, `in_msgs_total` (counter), `out_msgs_total` (counter), `jetstream_messages`, `jetstream_bytes` |
+| `asty_node_nats_*` | scraped from local NATS `/varz` + `/jsz` | `node_id`, `datacenter` | `cpu_percent`, `memory_mb`, `connections`, `subscriptions`, `slow_consumers`, `in_msgs_total` (counter), `out_msgs_total` (counter), `jetstream_messages`, `jetstream_bytes`, `disk_mb` (binary baseline + JS bytes) |
 | `asty_cluster_nats_*` | per-cluster NATS aggregates | none | `connections`, `jetstream_messages`, `jetstream_bytes` |
 | `nats_*` | exported on the gateway's `:8081/metrics` from request-reply round-trip instrumentation | as-needed | `nats_request_duration_seconds`, `nats_request_attempts_total` |
 
@@ -258,7 +258,8 @@ Without `-config`, the default `./config.asty` is consulted and a missing file i
 - `A_NATS_HOST`, `A_NATS_PORT`, `A_NATS_MONITORING_PORT`, `A_NATS_USER`, `A_NATS_PASSWORD`
 - `A_MIN_COPIES`, `A_TARGET_CPU`, `A_TARGET_MEMORY`, `A_TRAFFIC_RPS_THRESHOLD`, `A_EVAL_INTERVAL`, `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`
 - `A_UI_ADDR`, `A_WORK_DIR`, `A_SERVICE_DIR`
-- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` / `A_DISK_TOTAL` / `A_SWAP_TOTAL` — override auto-detected node capacity (the swap override pins available = total)
+- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` / `A_DISK_TOTAL` / `A_SWAP_TOTAL` — override auto-detected node capacity. In dev with these set, the agent synthesizes "used" from components Asty observes (managed processes + agent + NATS); in prod (unset) it reads system-wide counters (`/proc/meminfo` `MemAvailable`, `/proc/stat` deltas, real `statfs`).
+- `A_DISK_OS_BASELINE` — override the synthetic OS-footprint baseline on the fake dev disk (MB). Defaults to 20% of `A_DISK_TOTAL`. Only meaningful when `A_DISK_TOTAL` is set.
 - `A_DISK_TYPE` — override auto-detected disk class (`ssd` | `hdd`; anything else collapses to `unknown`). Useful in dev to fake a heterogeneous cluster.
 
 **Gateway-specific env vars** (override fields under `gateway:`; all

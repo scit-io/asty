@@ -160,7 +160,7 @@ export default function NodeDetail() {
           </Card>
           <Card className="col-span-6 lg:col-span-3">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Last Seen</CardTitle>
+              <CardTitle className="text-sm font-medium">Last Heartbeat</CardTitle>
               <Signal className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -231,7 +231,7 @@ export default function NodeDetail() {
             <MetricTile title="Memory" icon={<MemoryStick className="h-4 w-4" />}
               usage={node.nats_memory_mb} total={node.memory_total} unit="" format={formatMB} />
             <MetricTile title="Disk" icon={<HardDrive className="h-4 w-4" />}
-              usage={Math.round(node.nats_jetstream_bytes / (1024 * 1024))}
+              usage={node.nats_disk_mb}
               total={node.disk_total} unit="" format={formatMB} />
             <StatusTile title="Connections" icon={<Plug className="h-4 w-4" />}
               value={node.nats_connections} hint="current clients" />

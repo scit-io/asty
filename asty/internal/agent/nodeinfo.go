@@ -43,6 +43,8 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	memTotal := detectMemoryMB()
 	diskTotal, diskAvail := detectDiskMB(a.workDir)
 	swapTotal, swapAvail := detectSwapMB()
+	diskTotal = envOverrideInt64("A_DISK_TOTAL", diskTotal)
+	swapTotal = envOverrideInt64("A_SWAP_TOTAL", swapTotal)
 	diskType := detectDiskType()
 
 	var selfCPU float64
@@ -51,19 +53,11 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		selfCPU = m.CPUPercent
 		selfMem = m.MemoryMB
 	}
-	selfDisk := dirSizeMB(a.workDir)
-
-	// When A_DISK_TOTAL fakes the disk size (dev), the real-filesystem
-	// `available` from statfs is unrelated to the fake total — it
-	// reflects the entire host volume, not the pretend-node disk.
-	// Recompute available as (fake total − actual agent footprint) so
-	// usage tracks what Asty really occupies under work_dir.
-	if os.Getenv("A_DISK_TOTAL") != "" {
-		diskAvail = diskTotal - selfDisk
-		if diskAvail < 0 {
-			diskAvail = 0
-		}
-	}
+	// Asty's full disk footprint: the bin/asty binary plus everything
+	// the agent places under work_dir (deployed service binaries + per-
+	// service logs). bin/asty lives outside work_dir, so dirSizeMB
+	// alone would miss it.
+	selfDisk := astyBinarySizeMB() + dirSizeMB(a.workDir)
 
 	status := types.NodeReady
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
@@ -85,21 +79,63 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	natsJSBytes := a.natsStats.jetStreamBytes
 	a.natsStats.mu.RUnlock()
 
-	// Total used = managed processes + Asty agent + local NATS server.
-	// CPU sums in MHz (selfCPU/natsCPU are %, converted with the same
-	// factor as the per-process loop). OS overhead stays outside this
-	// accounting — fixing that needs a real MemAvailable reader from
-	// /proc/meminfo (Linux) / vm_stat (Darwin).
-	cpuUsed += int(selfCPU*cpuPctToMHzFactor) + int(natsCPU*cpuPctToMHzFactor)
-	memUsed += selfMem + natsMem
-
-	cpuAvail := cpuTotal - cpuUsed
+	// In dev with A_CPU_TOTAL/A_MEMORY_TOTAL overrides the host's real
+	// usage is unrelated to the fake totals — a 16 GB host doesn't fit
+	// into a 466 MB pretend-node. Sum the components Asty observes
+	// instead (managed processes from the loop above + agent + NATS).
+	// In prod we ask the OS for the system-wide usage so OS daemons,
+	// page cache, and unmanaged processes all count honestly.
+	var cpuAvail int
+	if os.Getenv("A_CPU_TOTAL") != "" {
+		totalUsed := cpuUsed + int(selfCPU*cpuPctToMHzFactor) + int(natsCPU*cpuPctToMHzFactor)
+		cpuAvail = cpuTotal - totalUsed
+	} else {
+		cpuAvail = cpuTotal - detectCPUUsedMHz(cpuTotal)
+	}
 	if cpuAvail < 0 {
 		cpuAvail = 0
 	}
-	memAvail := memTotal - memUsed
+
+	var memAvail int64
+	if os.Getenv("A_MEMORY_TOTAL") != "" {
+		totalUsed := memUsed + selfMem + natsMem
+		memAvail = memTotal - totalUsed
+	} else {
+		memAvail = detectMemoryAvailableMB()
+	}
 	if memAvail < 0 {
 		memAvail = 0
+	}
+
+	// NATS disk footprint = binary baseline (dev only) + actual
+	// JetStream on-disk bytes. The baseline gives the NATS card a
+	// non-zero starting point in dev where JS streams are empty.
+	natsDiskMB := natsJSBytes / (1024 * 1024)
+	if os.Getenv("A_DISK_TOTAL") != "" {
+		natsDiskMB += natsDiskBaselineMB()
+	}
+
+	// When A_DISK_TOTAL fakes the disk size (dev), statfs reports the
+	// real host filesystem — unrelated to the fake total. Synthesize
+	// dev disk usage as:
+	//
+	//   OS baseline      ← 20% of fake_total, or A_DISK_OS_BASELINE in MB
+	//   + Asty footprint ← bin/asty + work_dir (services + logs)
+	//   + NATS footprint ← NATS binary baseline + JS bytes
+	if os.Getenv("A_DISK_TOTAL") != "" {
+		used := diskOSBaselineMB(diskTotal) + selfDisk + natsDiskMB
+		diskAvail = diskTotal - used
+		if diskAvail < 0 {
+			diskAvail = 0
+		}
+	}
+
+	// Swap: in dev override we don't project anything — most prod
+	// servers run at 0% swap usage anyway, so leaving swap "free"
+	// matches reality. If real swap activity ever happens in dev it'll
+	// be invisible here; revisit when that becomes a use case.
+	if os.Getenv("A_SWAP_TOTAL") != "" {
+		swapAvail = swapTotal
 	}
 
 	return &types.NodeInfo{
@@ -129,6 +165,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		NATSOutMsgs:           natsOut,
 		NATSJetStreamMessages: natsJSMsg,
 		NATSJetStreamBytes:    natsJSBytes,
+		NATSDiskMB:            natsDiskMB,
 		Processes:             processes,
 	}
 }

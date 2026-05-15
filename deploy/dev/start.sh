@@ -195,20 +195,21 @@ teardown_loopback_aliases() {
 # =============================================================================
 # Asty: N nodes (each runs server + agent)
 # =============================================================================
+load_vars() {
+  # Loads dev.vars and exports every K=V into the shell. Must run
+  # before start_infra so docker-compose's ${A_MEMORY_TOTAL} substitution
+  # sees the value.
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | xargs)
+    export "$key=$value"
+  done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
+}
+
 start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
-
-  # Load dev.vars and export every variable.
-  while IFS='=' read -r key value; do
-    # Skip comments and empty lines
-    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
-    # Strip leading/trailing whitespace
-    key=$(echo "$key" | xargs)
-    value=$(echo "$value" | xargs)
-    # Export variable
-    export "$key=$value"
-  done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
 
   # All Asty nodes connect to a single NATS endpoint — the host port of
   # dev-nats-1. With --scale nats>1, OrbStack assigns non-sequential host
@@ -227,16 +228,6 @@ start_asty() {
   # per-node and secret bits that have to be runtime-different per node
   # (NodeID/IP/Ports) or kept out of the checked-in YAML (secrets).
   local config_file="$SCRIPT_DIR/config.asty"
-
-  # sudo (agent) needs A_CPU_TOTAL/A_MEMORY_TOTAL/A_DISK_TOTAL/A_SWAP_TOTAL
-  # from the parent environment; sudo -E preserves them.
-  export A_CPU_TOTAL="${A_CPU_TOTAL:-2200}"
-  export A_MEMORY_TOTAL="${A_MEMORY_TOTAL:-466}"
-  # Per-node fake disk budget: 20 GiB (20480 MiB). Aligns prod-style
-  # capacity planning with a small dev footprint.
-  export A_DISK_TOTAL="${A_DISK_TOTAL:-20480}"
-  # 1 GiB swap — Red Hat's "swap ≈ 5% of disk" rule for a 20 GiB volume.
-  export A_SWAP_TOTAL="${A_SWAP_TOTAL:-1024}"
 
   # Each node runs server + agent — both attach to the same NATS endpoint.
   # sudo is required to bind port 80 (the gateway).
@@ -376,6 +367,10 @@ stop_all() {
 # Entry point
 # =============================================================================
 CMD="${1:-1}"
+
+# load_vars first — every docker compose call (incl. stop_infra's
+# `down`) needs ${A_MEMORY_TOTAL}/${A_DOCKER_CPUS} substitution.
+load_vars
 
 if [[ "$CMD" == "stop" ]]; then
   stop_all

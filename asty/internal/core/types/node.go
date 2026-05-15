@@ -80,7 +80,7 @@ type NodeInfo struct {
 	// separately from the services it manages.
 	SelfCPUPercent float64 `json:"self_cpu_percent"`
 	SelfMemoryMB   int64   `json:"self_memory_mb"`
-	SelfDiskMB     int64   `json:"self_disk_mb"` // bytes-on-disk of work_dir (binaries + logs)
+	SelfDiskMB     int64   `json:"self_disk_mb"` // Asty's total disk footprint: bin/asty + work_dir (services binaries + logs)
 
 	// NATS — stats scraped from the local NATS server's monitoring port.
 	// Zero values mean monitoring is unreachable; the UI/dashboards
@@ -94,6 +94,7 @@ type NodeInfo struct {
 	NATSOutMsgs           int64   `json:"nats_out_msgs"` // monotonic counter
 	NATSJetStreamMessages int64   `json:"nats_jetstream_messages"`
 	NATSJetStreamBytes    int64   `json:"nats_jetstream_bytes"` // JetStream on-disk size
+	NATSDiskMB            int64   `json:"nats_disk_mb"`          // total NATS footprint = binary baseline + JS bytes
 
 	// Processes
 	Processes []string `json:"processes"` // list of service names

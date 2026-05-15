@@ -42,7 +42,7 @@ export default function Cluster() {
   const aggregates = useMemo(() => {
     let cpuT = 0, cpuA = 0, memT = 0, memA = 0, diskT = 0, diskA = 0
     let selfCPU = 0, selfMem = 0, selfDisk = 0
-    let natsCPU = 0, natsMem = 0, natsConn = 0, natsJSBytes = 0
+    let natsCPU = 0, natsMem = 0, natsConn = 0, natsDisk = 0
     let natsSubs = 0, natsSlow = 0, natsIn = 0, natsOut = 0, natsJSMsgs = 0
     for (const n of nodes) {
       cpuT += n.cpu_total
@@ -57,7 +57,7 @@ export default function Cluster() {
       natsCPU += n.nats_cpu_percent
       natsMem += n.nats_memory_mb
       natsConn += n.nats_connections
-      natsJSBytes += n.nats_jetstream_bytes
+      natsDisk += n.nats_disk_mb
       natsSubs += n.nats_subscriptions
       natsSlow += n.nats_slow_consumers
       natsIn += n.nats_in_msgs
@@ -71,7 +71,7 @@ export default function Cluster() {
       nats:    {
         cpuUsage: natsCPU, cpuTotal: 100 * nodes.length,
         memoryUsage: natsMem, memoryTotal: memT,
-        diskUsage: Math.round(natsJSBytes / (1024 * 1024)), diskTotal: diskT,
+        diskUsage: natsDisk, diskTotal: diskT,
         connections: natsConn, subscriptions: natsSubs, slow: natsSlow,
         inMsgs: natsIn, outMsgs: natsOut, jsMessages: natsJSMsgs,
       },

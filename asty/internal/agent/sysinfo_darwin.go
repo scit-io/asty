@@ -68,9 +68,10 @@ func detectMemoryMB() int64 {
 }
 
 // detectDiskMB inspects the filesystem hosting `path` and reports total
-// and available space in MB. Falls back to (0, 0) if statfs fails — the
-// UI renders empty tiles instead of bogus numbers in that case.
-// A_DISK_TOTAL overrides the total, mirroring A_CPU_TOTAL / A_MEMORY_TOTAL.
+// and available space in MB as the OS reports them. Falls back to
+// (0, 0) if statfs fails. Override (A_DISK_TOTAL) is applied at the
+// caller (nodeinfo.go) so that the real host values stay available for
+// projecting host fullness onto the fake-disk envelope.
 func detectDiskMB(path string) (total, available int64) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(path, &st); err != nil {
@@ -81,48 +82,32 @@ func detectDiskMB(path string) (total, available int64) {
 	bsize := int64(st.Bsize)
 	total = int64(st.Blocks) * bsize / mib
 	available = int64(st.Bavail) * bsize / mib
-
-	if override := os.Getenv("A_DISK_TOTAL"); override != "" {
-		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
-			log.Info().Int64("disk_mb", val).Msg("using Disk override from A_DISK_TOTAL")
-			total = val
-		}
-	}
 	return total, available
 }
 
-// detectSwapMB inspects the system swap (sysctl vm.swapusage) and
-// reports total + available space in MB. Falls back to (0, 0) on
-// failure. A_SWAP_TOTAL overrides the total (and pins available =
-// total) — handy in dev when we want a fake swap budget regardless
-// of what the host actually has.
+// detectSwapMB reports system swap (sysctl vm.swapusage) total +
+// available in MB. Falls back to (0, 0) on failure. Override applied
+// at caller — see detectDiskMB note.
 func detectSwapMB() (total, available int64) {
 	out, err := exec.Command("sysctl", "-n", "vm.swapusage").Output()
-	if err == nil {
-		// Format: "total = 5120.00M  used = 3168.00M  free = 1952.00M  (encrypted)"
-		fields := strings.Fields(string(out))
-		var used int64
-		for i, f := range fields {
-			switch f {
-			case "total":
-				total = parseSwapField(fields, i)
-			case "used":
-				used = parseSwapField(fields, i)
-			case "free":
-				available = parseSwapField(fields, i)
-			}
-		}
-		if available == 0 && total > 0 {
-			available = total - used
+	if err != nil {
+		return 0, 0
+	}
+	// Format: "total = 5120.00M  used = 3168.00M  free = 1952.00M  (encrypted)"
+	fields := strings.Fields(string(out))
+	var used int64
+	for i, f := range fields {
+		switch f {
+		case "total":
+			total = parseSwapField(fields, i)
+		case "used":
+			used = parseSwapField(fields, i)
+		case "free":
+			available = parseSwapField(fields, i)
 		}
 	}
-
-	if override := os.Getenv("A_SWAP_TOTAL"); override != "" {
-		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val >= 0 {
-			log.Info().Int64("swap_mb", val).Msg("using Swap override from A_SWAP_TOTAL")
-			total = val
-			available = val
-		}
+	if available == 0 && total > 0 {
+		available = total - used
 	}
 	return total, available
 }

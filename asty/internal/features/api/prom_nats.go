@@ -22,6 +22,7 @@ type natsCollector struct {
 	outMsgs       *prometheus.Desc
 	jsMessages    *prometheus.Desc
 	jsBytes       *prometheus.Desc
+	diskMB        *prometheus.Desc
 
 	clusterConnections *prometheus.Desc
 	clusterJSMessages  *prometheus.Desc
@@ -50,6 +51,8 @@ func newNATSCollector(api *API) *natsCollector {
 			"Total messages held across JetStream streams (jsz.messages).", common, nil),
 		jsBytes: prometheus.NewDesc("asty_node_nats_jetstream_bytes",
 			"On-disk JetStream storage in bytes (jsz.bytes).", common, nil),
+		diskMB: prometheus.NewDesc("asty_node_nats_disk_mb",
+			"Total NATS disk footprint = binary baseline (synthetic in dev) + JetStream bytes.", common, nil),
 		clusterConnections: prometheus.NewDesc("asty_cluster_nats_connections",
 			"Sum of NATS client connections across all nodes.", nil, nil),
 		clusterJSMessages: prometheus.NewDesc("asty_cluster_nats_jetstream_messages",
@@ -69,6 +72,7 @@ func (c *natsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.outMsgs
 	ch <- c.jsMessages
 	ch <- c.jsBytes
+	ch <- c.diskMB
 	ch <- c.clusterConnections
 	ch <- c.clusterJSMessages
 	ch <- c.clusterJSBytes
@@ -108,4 +112,5 @@ func (c *natsCollector) emit(ch chan<- prometheus.Metric, n *types.NodeInfo) {
 	counter(c.outMsgs, float64(n.NATSOutMsgs))
 	g(c.jsMessages, float64(n.NATSJetStreamMessages))
 	g(c.jsBytes, float64(n.NATSJetStreamBytes))
+	g(c.diskMB, float64(n.NATSDiskMB))
 }
