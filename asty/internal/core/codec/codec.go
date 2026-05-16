@@ -25,9 +25,21 @@ var Wire Codec = cborCodec{}
 
 // State is the codec for NATS JetStream KV records (cluster nodes,
 // service allocations, cooldowns, scale overrides, leader Info).
-// Stays on JSON so `nats kv get` remains useful during incident
-// response.
-var State Codec = jsonCodec{}
+// Defaults to CBOR for consistency with Wire — KV records are
+// operational data, not user-facing in production.
+var State Codec = cborCodec{}
+
+// UseJSONForDev swaps both Wire and State back to JSON. Call once at
+// startup when the agent/server is running with dev_mode=true so
+// operators (and the dev team) can inspect every NATS subject with
+// `nats sub` and every KV record with `nats kv get` without extra
+// tooling. Production runs the defaults (CBOR for both). All nodes
+// in the same cluster must share the same mode — a dev node and a
+// prod node will not understand each other's payloads.
+func UseJSONForDev() {
+	Wire = jsonCodec{}
+	State = jsonCodec{}
+}
 
 // jsonCodec backs State and used to back Wire; still here so a
 // future operator could pin Wire back to JSON for debugging by

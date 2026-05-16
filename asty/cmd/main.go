@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"asty/asty/internal/agent"
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/features/observability/logs"
 	"asty/asty/internal/server"
@@ -42,6 +43,14 @@ func main() {
 	}
 	if err := cfg.Validate(); err != nil {
 		log.Fatal().Err(err).Msg("invalid config")
+	}
+
+	// Dev mode flips both codec.Wire and codec.State back to JSON so
+	// `nats sub`/`nats kv get` show readable payloads. Production keeps
+	// the CBOR defaults.
+	if cfg.DevMode {
+		codec.UseJSONForDev()
+		log.Info().Msg("dev_mode: codec.Wire and codec.State on JSON")
 	}
 
 	switch *mode {

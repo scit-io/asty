@@ -11,7 +11,7 @@
 domain: dev.local   # Cluster domain (used in NATS subject namespacing and API auth)
 datacenter: dc1     # This node's DC; used by proximity-aware scheduling
 log_level: debug    # Zerolog level (debug — verbose; in prod typically info)
-dev_mode: false     # Skip required-field validation (false — full validation, like prod)
+dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod-like CBOR)
 
 # NATS connection for both server and agent.
 # In dev, start.sh overrides A_NATS_PORT per node so multiple agents

@@ -11,7 +11,7 @@
 domain: ""          # Cluster domain (set via A_DOMAIN per deployment, e.g. "prod.example.com")
 datacenter: ""      # This node's DC (set via A_DATACENTER per node, e.g. "eu-west-1")
 log_level: info     # Zerolog level (info — production default)
-dev_mode: false     # Skip required-field validation (false — required fields enforced)
+dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod default with CBOR for size and speed)
 
 # NATS connection for both server and agent.
 # Every node runs a local NATS server — services always connect to localhost.

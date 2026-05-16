@@ -3,16 +3,17 @@
 // codecs:
 //
 //   - Wire — agent RPC payloads and replies, gateway metrics reports,
-//     any other ephemeral NATS message that is never read by an
-//     operator. Target: small and fast representation.
+//     any other ephemeral NATS message.
 //
 //   - State — NATS JetStream KV records (nodes, allocations,
-//     cooldowns, scale, leader Info). Target: human-readable so
-//     `nats kv get` stays useful during incident response.
+//     cooldowns, scale, leader Info).
 //
-// Both default to encoding/json. To switch Wire to a binary format
-// (CBOR, MessagePack, etc.) replace `codec.Wire`; State stays JSON
-// unless its variable is replaced too.
+// Both default to CBOR (fxamacker/cbor/v2) — production setting.
+// When dev_mode=true is in effect (config.asty or A_DEV_MODE), main
+// calls UseJSONForDev() to swap both back to JSON so every NATS
+// subject is readable via `nats sub` and every KV record via
+// `nats kv get` with no extra tooling. All nodes in one cluster
+// must share the same mode.
 //
 // Browser-bound surfaces (SSE frames, HTTP API responses, drain
 // progress passthrough) and foreign JSON (NATS /varz, /jsz) are
