@@ -68,6 +68,13 @@ func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 	}
 	service := parts[1]
 
+	// Every /v1/* request that reaches this point passed Origin check,
+	// rate limit, and path validation — that is the "valid traffic"
+	// signal the autoscaler reads via reportRPSLoop. WS handshakes
+	// count as one; subsequent frames are not re-counted (under-count
+	// for chat-heavy services, acceptable for v1).
+	gw.validRequests.Add(1)
+
 	if parts[len(parts)-1] == "ws" {
 		// RFC 6455 §4.1: WebSocket handshake requires GET. Reject other
 		// methods before wsConnGuard so an invalid method does not

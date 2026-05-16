@@ -50,7 +50,7 @@ func (s *safeBuf) String() string {
 func newTestGateway(t *testing.T, conn *nats.Conn, cfg config.GatewayConfig, log zerolog.Logger) (*Gateway, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	gw, err := New(ctx, conn, cfg, log)
+	gw, err := New(ctx, conn, cfg, "test-node", nil, log)
 	if err != nil {
 		cancel()
 		t.Fatalf("gateway New: %v", err)

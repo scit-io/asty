@@ -35,10 +35,15 @@ func (a *Agent) runGateway(ctx context.Context) error {
 
 	serviceRules := a.collectRateLimitRules()
 
-	gw, err := gateway.New(ctx, a.nc, cfg, serviceRules, log.Logger)
+	gw, err := gateway.New(ctx, a.nc, cfg, a.nodeID, serviceRules, log.Logger)
 	if err != nil {
 		return err
 	}
+
+	// RPS reporter feeds the leader's autoscaler with valid-traffic
+	// samples for locality-aware scale-up. Bound to the gateway's root
+	// context so it exits with the rest of the gateway on shutdown.
+	go gw.ReportRPSLoop(gw.RootContext())
 
 	srv := &http.Server{
 		Addr:              cfg.HTTP.Addr,

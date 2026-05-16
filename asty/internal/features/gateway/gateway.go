@@ -7,6 +7,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"asty/asty/internal/core/config"
@@ -42,10 +43,16 @@ const (
 type Gateway struct {
 	nats         *nats.Conn
 	cfg          config.GatewayConfig
+	nodeID       string
 	upgrader     websocket.Upgrader
 	allowedHosts allowedHostSet
 	rl           *rateLimiter
 	log          zerolog.Logger
+
+	// validRequests counts /v1/* requests that survived the Origin and
+	// rate-limit middlewares — what the autoscaler treats as real
+	// traffic on this node. Sampled by reportRPSLoop.
+	validRequests atomic.Int64
 
 	// ctx is the gateway-scoped context. Cancelled when the parent
 	// context (the agent's) is cancelled, which lets WS handlers and
@@ -54,10 +61,12 @@ type Gateway struct {
 	cancel context.CancelFunc
 }
 
-// New builds a gateway bound to nc and cfg. serviceRules are rate-limit
-// rules collected from all loaded .asty service definitions — the gateway
-// enforces them on incoming requests before proxying to NATS.
-func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
+// New builds a gateway bound to nc and cfg. nodeID is the agent's
+// own node id, used as the suffix of the RPS report subject so the
+// server can attribute traffic per node. serviceRules are rate-limit
+// rules collected from all loaded .asty service definitions — the
+// gateway enforces them on incoming requests before proxying to NATS.
+func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
 	hosts, err := parseAllowedHosts(log, cfg.AllowedHosts)
 	if err != nil {
 		return nil, err
@@ -67,6 +76,7 @@ func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, servic
 	gw := &Gateway{
 		nats:         nc,
 		cfg:          cfg,
+		nodeID:       nodeID,
 		allowedHosts: hosts,
 		rl:           newRateLimiter(cfg.RateLimit, serviceRules, log, ctx.Done()),
 		log:          log,
