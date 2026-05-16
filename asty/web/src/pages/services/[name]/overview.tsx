@@ -10,7 +10,7 @@ import { toast } from 'sonner'
 import { MetricsChart } from '@/components/metrics-chart'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
-import { StatusTile } from '@/components/status-tile'
+import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
@@ -86,14 +86,14 @@ export default function ServiceOverview() {
       ) : (
         <>
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-            <StatusTile title="Copies" icon={<Layers className="h-4 w-4" />}
+            <Tile variant="stat" title="Copies" icon={<Layers className="h-4 w-4" />}
               value={`${running} / ${allocations.length}`}
               hint={service.Type === 'service' && runtime?.min_copies !== undefined ? `min ${runtime.min_copies}` : 'running / total'} />
-            <StatusTile title="CPU budget" icon={<Cpu className="h-4 w-4" />}
+            <Tile variant="stat" title="CPU budget" icon={<Cpu className="h-4 w-4" />}
               value={formatMHz(service.Resources.CPU)} hint="per allocation" />
-            <StatusTile title="Memory budget" icon={<MemoryStick className="h-4 w-4" />}
+            <Tile variant="stat" title="Memory budget" icon={<MemoryStick className="h-4 w-4" />}
               value={formatMB(service.Resources.Memory)} hint="per allocation" />
-            <StatusTile title="Health check" icon={<Activity className="h-4 w-4" />}
+            <Tile variant="stat" title="Health check" icon={<Activity className="h-4 w-4" />}
               value={service.Health.Type || 'none'}
               hint={service.Health.Path || ''} />
           </div>

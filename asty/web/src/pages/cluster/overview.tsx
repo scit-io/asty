@@ -15,12 +15,11 @@ import {
   Server,
   Shield,
 } from 'lucide-react'
-import { MetricTile } from '@/components/metric-tile'
 import { MetricsChart } from '@/components/metrics-chart'
-import { StatusTile } from '@/components/status-tile'
 import { ResourcesBlock } from '@/components/resources-block'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_SECTION_TABS } from '@/components/header'
+import { Tile } from '@/components/tile'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 
@@ -99,19 +98,16 @@ export default function Cluster() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Cluster</h2>
         <div className="grid grid-cols-12 gap-3">
-          <MetricTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={aggregates.cluster.cpuUsage} total={aggregates.cluster.cpuTotal}
-            unit="" format={formatMHz} />
-          <MetricTile className="col-span-6 lg:col-span-3"
+            usage={aggregates.cluster.cpuUsage} total={aggregates.cluster.cpuTotal} format={formatMHz} />
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-            usage={aggregates.cluster.memoryUsage} total={aggregates.cluster.memoryTotal}
-            unit="" format={formatMB} />
-          <MetricTile className="col-span-6 lg:col-span-3"
+            usage={aggregates.cluster.memoryUsage} total={aggregates.cluster.memoryTotal} format={formatMB} />
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
-            usage={aggregates.cluster.diskUsage} total={aggregates.cluster.diskTotal}
-            unit="" format={formatMB} />
-          <StatusTile className="col-span-6 lg:col-span-3"
+            usage={aggregates.cluster.diskUsage} total={aggregates.cluster.diskTotal} format={formatMB} />
+          <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
             title="RPS" icon={<Activity className="h-4 w-4" />}
             value={Math.round(aggregates.cluster.rps)} hint="Requests per second" />
 
@@ -122,17 +118,17 @@ export default function Cluster() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Cluster RPS" data={clusterRpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
 
-          <StatusTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Nodes" icon={<Server className="h-4 w-4" />}
             value={`${nodesHealthy} / ${nodesTotal}`} hint="active / total" />
-          <StatusTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Services" icon={<Boxes className="h-4 w-4" />}
             value={`${services_active} / ${services.length}`} hint="active / loaded" />
-          <StatusTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm" mono
             title="Leader" icon={<Shield className="h-4 w-4" />}
-            value={<span className="text-base font-mono">{clusterStatus?.cluster.leader || '—'}</span>}
+            value={clusterStatus?.cluster.leader || '—'}
             hint={clusterStatus?.cluster.leader_ip || '—'} />
-          <StatusTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Health" icon={<Heart className="h-4 w-4" />}
             value={`${healthPct}%`} hint={`${nodesHealthy} of ${nodesTotal} healthy`} />
         </div>
@@ -144,26 +140,23 @@ export default function Cluster() {
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">NATS</h2>
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-            <MetricTile title="CPU" icon={<Cpu className="h-4 w-4" />}
-              usage={aggregates.nats.cpuUsage} total={aggregates.nats.cpuTotal}
-              unit="" format={formatMHz} />
-            <MetricTile title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-              usage={aggregates.nats.memoryUsage} total={aggregates.nats.memoryTotal}
-              unit="" format={formatMB} />
-            <MetricTile title="Disk" icon={<HardDrive className="h-4 w-4" />}
-              usage={aggregates.nats.diskUsage} total={aggregates.nats.diskTotal}
-              unit="" format={formatMB} />
-            <StatusTile title="Connections" icon={<Plug className="h-4 w-4" />}
+            <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
+              usage={aggregates.nats.cpuUsage} total={aggregates.nats.cpuTotal} format={formatMHz} />
+            <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+              usage={aggregates.nats.memoryUsage} total={aggregates.nats.memoryTotal} format={formatMB} />
+            <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
+              usage={aggregates.nats.diskUsage} total={aggregates.nats.diskTotal} format={formatMB} />
+            <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
               value={aggregates.nats.connections} hint="current clients" />
-            <StatusTile title="Subscriptions" icon={<Radio className="h-4 w-4" />}
+            <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
               value={aggregates.nats.subscriptions} hint="active subjects" />
-            <StatusTile title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
+            <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
               value={aggregates.nats.slow} hint="lifetime count" />
-            <StatusTile title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
+            <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
               value={formatCount(aggregates.nats.inMsgs)} hint="since NATS start" />
-            <StatusTile title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
+            <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
               value={formatCount(aggregates.nats.outMsgs)} hint="since NATS start" />
-            <StatusTile title="JetStream Messages" icon={<Database className="h-4 w-4" />}
+            <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
               value={formatCount(aggregates.nats.jsMessages)} hint="JetStream total" />
           </div>
         </section>

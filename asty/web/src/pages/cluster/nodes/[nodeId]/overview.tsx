@@ -11,7 +11,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Activity,
@@ -22,7 +21,6 @@ import {
   Cpu,
   Database,
   HardDrive,
-  HelpCircle,
   Layers,
   MemoryStick,
   Plug,
@@ -30,21 +28,13 @@ import {
   Signal,
   Wrench,
 } from 'lucide-react'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { formatDistanceToNow } from 'date-fns'
 import { toast } from 'sonner'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
-import { MetricTile } from '@/components/metric-tile'
 import { MetricsChart } from '@/components/metrics-chart'
 import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
-import { StatusTile } from '@/components/status-tile'
+import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 
@@ -88,6 +78,11 @@ export default function NodeDetail() {
 
   const rps = rpsMetrics.length ? rpsMetrics[rpsMetrics.length - 1].value : 0
   const draining = node.status === 'draining' || node.status === 'drained'
+  const diskUnit = node.disk_type === 'ssd' || node.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''
+  const drainHint = node.status === 'ready' ? 'Normal'
+    : node.status === 'draining' ? 'Migrating…'
+    : node.status === 'drained' ? 'Drained'
+    : node.status
 
   // hasAsty / hasNats decide whether to render the agent and NATS
   // sub-blocks. NATS monitoring (-m 8222) is opt-in; without it every
@@ -115,20 +110,17 @@ export default function NodeDetail() {
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Node</h2>
         <div className="grid grid-cols-12 gap-3">
-          <MetricTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={node.cpu_total - node.cpu_available} total={node.cpu_total}
-            unit="" format={formatMHz} />
-          <MetricTile className="col-span-6 lg:col-span-3"
+            usage={node.cpu_total - node.cpu_available} total={node.cpu_total} format={formatMHz} />
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-            usage={node.memory_total - node.memory_available} total={node.memory_total}
-            unit="" format={formatMB} />
-          <MetricTile className="col-span-6 lg:col-span-3"
+            usage={node.memory_total - node.memory_available} total={node.memory_total} format={formatMB} />
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
             usage={node.disk_total - node.disk_available} total={node.disk_total}
-            unit={node.disk_type === 'ssd' || node.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''}
-            format={formatMB} />
-          <StatusTile className="col-span-6 lg:col-span-3"
+            unit={diskUnit} format={formatMB} />
+          <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
             title="RPS" icon={<Activity className="h-4 w-4" />}
             value={Math.round(rps)} hint="Requests per second" />
 
@@ -139,76 +131,28 @@ export default function NodeDetail() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Node RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
 
-          <StatusTile className="col-span-6 lg:col-span-3"
+          <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Allocations" icon={<Layers className="h-4 w-4" />}
             value={`${node.allocations_running} / ${node.allocations_planned}`} hint="running / planned" />
-          <Card className="col-span-6 lg:col-span-3">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Started At</CardTitle>
-              <Clock className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm font-bold mt-1 mb-2">
-                {node.created_at ? formatDistanceToNow(new Date(node.created_at), { addSuffix: true }) : '—'}
-              </div>
-              {node.created_at && (
-                <p className="text-xs text-muted-foreground">
-                  {new Date(node.created_at).toLocaleString()}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          <Card className="col-span-6 lg:col-span-3">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Last Heartbeat</CardTitle>
-              <Signal className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm font-bold mt-1 mb-2">
-                {node.last_seen && !node.last_seen.startsWith('0001-')
-                  ? formatDistanceToNow(new Date(node.last_seen), { addSuffix: true })
-                  : '—'}
-              </div>
-              {node.last_seen && !node.last_seen.startsWith('0001-') && (
-                <p className="text-xs text-muted-foreground">
-                  {new Date(node.last_seen).toLocaleString()}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          <Card className="col-span-6 lg:col-span-3">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Maintenance</CardTitle>
-              <Wrench className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center gap-2 mt-1 mb-2">
+          <Tile className="col-span-6 lg:col-span-3" variant="timestamp"
+            title="Started At" icon={<Clock className="h-4 w-4" />}
+            timestamp={node.created_at} />
+          <Tile className="col-span-6 lg:col-span-3" variant="timestamp"
+            title="Last Heartbeat" icon={<Signal className="h-4 w-4" />}
+            timestamp={node.last_seen} />
+          <Tile className="col-span-6 lg:col-span-3" variant="actions"
+            title="Maintenance" icon={<Wrench className="h-4 w-4" />}
+            hint={drainHint}
+            actions={
+              <>
                 <div className="text-sm font-bold">Drain</div>
                 <Switch
                   checked={draining}
                   onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
                   disabled={node.status === 'draining'}
                 />
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger>
-                      <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Gracefully migrate all allocations to other nodes.</p>
-                      <p>Node remains in cluster but won't receive new allocations.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {node.status === 'ready' ? 'Normal'
-                  : node.status === 'draining' ? 'Migrating…'
-                  : node.status === 'drained' ? 'Drained'
-                  : node.status}
-              </p>
-            </CardContent>
-          </Card>
+              </>
+            } />
         </div>
       </section>
 
@@ -225,25 +169,23 @@ export default function NodeDetail() {
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">NATS</h2>
           <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-            <MetricTile title="CPU" icon={<Cpu className="h-4 w-4" />}
-              usage={node.nats_cpu_percent} total={100}
-              unit="" format={formatMHz} />
-            <MetricTile title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-              usage={node.nats_memory_mb} total={node.memory_total} unit="" format={formatMB} />
-            <MetricTile title="Disk" icon={<HardDrive className="h-4 w-4" />}
-              usage={node.nats_disk_mb}
-              total={node.disk_total} unit="" format={formatMB} />
-            <StatusTile title="Connections" icon={<Plug className="h-4 w-4" />}
+            <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
+              usage={node.nats_cpu_percent} total={100} format={formatMHz} />
+            <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+              usage={node.nats_memory_mb} total={node.memory_total} format={formatMB} />
+            <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
+              usage={node.nats_disk_mb} total={node.disk_total} format={formatMB} />
+            <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
               value={node.nats_connections} hint="current clients" />
-            <StatusTile title="Subscriptions" icon={<Radio className="h-4 w-4" />}
+            <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
               value={node.nats_subscriptions} hint="active subjects" />
-            <StatusTile title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
+            <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
               value={node.nats_slow_consumers} hint="lifetime count" />
-            <StatusTile title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
+            <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
               value={formatCount(node.nats_in_msgs)} hint="since NATS start" />
-            <StatusTile title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
+            <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
               value={formatCount(node.nats_out_msgs)} hint="since NATS start" />
-            <StatusTile title="JetStream Messages" icon={<Database className="h-4 w-4" />}
+            <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
               value={formatCount(node.nats_jetstream_messages)} hint="JetStream total" />
           </div>
         </section>
