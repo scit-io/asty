@@ -18,10 +18,12 @@ const agentStartCommandTimeout = 30 * time.Second
 // agentStopCommandTimeout is shorter — stops are local kills with no I/O.
 const agentStopCommandTimeout = 5 * time.Second
 
-// SendCommandToAgent sends an already-marshalled command to nodeID and
-// returns the agent's response. Lower-level helpers below build on this.
-func (s *Server) SendCommandToAgent(nodeID string, command []byte, timeout time.Duration) (*types.CommandResponse, error) {
-	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", nodeID)
+// SendCommandToAgent sends a kind-typed command to nodeID and returns
+// the agent's response. The subject embeds the kind (see
+// types.CommandSubject) so the payload is plain — no envelope, no
+// discriminator.
+func (s *Server) SendCommandToAgent(nodeID string, kind types.CommandKind, command []byte, timeout time.Duration) (*types.CommandResponse, error) {
+	subject := types.CommandSubject(nodeID, kind)
 
 	msg, err := s.nc.Request(subject, command, timeout)
 	if err != nil {
@@ -52,7 +54,7 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 	if err != nil {
 		return fmt.Errorf("failed to marshal start command: %w", err)
 	}
-	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStartCommandTimeout)
+	resp, err := s.SendCommandToAgent(nodeID, types.CmdStart, cmd, agentStartCommandTimeout)
 	if err != nil {
 		return err
 	}
@@ -65,7 +67,8 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 // sendRestartCommand asks the agent to stop the running copy and start a
 // fresh one from the resolved svc. Used by the deployer to apply a new
 // version: the dispatched svc has its artifact URL pre-expanded with
-// version so the agent downloads the new tarball.
+// version so the agent downloads the new tarball. Payload shape is
+// identical to start; only the subject suffix differs.
 func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition, version string) error {
 	kvEnv, err := s.provisionKVBuckets(svc)
 	if err != nil {
@@ -75,11 +78,11 @@ func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition,
 
 	resolved := s.resolvedSvcForDispatch(nodeID, svc, version)
 
-	cmd, err := types.MarshalRestartCommand(resolved)
+	cmd, err := types.MarshalStartCommand(resolved)
 	if err != nil {
 		return fmt.Errorf("failed to marshal restart command: %w", err)
 	}
-	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStartCommandTimeout)
+	resp, err := s.SendCommandToAgent(nodeID, types.CmdRestart, cmd, agentStartCommandTimeout)
 	if err != nil {
 		return err
 	}
@@ -113,7 +116,7 @@ func (s *Server) StopServiceOnNode(nodeID, serviceName string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal stop command: %w", err)
 	}
-	resp, err := s.SendCommandToAgent(nodeID, cmd, agentStopCommandTimeout)
+	resp, err := s.SendCommandToAgent(nodeID, types.CmdStop, cmd, agentStopCommandTimeout)
 	if err != nil {
 		return err
 	}

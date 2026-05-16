@@ -47,7 +47,7 @@ func (api *API) respondAllocSnapshot(w http.ResponseWriter, allocation *types.Se
 		api.writeError(w, http.StatusInternalServerError, "failed to create logs command", err)
 		return
 	}
-	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", allocation.NodeID)
+	subject := types.CommandSubject(allocation.NodeID, types.CmdLogs)
 	msg, err := api.ctx.NATSConn().Request(subject, cmdData, agentLogsRequestTimeout)
 	if err != nil {
 		log.Error().Err(err).Str("node_id", allocation.NodeID).Msg("failed to request logs from agent")

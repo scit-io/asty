@@ -11,7 +11,7 @@ import (
 )
 
 func (a *Agent) subscribeCommands() error {
-	subject := fmt.Sprintf("asty.v1.agent.%s.cmd", a.nodeID)
+	subject := types.CommandPattern(a.nodeID)
 
 	_, err := a.nc.Subscribe(subject, func(msg *nats.Msg) {
 		a.handleCommand(msg)
@@ -26,34 +26,29 @@ func (a *Agent) subscribeCommands() error {
 }
 
 func (a *Agent) handleCommand(msg *nats.Msg) {
-	cmd, err := types.UnmarshalCommand(msg.Data)
-	if err != nil {
-		log.Error().Err(err).Msg("failed to unmarshal command")
-		msg.Respond(types.MarshalResponse(false, "", err))
-		return
-	}
+	kind := types.CommandKindFromSubject(msg.Subject)
 
 	log.Info().
-		Str("type", cmd.Type).
+		Str("kind", string(kind)).
 		Msg("received command")
 
-	switch cmd.Type {
-	case "start":
-		a.handleStartCommand(msg, cmd.Data)
-	case "restart":
-		a.handleRestartCommand(msg, cmd.Data)
-	case "stop":
-		a.handleStopCommand(msg, cmd.Data)
-	case "logs":
-		a.handleLogsCommand(msg, cmd.Data)
+	switch kind {
+	case types.CmdStart:
+		a.handleStartCommand(msg)
+	case types.CmdRestart:
+		a.handleRestartCommand(msg)
+	case types.CmdStop:
+		a.handleStopCommand(msg)
+	case types.CmdLogs:
+		a.handleLogsCommand(msg)
 	default:
-		log.Error().Str("type", cmd.Type).Msg("unknown command type")
-		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command type: %s", cmd.Type)))
+		log.Error().Str("kind", string(kind)).Msg("unknown command kind")
+		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command kind: %s", kind)))
 	}
 }
 
-func (a *Agent) handleRestartCommand(msg *nats.Msg, data []byte) {
-	startCmd, err := types.ParseStartCommand(data)
+func (a *Agent) handleRestartCommand(msg *nats.Msg) {
+	startCmd, err := types.ParseStartCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse restart command")
 		msg.Respond(types.MarshalResponse(false, "", err))
@@ -73,8 +68,8 @@ func (a *Agent) handleRestartCommand(msg *nats.Msg, data []byte) {
 	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s restarted", startCmd.Service.Name), nil))
 }
 
-func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
-	startCmd, err := types.ParseStartCommand(data)
+func (a *Agent) handleStartCommand(msg *nats.Msg) {
+	startCmd, err := types.ParseStartCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse start command")
 		msg.Respond(types.MarshalResponse(false, "", err))
@@ -94,8 +89,8 @@ func (a *Agent) handleStartCommand(msg *nats.Msg, data []byte) {
 	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
 }
 
-func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
-	stopCmd, err := types.ParseStopCommand(data)
+func (a *Agent) handleStopCommand(msg *nats.Msg) {
+	stopCmd, err := types.ParseStopCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse stop command")
 		msg.Respond(types.MarshalResponse(false, "", err))
@@ -115,8 +110,8 @@ func (a *Agent) handleStopCommand(msg *nats.Msg, data []byte) {
 	}()
 }
 
-func (a *Agent) handleLogsCommand(msg *nats.Msg, data []byte) {
-	logsCmd, err := types.ParseGetLogsCommand(data)
+func (a *Agent) handleLogsCommand(msg *nats.Msg) {
+	logsCmd, err := types.ParseGetLogsCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse logs command")
 		msg.Respond(types.MarshalLogsResponse(nil, err))
