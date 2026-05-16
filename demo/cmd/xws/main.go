@@ -18,7 +18,6 @@ var validSID = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,64}$`)
 
 func main() {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
 
 	cfg := xws.LoadConfig()
 
