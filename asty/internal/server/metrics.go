@@ -20,7 +20,7 @@ func (s *Server) subscribeGatewayMetrics() {
 			NodeID   string  `json:"node_id"`
 			ValidRPS float64 `json:"valid_rps"`
 		}
-		if err := codec.Unmarshal(msg.Data, &report); err != nil {
+		if err := codec.Wire.Unmarshal(msg.Data, &report); err != nil {
 			return
 		}
 		s.metricsStore.AddRPS(report.NodeID, report.ValidRPS)

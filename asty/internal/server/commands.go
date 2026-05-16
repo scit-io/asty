@@ -31,7 +31,7 @@ func (s *Server) SendCommandToAgent(nodeID string, kind types.CommandKind, comma
 	}
 
 	var resp types.CommandResponse
-	if err := codec.Unmarshal(msg.Data, &resp); err != nil {
+	if err := codec.Wire.Unmarshal(msg.Data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	return &resp, nil

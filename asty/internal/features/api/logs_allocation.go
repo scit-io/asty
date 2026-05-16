@@ -55,7 +55,7 @@ func (api *API) respondAllocSnapshot(w http.ResponseWriter, allocation *types.Se
 		return
 	}
 	var resp types.LogsResponse
-	if err := codec.Unmarshal(msg.Data, &resp); err != nil {
+	if err := codec.Wire.Unmarshal(msg.Data, &resp); err != nil {
 		api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
 		return
 	}

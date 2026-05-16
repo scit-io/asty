@@ -84,23 +84,23 @@ type CommandResponse struct {
 
 // MarshalStartCommand encodes the payload for CmdStart or CmdRestart.
 func MarshalStartCommand(svc *ServiceDefinition) ([]byte, error) {
-	return codec.Marshal(StartServiceCommand{Service: svc})
+	return codec.Wire.Marshal(StartServiceCommand{Service: svc})
 }
 
 // MarshalStopCommand encodes the payload for CmdStop.
 func MarshalStopCommand(serviceName string) ([]byte, error) {
-	return codec.Marshal(StopServiceCommand{ServiceName: serviceName})
+	return codec.Wire.Marshal(StopServiceCommand{ServiceName: serviceName})
 }
 
 // MarshalGetLogsCommand encodes the payload for CmdLogs.
 func MarshalGetLogsCommand(serviceName string, lines int, follow bool) ([]byte, error) {
-	return codec.Marshal(GetLogsCommand{ServiceName: serviceName, Lines: lines, Follow: follow})
+	return codec.Wire.Marshal(GetLogsCommand{ServiceName: serviceName, Lines: lines, Follow: follow})
 }
 
 // ParseStartCommand decodes a CmdStart or CmdRestart payload.
 func ParseStartCommand(data []byte) (*StartServiceCommand, error) {
 	var cmd StartServiceCommand
-	if err := codec.Unmarshal(data, &cmd); err != nil {
+	if err := codec.Wire.Unmarshal(data, &cmd); err != nil {
 		return nil, fmt.Errorf("parse start command: %w", err)
 	}
 	return &cmd, nil
@@ -109,7 +109,7 @@ func ParseStartCommand(data []byte) (*StartServiceCommand, error) {
 // ParseStopCommand decodes a CmdStop payload.
 func ParseStopCommand(data []byte) (*StopServiceCommand, error) {
 	var cmd StopServiceCommand
-	if err := codec.Unmarshal(data, &cmd); err != nil {
+	if err := codec.Wire.Unmarshal(data, &cmd); err != nil {
 		return nil, fmt.Errorf("parse stop command: %w", err)
 	}
 	return &cmd, nil
@@ -118,7 +118,7 @@ func ParseStopCommand(data []byte) (*StopServiceCommand, error) {
 // ParseGetLogsCommand decodes a CmdLogs payload.
 func ParseGetLogsCommand(data []byte) (*GetLogsCommand, error) {
 	var cmd GetLogsCommand
-	if err := codec.Unmarshal(data, &cmd); err != nil {
+	if err := codec.Wire.Unmarshal(data, &cmd); err != nil {
 		return nil, fmt.Errorf("parse get logs command: %w", err)
 	}
 	return &cmd, nil
@@ -131,7 +131,7 @@ func MarshalResponse(success bool, message string, err error) []byte {
 	if err != nil {
 		resp.Error = err.Error()
 	}
-	data, _ := codec.Marshal(resp)
+	data, _ := codec.Wire.Marshal(resp)
 	return data
 }
 
@@ -141,6 +141,6 @@ func MarshalLogsResponse(logs []string, err error) []byte {
 	if err != nil {
 		resp.Error = err.Error()
 	}
-	data, _ := codec.Marshal(resp)
+	data, _ := codec.Wire.Marshal(resp)
 	return data
 }

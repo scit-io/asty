@@ -66,7 +66,7 @@ func (cs *ClusterState) nodeWatchHandlers(onChange func(*types.NodeInfo)) (
 ) {
 	upsert := func(entry nats.KeyValueEntry) {
 		var node types.NodeInfo
-		if err := codec.Unmarshal(entry.Value(), &node); err != nil {
+		if err := codec.State.Unmarshal(entry.Value(), &node); err != nil {
 			log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal node")
 			return
 		}
@@ -84,7 +84,7 @@ func (cs *ClusterState) allocWatchHandlers(onChange func(*types.ServiceAllocatio
 ) {
 	upsert := func(entry nats.KeyValueEntry) {
 		var alloc types.ServiceAllocation
-		if err := codec.Unmarshal(entry.Value(), &alloc); err != nil {
+		if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
 			log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal allocation")
 			return
 		}
@@ -150,7 +150,7 @@ func (cs *ClusterState) WatchAllocation(ctx context.Context, serviceName, nodeID
 				continue
 			}
 			var alloc types.ServiceAllocation
-			if err := codec.Unmarshal(entry.Value(), &alloc); err != nil {
+			if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
 				continue
 			}
 			if fn(&alloc) {

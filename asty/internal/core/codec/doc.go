@@ -1,13 +1,21 @@
-// Package codec is the single seam for the serialization format
-// used on internal asty wires that do not pass straight through to a
-// browser or to a third party: agent RPC payloads and NATS JetStream
-// KV state. Browser-bound surfaces (SSE frames, HTTP API responses,
-// drain progress passthrough) keep using encoding/json directly
-// because their format is dictated by the consumer. Foreign
-// JSON (NATS /varz, /jsz) likewise stays on encoding/json.
+// Package codec is the seam for serialization formats used on asty's
+// internal wires and storage. Two variables expose two independent
+// codecs:
 //
-// The default backend is encoding/json. To migrate the system to a
-// binary format (CBOR, MessagePack, etc.) change the three functions
-// in codec.go; every call site that already uses codec.Marshal /
-// codec.Unmarshal / codec.MustMarshal moves with no further edits.
+//   - Wire — agent RPC payloads and replies, gateway metrics reports,
+//     any other ephemeral NATS message that is never read by an
+//     operator. Target: small and fast representation.
+//
+//   - State — NATS JetStream KV records (nodes, allocations,
+//     cooldowns, scale, leader Info). Target: human-readable so
+//     `nats kv get` stays useful during incident response.
+//
+// Both default to encoding/json. To switch Wire to a binary format
+// (CBOR, MessagePack, etc.) replace `codec.Wire`; State stays JSON
+// unless its variable is replaced too.
+//
+// Browser-bound surfaces (SSE frames, HTTP API responses, drain
+// progress passthrough) and foreign JSON (NATS /varz, /jsz) are
+// outside this package's reach — their format is dictated by the
+// consumer and they keep using encoding/json directly.
 package codec

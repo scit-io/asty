@@ -79,7 +79,7 @@ func (e *Election) GetLeader() (Info, error) {
 	}
 
 	var info Info
-	if err := codec.Unmarshal(entry.Value(), &info); err != nil {
+	if err := codec.State.Unmarshal(entry.Value(), &info); err != nil {
 		// Older versions stored the bare ID without IP; fall back to it.
 		return Info{ID: string(entry.Value())}, nil
 	}
@@ -90,7 +90,7 @@ func (e *Election) GetLeader() (Info, error) {
 // back to the raw bytes for legacy entries.
 func parseLeaderID(data []byte) string {
 	var info Info
-	if err := codec.Unmarshal(data, &info); err == nil {
+	if err := codec.State.Unmarshal(data, &info); err == nil {
 		return info.ID
 	}
 	return string(data)

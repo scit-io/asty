@@ -20,7 +20,7 @@ func (cs *ClusterState) CreateAllocation(alloc *types.ServiceAllocation) error {
 	alloc.CreatedAt = time.Now()
 	alloc.UpdatedAt = time.Now()
 
-	data, err := codec.Marshal(alloc)
+	data, err := codec.State.Marshal(alloc)
 	if err != nil {
 		return fmt.Errorf("failed to marshal allocation: %w", err)
 	}
@@ -45,7 +45,7 @@ func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*types.Servic
 	}
 
 	var alloc types.ServiceAllocation
-	if err := codec.Unmarshal(entry.Value(), &alloc); err != nil {
+	if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal allocation: %w", err)
 	}
 
@@ -73,7 +73,7 @@ func (cs *ClusterState) allocsFromSnapshot(pattern string) ([]*types.ServiceAllo
 	allocs := make([]*types.ServiceAllocation, 0, len(raw))
 	for key, data := range raw {
 		var alloc types.ServiceAllocation
-		if err := codec.Unmarshal(data, &alloc); err != nil {
+		if err := codec.State.Unmarshal(data, &alloc); err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal allocation")
 			continue
 		}
@@ -86,7 +86,7 @@ func (cs *ClusterState) allocsFromSnapshot(pattern string) ([]*types.ServiceAllo
 func (cs *ClusterState) UpdateAllocation(alloc *types.ServiceAllocation) error {
 	alloc.UpdatedAt = time.Now()
 
-	data, err := codec.Marshal(alloc)
+	data, err := codec.State.Marshal(alloc)
 	if err != nil {
 		return fmt.Errorf("failed to marshal allocation: %w", err)
 	}
@@ -112,7 +112,7 @@ func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*ty
 		}
 
 		var alloc types.ServiceAllocation
-		if err := codec.Unmarshal(entry.Value(), &alloc); err != nil {
+		if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
 			return fmt.Errorf("failed to unmarshal allocation: %w", err)
 		}
 		if !fn(&alloc) {
@@ -120,7 +120,7 @@ func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*ty
 		}
 		alloc.UpdatedAt = time.Now()
 
-		data, err := codec.Marshal(&alloc)
+		data, err := codec.State.Marshal(&alloc)
 		if err != nil {
 			return fmt.Errorf("failed to marshal allocation: %w", err)
 		}

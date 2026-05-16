@@ -6,28 +6,40 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// Marshal encodes v with the package's wire format. Drop-in
-// replacement for encoding/json.Marshal — every internal asty NATS
-// payload and KV record goes through this single seam so the format
-// can be swapped for the whole system in one place.
-func Marshal(v any) ([]byte, error) {
-	return json.Marshal(v)
+// Codec describes a serialization backend. Implementations must be
+// safe for concurrent use.
+type Codec interface {
+	Marshal(v any) ([]byte, error)
+	Unmarshal(data []byte, v any) error
+	MustMarshal(v any) []byte
 }
 
-// Unmarshal decodes data into the value pointed to by v. Drop-in
-// replacement for encoding/json.Unmarshal.
-func Unmarshal(data []byte, v any) error {
-	return json.Unmarshal(data, v)
-}
+// Wire is the codec for ephemeral inter-process message-passing on
+// NATS subjects (agent RPC commands and replies, gateway metrics
+// reports). Targets the smallest and fastest representation —
+// nothing on this path is intended to be read by an operator.
+// Switch to a binary backend by replacing this variable.
+var Wire Codec = jsonCodec{}
 
-// MustMarshal is the panic-or-empty variant for hot paths where the
-// call site must stay one-line and the marshalling is "should never
-// fail". On error it logs and returns []byte("{}") so NATS publishers
-// and KV writers never see a nil slice they would have to
-// special-case. With the json backend that byte literal is also valid
-// JSON; a future binary backend would change this to the codec's
-// own empty-object encoding.
-func MustMarshal(v any) []byte {
+// State is the codec for NATS JetStream KV records (cluster nodes,
+// service allocations, cooldowns, scale overrides, leader Info).
+// Optimised for human readability via `nats kv get` over wire size:
+// even a binary Wire codec does not propagate here unless this
+// variable is replaced too.
+var State Codec = jsonCodec{}
+
+// jsonCodec is the default encoding/json-backed Codec used by both
+// Wire and State until a binary backend is introduced.
+type jsonCodec struct{}
+
+func (jsonCodec) Marshal(v any) ([]byte, error)      { return json.Marshal(v) }
+func (jsonCodec) Unmarshal(data []byte, v any) error { return json.Unmarshal(data, v) }
+
+// MustMarshal returns []byte("{}") after logging the error so NATS
+// publishers and KV writers never see a nil slice they would have to
+// special-case. A future binary backend would change the empty-object
+// literal to its own encoding.
+func (jsonCodec) MustMarshal(v any) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
 		log.Error().Err(err).Msg("codec: marshal failed")
