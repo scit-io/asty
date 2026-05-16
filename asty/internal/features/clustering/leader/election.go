@@ -80,18 +80,20 @@ func (e *Election) GetLeader() (Info, error) {
 
 	var info Info
 	if err := codec.State.Unmarshal(entry.Value(), &info); err != nil {
-		// Older versions stored the bare ID without IP; fall back to it.
-		return Info{ID: string(entry.Value())}, nil
+		return Info{}, fmt.Errorf("parse leader info: %w", err)
 	}
 	return info, nil
 }
 
-// parseLeaderID returns the leader ID embedded in a KV entry, falling
-// back to the raw bytes for legacy entries.
+// parseLeaderID returns the leader ID embedded in a KV entry, or an
+// empty string when the entry cannot be parsed. Empty string ensures
+// "this isn't me" callers (campaign, watch) take the not-leader
+// branch rather than risking a false-positive identity match against
+// raw bytes.
 func parseLeaderID(data []byte) string {
 	var info Info
-	if err := codec.State.Unmarshal(data, &info); err == nil {
-		return info.ID
+	if err := codec.State.Unmarshal(data, &info); err != nil {
+		return ""
 	}
-	return string(data)
+	return info.ID
 }
