@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"asty/asty/internal/features/execution/process"
+	"asty/asty/internal/features/observability/logs"
 
 	"github.com/rs/zerolog/log"
 )
@@ -51,9 +52,9 @@ func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 				log.Info().Str("service", serviceName).Msg("log channel closed, ending stream")
 				return
 			}
-			entry, err := json.Marshal(map[string]any{
-				"line":      line,
-				"timestamp": time.Now().Unix(),
+			entry, err := json.Marshal(logs.LineFrame{
+				Line:      line,
+				Timestamp: time.Now().Unix(),
 			})
 			if err != nil {
 				continue

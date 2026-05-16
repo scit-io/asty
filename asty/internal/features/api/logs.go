@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"time"
 
+	"asty/asty/internal/features/observability/logs"
+
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
 )
@@ -37,37 +39,28 @@ func sseSetup(w http.ResponseWriter) http.Flusher {
 	return flusher
 }
 
-// formatLogEntry turns a parsed zerolog JSON entry into a readable
-// display string. Unknown fields are appended as a JSON object to keep
-// structured context visible without flooding the main line.
-func formatLogEntry(entry map[string]any) string {
-	level, _ := entry["level"].(string)
-	message, _ := entry["message"].(string)
-
-	var timeStr string
-	switch v := entry["time"].(type) {
-	case string:
-		timeStr = v
-	default:
-		if ts, ok := entry["timestamp"].(float64); ok {
-			timeStr = time.Unix(int64(ts), 0).Format(time.RFC3339)
-		} else {
-			timeStr = time.Now().Format(time.RFC3339)
-		}
+// formatLogEntry turns a decoded zerolog entry into a readable display
+// string. If the entry is actually a logstream-wrapped raw stdout
+// line (no level, no message, just "line"), it returns that line
+// verbatim — covers the asty.v1.agent.<id>.logs.<svc> path where the
+// agent wraps process stdout in a LineFrame.
+func formatLogEntry(e *logs.ZerologEntry) string {
+	if lf, ok := e.AsLineFrame(); ok {
+		return lf.Line
 	}
 
-	line := fmt.Sprintf("[%s] [%s] %s", timeStr, level, message)
-
-	extra := make(map[string]any)
-	for k, v := range entry {
-		switch k {
-		case "level", "message", "time", "timestamp":
-			continue
-		}
-		extra[k] = v
+	ts := e.Timestamp
+	if ts == 0 {
+		ts = e.Time
 	}
-	if len(extra) > 0 {
-		if b, err := json.Marshal(extra); err == nil {
+	timeStr := time.Now().Format(time.RFC3339)
+	if ts > 0 {
+		timeStr = time.Unix(ts, 0).Format(time.RFC3339)
+	}
+
+	line := fmt.Sprintf("[%s] [%s] %s", timeStr, e.Level, e.Message)
+	if len(e.Extras) > 0 {
+		if b, err := json.Marshal(e.Extras); err == nil {
 			line += " " + string(b)
 		}
 	}
@@ -92,8 +85,8 @@ func readQueryLines(r *http.Request) int {
 // override this where they want stricter behaviour.
 func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher http.Flusher, subject string, fallthroughOnParse bool) {
 	sub, err := api.ctx.NATSConn().Subscribe(subject, func(msg *nats.Msg) {
-		var entry map[string]any
-		if err := json.Unmarshal(msg.Data, &entry); err != nil {
+		entry, err := logs.DecodeZerologEntry(msg.Data)
+		if err != nil {
 			if fallthroughOnParse {
 				fmt.Fprintf(w, "data: %s\n\n", msg.Data)
 				flusher.Flush()
@@ -101,7 +94,7 @@ func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher h
 			return
 		}
 		line := formatLogEntry(entry)
-		data, _ := json.Marshal(map[string]any{"line": line, "timestamp": entry["timestamp"]})
+		data, _ := json.Marshal(logs.LineFrame{Line: line, Timestamp: entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 		flusher.Flush()
 	})
@@ -119,7 +112,7 @@ func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher h
 // with history before the live tail starts.
 func (api *API) emitBufferedLines(w http.ResponseWriter, source string, lines int) {
 	for _, entry := range api.ctx.LogBuffer().GetLast(source, lines) {
-		data, _ := json.Marshal(map[string]any{"line": entry.Line, "timestamp": entry.Timestamp})
+		data, _ := json.Marshal(logs.LineFrame{Line: entry.Line, Timestamp: entry.Timestamp})
 		fmt.Fprintf(w, "data: %s\n\n", data)
 	}
 }

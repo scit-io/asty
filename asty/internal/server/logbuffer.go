@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -43,29 +42,25 @@ func (s *Server) startLogBuffering() {
 
 // makeLogAppender returns a closure that decodes a zerolog JSON entry
 // and appends it to the in-memory log buffer under the given source key.
-// Splitting it out keeps startLogBuffering focused on subscription wiring.
+// For logstream-wrapped process-stdout lines, the raw text is stored
+// verbatim instead of the zerolog "[time] [level] message" template
+// (which would render empty body, since logstream frames have no level
+// or message).
 func (s *Server) makeLogAppender() func(source string, data []byte) {
 	return func(source string, data []byte) {
-		var entry map[string]any
-		if err := json.Unmarshal(data, &entry); err != nil {
+		e, err := logs.DecodeZerologEntry(data)
+		if err != nil {
 			return
 		}
-		level, _ := entry["level"].(string)
-		msg, _ := entry["message"].(string)
-
-		var ts int64
-		if v, ok := entry["timestamp"].(float64); ok {
-			ts = int64(v)
+		if lf, ok := e.AsLineFrame(); ok {
+			s.logBuffer.Append(source, logs.LogLine{Timestamp: lf.Timestamp, Line: lf.Line})
+			return
 		}
-
 		timeStr := ""
-		if t, ok := entry["time"].(string); ok {
-			timeStr = t
-		} else if ts > 0 {
-			timeStr = fmt.Sprintf("%d", ts)
+		if e.Timestamp > 0 {
+			timeStr = fmt.Sprintf("%d", e.Timestamp)
 		}
-
-		line := fmt.Sprintf("[%s] [%s] %s", timeStr, level, msg)
-		s.logBuffer.Append(source, logs.LogLine{Timestamp: ts, Level: level, Line: line})
+		line := fmt.Sprintf("[%s] [%s] %s", timeStr, e.Level, e.Message)
+		s.logBuffer.Append(source, logs.LogLine{Timestamp: e.Timestamp, Level: e.Level, Line: line})
 	}
 }
