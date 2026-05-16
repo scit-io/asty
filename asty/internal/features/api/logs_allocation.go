@@ -1,10 +1,10 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog/log"
@@ -55,7 +55,7 @@ func (api *API) respondAllocSnapshot(w http.ResponseWriter, allocation *types.Se
 		return
 	}
 	var resp types.LogsResponse
-	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+	if err := codec.Unmarshal(msg.Data, &resp); err != nil {
 		api.writeError(w, http.StatusInternalServerError, "failed to parse logs response", err)
 		return
 	}

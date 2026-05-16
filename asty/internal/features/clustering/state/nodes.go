@@ -1,10 +1,10 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
 	"github.com/nats-io/nats.go"
@@ -21,7 +21,7 @@ func (cs *ClusterState) UpdateNode(node *types.NodeInfo) error {
 	if node.CreatedAt.IsZero() {
 		if existing, err := cs.bucket.Get(key); err == nil {
 			var existingNode types.NodeInfo
-			if json.Unmarshal(existing.Value(), &existingNode) == nil && !existingNode.CreatedAt.IsZero() {
+			if codec.Unmarshal(existing.Value(), &existingNode) == nil && !existingNode.CreatedAt.IsZero() {
 				node.CreatedAt = existingNode.CreatedAt
 			}
 		}
@@ -30,7 +30,7 @@ func (cs *ClusterState) UpdateNode(node *types.NodeInfo) error {
 		}
 	}
 
-	data, err := json.Marshal(node)
+	data, err := codec.Marshal(node)
 	if err != nil {
 		return fmt.Errorf("failed to marshal node info: %w", err)
 	}
@@ -54,7 +54,7 @@ func (cs *ClusterState) GetNode(nodeID string) (*types.NodeInfo, error) {
 	}
 
 	var node types.NodeInfo
-	if err := json.Unmarshal(entry.Value(), &node); err != nil {
+	if err := codec.Unmarshal(entry.Value(), &node); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal node info: %w", err)
 	}
 
@@ -71,7 +71,7 @@ func (cs *ClusterState) ListNodes() ([]*types.NodeInfo, error) {
 	nodes := make([]*types.NodeInfo, 0, len(raw))
 	for key, data := range raw {
 		var node types.NodeInfo
-		if err := json.Unmarshal(data, &node); err != nil {
+		if err := codec.Unmarshal(data, &node); err != nil {
 			log.Warn().Err(err).Str("key", key).Msg("failed to unmarshal node")
 			continue
 		}

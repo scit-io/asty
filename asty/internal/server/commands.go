@@ -1,10 +1,10 @@
 package server
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog/log"
@@ -31,7 +31,7 @@ func (s *Server) SendCommandToAgent(nodeID string, kind types.CommandKind, comma
 	}
 
 	var resp types.CommandResponse
-	if err := json.Unmarshal(msg.Data, &resp); err != nil {
+	if err := codec.Unmarshal(msg.Data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 	return &resp, nil

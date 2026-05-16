@@ -1,7 +1,7 @@
 package server
 
 import (
-	"encoding/json"
+	"asty/asty/internal/core/codec"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
@@ -20,7 +20,7 @@ func (s *Server) subscribeGatewayMetrics() {
 			NodeID   string  `json:"node_id"`
 			ValidRPS float64 `json:"valid_rps"`
 		}
-		if err := json.Unmarshal(msg.Data, &report); err != nil {
+		if err := codec.Unmarshal(msg.Data, &report); err != nil {
 			return
 		}
 		s.metricsStore.AddRPS(report.NodeID, report.ValidRPS)

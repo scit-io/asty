@@ -2,9 +2,10 @@ package leader
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
+
+	"asty/asty/internal/core/codec"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"
@@ -73,7 +74,7 @@ func (e *Election) tryBecomeLeader() error {
 }
 
 func (e *Election) claimLeadership() error {
-	data, _ := json.Marshal(Info{ID: e.nodeID, IP: e.nodeIP})
+	data, _ := codec.Marshal(Info{ID: e.nodeID, IP: e.nodeIP})
 	if _, err := e.bucket.Create(leaderKey, data); err != nil {
 		return fmt.Errorf("failed to claim leadership: %w", err)
 	}
@@ -83,7 +84,7 @@ func (e *Election) claimLeadership() error {
 }
 
 func (e *Election) refreshLeadership() error {
-	data, _ := json.Marshal(Info{ID: e.nodeID, IP: e.nodeIP})
+	data, _ := codec.Marshal(Info{ID: e.nodeID, IP: e.nodeIP})
 	if _, err := e.bucket.Put(leaderKey, data); err != nil {
 		e.isLeader = false
 		return fmt.Errorf("failed to refresh leadership: %w", err)

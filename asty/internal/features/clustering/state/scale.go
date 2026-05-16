@@ -1,8 +1,9 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
+
+	"asty/asty/internal/core/codec"
 )
 
 const serviceScaleKey = "service.%s.scale"
@@ -23,7 +24,7 @@ func (cs *ClusterState) GetServiceScale(service string) (int, bool) {
 		return 0, false
 	}
 	var o scaleOverride
-	if err := json.Unmarshal(entry.Value(), &o); err != nil {
+	if err := codec.Unmarshal(entry.Value(), &o); err != nil {
 		return 0, false
 	}
 	return o.Desired, true
@@ -35,7 +36,7 @@ func (cs *ClusterState) SetServiceScale(service string, count int) error {
 	if count < 0 {
 		return fmt.Errorf("scale count must be >= 0, got %d", count)
 	}
-	data, err := json.Marshal(scaleOverride{Desired: count})
+	data, err := codec.Marshal(scaleOverride{Desired: count})
 	if err != nil {
 		return fmt.Errorf("marshal scale: %w", err)
 	}

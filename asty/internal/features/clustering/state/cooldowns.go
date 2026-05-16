@@ -1,10 +1,10 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 	"time"
 
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
 	"github.com/nats-io/nats.go"
@@ -25,7 +25,7 @@ func (cs *ClusterState) GetServiceCooldown(service string) (types.ServiceCooldow
 		return types.ServiceCooldown{}, fmt.Errorf("failed to get cooldown: %w", err)
 	}
 	var c types.ServiceCooldown
-	if err := json.Unmarshal(entry.Value(), &c); err != nil {
+	if err := codec.Unmarshal(entry.Value(), &c); err != nil {
 		return types.ServiceCooldown{}, fmt.Errorf("failed to unmarshal cooldown: %w", err)
 	}
 	return c, nil
@@ -51,14 +51,14 @@ func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCoo
 		)
 		if err == nil {
 			rev = entry.Revision()
-			if err := json.Unmarshal(entry.Value(), &c); err != nil {
+			if err := codec.Unmarshal(entry.Value(), &c); err != nil {
 				return fmt.Errorf("unmarshal cooldown: %w", err)
 			}
 		} else if err != nats.ErrKeyNotFound {
 			return fmt.Errorf("get cooldown: %w", err)
 		}
 		fn(&c)
-		data, err := json.Marshal(&c)
+		data, err := codec.Marshal(&c)
 		if err != nil {
 			return fmt.Errorf("marshal cooldown: %w", err)
 		}
