@@ -12,6 +12,7 @@ import (
 
 	"asty/asty/internal/agent"
 	"asty/asty/internal/core/config"
+	"asty/asty/internal/features/observability/logs"
 	"asty/asty/internal/server"
 )
 
@@ -21,7 +22,7 @@ func main() {
 	flag.Parse()
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr}).Hook(logs.TimestampHook{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
