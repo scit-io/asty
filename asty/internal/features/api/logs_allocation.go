@@ -23,7 +23,7 @@ func (api *API) handleAllocationLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	nLines := readQueryLines(r)
 
-	if !wantsSSE(r) {
+	if transportPolling(r) {
 		api.respondAllocSnapshot(w, allocation, allocID, nLines)
 		return
 	}

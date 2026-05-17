@@ -17,7 +17,7 @@ func (api *API) handleNodeLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	nLines := readQueryLines(r)
 
-	if !wantsSSE(r) {
+	if transportPolling(r) {
 		history := api.ctx.LogBuffer().GetLast("node."+nodeID, nLines)
 		lines := make([]string, len(history))
 		for i, e := range history {

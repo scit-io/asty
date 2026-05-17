@@ -19,7 +19,7 @@ func applyAllocCounts(node *types.NodeInfo, counts map[string]allocCounts) {
 // handleNodes serves GET /nodes — list every node, with allocation
 // counts attached. SSE flavour streams the same shape on each tick.
 func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamNodes(w, r)
 		return
 	}
@@ -42,7 +42,7 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 // streams the same node + its per-node metrics + allocations.
 func (api *API) handleNode(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.PathValue("id")
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamNode(w, r, nodeID)
 		return
 	}

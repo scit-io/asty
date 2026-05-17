@@ -26,7 +26,7 @@ func (api *API) handleNodeAllocations(w http.ResponseWriter, r *http.Request) {
 // stale URL after a migration).
 func (api *API) handleAllocation(w http.ResponseWriter, r *http.Request) {
 	allocID := r.PathValue("allocId")
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamAllocation(w, r, allocID)
 		return
 	}

@@ -12,7 +12,7 @@ import (
 func (api *API) handleClusterLogs(w http.ResponseWriter, r *http.Request) {
 	nLines := readQueryLines(r)
 
-	if !wantsSSE(r) {
+	if transportPolling(r) {
 		history := api.ctx.LogBuffer().GetLast("cluster", nLines)
 		lines := make([]string, len(history))
 		for i, e := range history {

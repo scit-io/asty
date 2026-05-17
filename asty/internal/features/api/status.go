@@ -9,7 +9,7 @@ import (
 // as a one-shot JSON snapshot (default) or as an SSE stream of
 // snapshots (Accept: text/event-stream).
 func (api *API) handleCluster(w http.ResponseWriter, r *http.Request) {
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamCluster(w, r)
 		return
 	}

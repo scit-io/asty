@@ -12,7 +12,7 @@ import (
 // handleServices serves GET /services — list every loaded service
 // definition. SSE flavour streams the same list on each tick.
 func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamServices(w, r)
 		return
 	}
@@ -27,7 +27,7 @@ func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 // view + per-service metrics on each tick.
 func (api *API) handleService(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.PathValue("name")
-	if wantsSSE(r) {
+	if transportSSE(r) {
 		api.streamService(w, r, serviceName)
 		return
 	}
