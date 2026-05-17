@@ -29,9 +29,9 @@ func TestResolveArtifactURL(t *testing.T) {
 		},
 		{
 			name:     "all three placeholders",
-			template: "https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/xauth_linux_${ARCH}.tar.gz",
+			template: "https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/service_linux_${ARCH}.tar.gz",
 			version:  "v1.2.3",
-			want:     "https://github.com/acme/asty/releases/download/v1.2.3/xauth_linux_" + runtime.GOARCH + ".tar.gz",
+			want:     "https://github.com/acme/asty/releases/download/v1.2.3/service_linux_" + runtime.GOARCH + ".tar.gz",
 		},
 		{
 			name:     "unknown placeholder preserved",
