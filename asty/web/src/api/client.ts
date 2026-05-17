@@ -6,11 +6,12 @@ import type {
   DrainStatus,
 } from '../types'
 
-// API_BASE is the single source of truth for the orchestrator's HTTP
+// API_PREFIX is the single source of truth for the orchestrator's HTTP
 // namespace on the frontend side. The backend has the matching
-// `apiPrefix` constant in features/api/api.go — change both if you
-// rename. Every fetch and EventSource in the SPA goes through this.
-export const API_BASE = '/api/v1'
+// `apiPrefix` constant in features/api/api.go — change both in
+// lockstep when renaming. Every fetch and EventSource in the SPA
+// goes through this.
+export const API_PREFIX = '/metrics'
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
@@ -23,9 +24,9 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Services
   getService: (name: string) =>
-    fetchJSON<ServiceDetailResponse>(`${API_BASE}/services/${name}`),
+    fetchJSON<ServiceDetailResponse>(`${API_PREFIX}/services/${name}`),
   scaleService: (name: string, count: number) =>
-    fetchJSON(`${API_BASE}/services/${name}/scale`, {
+    fetchJSON(`${API_PREFIX}/services/${name}/scale`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count }),
@@ -33,39 +34,39 @@ export const api = {
 
   // Allocations (now scoped under their hosting node)
   getAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON<AllocationDetail>(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}`),
+    fetchJSON<AllocationDetail>(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}`),
   getAllocationLogs: (nodeId: string, allocId: string) =>
-    fetchJSON<LogsResponse>(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}/logs`),
+    fetchJSON<LogsResponse>(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/logs`),
 
   // Autoscaler — single per-service endpoint returns status + events.
   getServiceAutoscaler: (name: string) =>
-    fetchJSON(`${API_BASE}/services/${name}/autoscaler`),
+    fetchJSON(`${API_PREFIX}/services/${name}/autoscaler`),
 
   // Deploy
   deploy: (service: string, version: string) =>
-    fetchJSON(`${API_BASE}/services/${service}/deploy`, {
+    fetchJSON(`${API_PREFIX}/services/${service}/deploy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version }),
     }),
   getServiceDeployments: (service: string) =>
-    fetchJSON<DeploymentsResponse>(`${API_BASE}/services/${service}/deploy`),
+    fetchJSON<DeploymentsResponse>(`${API_PREFIX}/services/${service}/deploy`),
 
   // Node maintenance
   drainNode: (id: string, enable: boolean) =>
-    fetchJSON(`${API_BASE}/nodes/${id}/drain`, {
+    fetchJSON(`${API_PREFIX}/nodes/${id}/drain`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enable }),
     }),
   getDrainStatus: (id: string) =>
-    fetchJSON<DrainStatus>(`${API_BASE}/nodes/${id}/drain`),
+    fetchJSON<DrainStatus>(`${API_PREFIX}/nodes/${id}/drain`),
   pauseNode: (id: string) =>
-    fetchJSON(`${API_BASE}/nodes/${id}/pause`, { method: 'POST' }),
+    fetchJSON(`${API_PREFIX}/nodes/${id}/pause`, { method: 'POST' }),
 
   // Allocation actions
   restartAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}/restart`, { method: 'POST' }),
+    fetchJSON(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/restart`, { method: 'POST' }),
   stopAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}/stop`, { method: 'POST' }),
+    fetchJSON(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/stop`, { method: 'POST' }),
 }

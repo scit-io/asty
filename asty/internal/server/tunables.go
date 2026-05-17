@@ -13,9 +13,9 @@ const (
 	// configure; older points are dropped to bound memory.
 	metricsRetention = 2 * time.Hour
 
-	// logBufferLines — how many recent log lines /api/v1/logs returns
-	// without subscribing. Big enough to debug a recent incident,
-	// small enough to fit in memory across many sources.
+	// logBufferLines — how many recent log lines `<apiPrefix>/logs`
+	// returns without subscribing. Big enough to debug a recent
+	// incident, small enough to fit in memory across many sources.
 	logBufferLines = 1000
 
 	// eventBufferEntries — capacity of the cluster-events ring buffer

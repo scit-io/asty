@@ -12,10 +12,11 @@ import (
 )
 
 // apiPrefix is the single source of truth for the HTTP namespace under
-// which every data route is registered. Changing this string moves all
-// of the SPA's API calls in one place; the SPA reads the matching
-// constant from api/base.ts.
-const apiPrefix = "/api/v1"
+// which every data route is registered on the orchestrator side.
+// Changing this string moves all of the SPA's API calls in one place;
+// the SPA reads the matching `API_PREFIX` constant in
+// `asty/web/src/api/client.ts` — change both in lockstep.
+const apiPrefix = "/metrics"
 
 // API provides the orchestrator's HTTP surface: SSE streams, polling
 // endpoints, and command POSTs — all on a single port. Content-

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { API_BASE } from '@/api/client'
+import { API_PREFIX } from '@/api/client'
 import type {
   Node,
   ClusterStatus,
@@ -147,7 +147,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
   allocationCache: {},
 
   subscribeCluster: () => {
-    return openStream(`${API_BASE}/`, (es) => {
+    return openStream(`${API_PREFIX}/`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('nodes', (event) => {
         try {
@@ -185,7 +185,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
   },
 
   subscribeNodes: () => {
-    return openStream(`${API_BASE}/nodes`, (es) => {
+    return openStream(`${API_PREFIX}/nodes`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('nodes', (event) => {
         try {
@@ -197,7 +197,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
   },
 
   subscribeServices: () => {
-    return openStream(`${API_BASE}/services`, (es) => {
+    return openStream(`${API_PREFIX}/services`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('services', (event) => {
         try {
@@ -217,7 +217,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
       return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: seed } } }
     })
 
-    return openStream(`${API_BASE}/nodes/${nodeId}`, (es) => {
+    return openStream(`${API_PREFIX}/nodes/${nodeId}`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('node', (event) => {
         try {
@@ -272,7 +272,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
   },
 
   subscribeService: (name) => {
-    return openStream(`${API_BASE}/services/${name}`, (es) => {
+    return openStream(`${API_PREFIX}/services/${name}`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('detail', (event) => {
         try {
@@ -324,7 +324,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
   },
 
   subscribeAllocation: (nodeId, allocId) => {
-    return openStream(`${API_BASE}/nodes/${nodeId}/allocations/${allocId}`, (es) => {
+    return openStream(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}`, (es) => {
       attachStatusHandler(es, set)
       es.addEventListener('detail', (event) => {
         try {
