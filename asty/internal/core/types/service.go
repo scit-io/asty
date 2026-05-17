@@ -79,7 +79,7 @@ type Health struct {
 // Services define their own rules — the gateway collects them at startup
 // and applies the matching rule (longest prefix wins) before proxying.
 type RateLimitRule struct {
-	PathPrefix string  `yaml:"path_prefix"` // e.g. "/v1/auth/"
+	PathPrefix string  `yaml:"path_prefix"` // e.g. "/<gateway-prefix>/<service>/"
 	Rate       float64 `yaml:"rate"`        // Requests per second per IP
 	Burst      int     `yaml:"burst"`       // Burst above steady rate
 }
