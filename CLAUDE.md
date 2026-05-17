@@ -187,7 +187,7 @@ to itself.
 1. `A_NATS_PEERS_FILE` — path to a file with one IP per line (or
    comma-separated). Used in dev to imitate a DNS A-record: `start.sh`
    maintains it, agents re-read on every watcher tick, `start.sh
-   addnode` appends a line to grow the cluster live.
+   add` appends a line to grow the cluster live.
 2. `A_NATS_PEERS` — comma-separated env var. Static, doesn't change
    during process lifetime; useful for CI and one-shot launches.
 3. DNS `LookupIP(cfg.Domain)` — the prod path. Operators add/remove
@@ -342,7 +342,7 @@ Without `-config`, the default `./config.asty` is consulted and a missing file i
 - `A_NATS_OBSERVER_USER`, `A_NATS_OBSERVER_PASSWORD` — SYS-account read-only connection the agent uses for `$SYS.REQ.SERVER.*.STATSZ`/`JSZ`.
 - `A_NATS_APP_USER`, `A_NATS_APP_PASSWORD` — ASTY-account credentials handed to spawned services. MUST differ from `A_NATS_USER`.
 - All `A_NATS_*_PASSWORD` env vars are also substituted into `nats.accounts.*.users[].password` in `config.asty` at load time via `${VAR}` expansion (bare `$NAME` is left alone so NATS subjects like `$SYS.REQ.*` survive).
-- `A_NATS_PEERS_FILE` — path to a file with one peer IP per line (or comma-separated). Highest-priority peer source — used in dev where `start.sh` maintains the file and agents re-read on every watcher tick (`addnode` appends a line to grow the cluster live).
+- `A_NATS_PEERS_FILE` — path to a file with one peer IP per line (or comma-separated). Highest-priority peer source — used in dev where `start.sh` maintains the file and agents re-read on every watcher tick (`add` appends a line to grow the cluster live).
 - `A_NATS_PEERS` — comma-separated peer IPs. Static, doesn't change during process lifetime; fallback when `A_NATS_PEERS_FILE` is unset. In prod neither is set and the agent falls back to DNS lookup of `cfg.Domain`.
 - `A_MIN_COPIES`, `A_TARGET_CPU`, `A_TARGET_MEMORY`, `A_TRAFFIC_RPS_THRESHOLD`, `A_EVAL_INTERVAL`, `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`
 - `A_UI_ADDR`, `A_WORK_DIR`, `A_SERVICE_DIR`
@@ -366,12 +366,12 @@ at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
 ```
 deploy/dev/start.sh                  # 1 node
 deploy/dev/start.sh 3                # 3 nodes (server + agent each)
-deploy/dev/start.sh addnode          # grow the running cluster by one
-deploy/dev/start.sh removenode [N]   # shrink: tear down node N (default: highest)
+deploy/dev/start.sh add          # grow the running cluster by one
+deploy/dev/start.sh remove [N]   # shrink: tear down node N (default: highest)
 deploy/dev/start.sh stop             # tear down everything
 ```
 
-`addnode` appends the new node's IP to `peers.txt`, brings up its
+`add` appends the new node's IP to `peers.txt`, brings up its
 loopback alias (`127.0.0.$i`), and starts a fresh server+agent pair.
 Existing agents notice the file change on their next watcher tick
 (~5 s). For a cluster already at N>1 they SIGHUP their `nats-server`
@@ -380,15 +380,15 @@ a cold restart on the existing node because JetStream flips from
 standalone to clustered. Either way the leader's `watchStreamReplicas`
 then raises replicas on existing KV buckets so the cluster has grown.
 
-`removenode` is the symmetric op: SIGTERM the target node's server +
+`remove` is the symmetric op: SIGTERM the target node's server +
 agent (sudo), strip its IP from `peers.txt`, and wipe its per-node
-working dir + JetStream store so a later `addnode` reusing the same
+working dir + JetStream store so a later `add` reusing the same
 index starts clean. Surviving nodes hot-reload via SIGHUP when 2+
 remain; the 2→1 step is a cold restart (clustered → standalone).
-`removenode` refuses to take the last node down — use `stop` for that.
+`remove` refuses to take the last node down — use `stop` for that.
 
 PID bookkeeping is per-node (`$DATA_BASE/pids-$i`, two lines: server,
-agent), so `removenode` can target one node's processes without
+agent), so `remove` can target one node's processes without
 scanning `ps`.
 
 Authoritative struct layout: `asty/internal/core/config/` —

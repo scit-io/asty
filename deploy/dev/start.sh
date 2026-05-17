@@ -6,8 +6,8 @@
 # Usage:
 #   ./start.sh             — 1 node (server + agent)
 #   ./start.sh 3           — 3 nodes (server + agent each, with leader election)
-#   ./start.sh addnode     — grow a running cluster by one node
-#   ./start.sh removenode [N] — shrink: tear down node N (default: highest)
+#   ./start.sh add     — grow a running cluster by one node
+#   ./start.sh remove [N] — shrink: tear down node N (default: highest)
 #   ./start.sh stop        — stop everything
 
 set -euo pipefail
@@ -22,12 +22,12 @@ VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
 # Per-node PID file: $DATA_BASE/pids-$i, two lines (server, agent).
-# Per-node so removenode can target a specific node's PIDs without
+# Per-node so remove can target a specific node's PIDs without
 # scanning ps; stop_all iterates the whole set.
 PID_FILE_TMPL="$DATA_BASE/pids"
 # Shared peer-list file consumed by every agent (A_NATS_PEERS_FILE).
 # Imitates a prod DNS A-record: one IP per line, agents re-read on
-# every watcher tick, self-filter in code. addnode/removenode update
+# every watcher tick, self-filter in code. add/remove update
 # this file; live agents pick up the change on their next tick.
 PEERS_FILE="$DATA_BASE/peers.txt"
 
@@ -265,7 +265,7 @@ remove_node() {
     done < "$PEERS_FILE"
   fi
   if ! [[ "$target" =~ ^[0-9]+$ ]] || [[ $target -lt 1 ]]; then
-    die "usage: $0 removenode [N]  (N ≥ 1)"
+    die "usage: $0 remove [N]  (N ≥ 1)"
   fi
 
   local pidfile="${PID_FILE_TMPL}-$target"
@@ -302,7 +302,7 @@ remove_node() {
   mv "$tmp" "$PEERS_FILE"
 
   # 3) Clean per-node state — pidfile, working dir, JS store. Old
-  #    JetStream data would conflict with a future addnode reusing
+  #    JetStream data would conflict with a future add reusing
   #    the same index.
   rm -f "$pidfile"
   sudo rm -rf "$DATA_BASE/work/dev-node-$target" "$DATA_BASE/jetstream/dev-node-$target" "$DATA_BASE/node$target"
@@ -421,19 +421,19 @@ if [[ "$CMD" == "stop" ]]; then
   exit 0
 fi
 
-if [[ "$CMD" == "addnode" ]]; then
+if [[ "$CMD" == "add" ]]; then
   check_deps
   add_node
   exit 0
 fi
 
-if [[ "$CMD" == "removenode" ]]; then
+if [[ "$CMD" == "remove" ]]; then
   remove_node "${2:-}"
   exit 0
 fi
 
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop|addnode|removenode [N]]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|add|remove [N]]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"
