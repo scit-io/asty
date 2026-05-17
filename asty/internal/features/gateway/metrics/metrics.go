@@ -53,12 +53,12 @@ var WSConnectionsActive = promauto.NewGauge(
 )
 
 // RateLimitRejectedTotal counts requests rejected by the gateway rate
-// limiter. The `kind` label distinguishes the general per-IP cap from
-// the strict auth-prefix cap.
+// limiter. The `kind` label takes either `general` (the per-IP fallback
+// cap) or the path prefix of the matched service rate-limit rule.
 var RateLimitRejectedTotal = promauto.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "gateway_rate_limit_rejected_total",
-		Help: "HTTP requests rejected by Gateway rate limiter, by kind (general|auth).",
+		Help: "HTTP requests rejected by Gateway rate limiter. The `kind` label is `general` for the per-IP fallback cap, otherwise the matched path prefix from a service's rate-limit rule.",
 	},
 	[]string{"kind"},
 )
