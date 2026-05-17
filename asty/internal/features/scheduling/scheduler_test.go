@@ -59,7 +59,7 @@ func TestPickCandidatesStableTiebreak(t *testing.T) {
 		newReadyNode("nodeC", "dc1"),
 	}
 	svc := &types.ServiceDefinition{
-		Name:      "xauth",
+		Name:      "alpha",
 		Type:      types.ServiceTypeService,
 		Resources: types.Resources{CPU: 100, Memory: 32},
 	}
@@ -90,7 +90,7 @@ func TestPickCandidatesGeoSpread(t *testing.T) {
 		newReadyNode("c1", "dc3"),
 	}
 	svc := &types.ServiceDefinition{
-		Name:      "xauth",
+		Name:      "beta",
 		Type:      types.ServiceTypeService,
 		Resources: types.Resources{CPU: 100, Memory: 32},
 	}
@@ -118,7 +118,7 @@ func TestPickCandidatesPacking(t *testing.T) {
 		newReadyNode("a3", "dc1"),
 	}
 	svc := &types.ServiceDefinition{
-		Name:      "xhttp",
+		Name:      "gamma",
 		Type:      types.ServiceTypeService,
 		Resources: types.Resources{CPU: 100, Memory: 32},
 	}
