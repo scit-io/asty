@@ -21,8 +21,8 @@ Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *m
 **Asty** is a microservices orchestrator with locality-aware autoscaling for NATS-based platforms. Single binary, two modes (server + agent), combining scheduling, autoscaling, and deployment.
 
 The project consists of two main parts:
-1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui).
-2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite).
+1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui). **The orchestrator must remain agnostic of any specific managed service** — no `xauth`/`xhttp`/`xws` names, no demo-shaped paths or NATS subjects, no service-specific assumptions inside this package. Any leakage is a Critical defect.
+2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite). **These services, together with `deploy/{dev,prod}/`, `Makefile`'s `build-demo` target, and the coding-rule examples that reference them, are intentional customer-facing boilerplate.** The buyer of the platform removes them when shipping their own services. Mentions of demo names outside `asty/` are by design, not findings.
 
 **Monitoring:** Asty exposes its HTTP surface at `:8080` (SSE streams, polling endpoints incl. Prometheus, command POSTs). Web UI (`asty/web/`) connects to it for cluster monitoring.
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
@@ -180,6 +180,15 @@ when that direction makes sense). The same number is meaningful to a
 human glancing at the dashboard and to an alerting system parsing the
 scrape output — divergence between the two surfaces is a bug, not a
 stylistic choice.
+
+**Logs are not on this surface.** The mirror rule is about *metrics*
+— numeric time series. Application logs (zerolog JSON) flow through
+their own pair of consumers: the dashboard's live SSE tail and
+in-memory history, plus an external log shipper (Vector, Datadog,
+Loki, …) configured per deployment. Do not add log-event counters or
+log lines to `/metrics` — it is the wrong format for log data, and
+the external shipper is the source of truth for log retention and
+content-based alerting.
 
 ### HTTP surfaces
 

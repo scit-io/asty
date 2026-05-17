@@ -17,6 +17,68 @@ User asks for an audit, "find dead code / wheels / overhead", "tidy TODOs and co
 
 Fresh findings always start `[ ]`. User flips marker as work proceeds. Priority lives in **section** (Critical/High/Medium/Low) or order within the plan — never in the marker.
 
+## Mandatory check on every audit: demo-service artefacts inside `asty/`
+
+Run this **before** anything else. The platform (`asty/`) must
+contain no references to specific managed services. **Scope is
+strictly `asty/`**: demos appearing in `demo/`, `deploy/`,
+`Makefile`, and coding-rule examples are intentional
+customer-facing boilerplate (see
+[[project-demo-boilerplate]]) — not findings.
+
+Three independent passes, file:line for every match, all scoped
+to `asty/`:
+
+1. **Names** — grep (case-insensitive) for demo service names
+   (`xauth`, `xhttp`, `xws`, `demo`) under `asty/` only.
+2. **Shapes** — grep under `asty/` for demo-shaped paths and
+   subjects (`api.v1.`, `/v1/auth`, `/login`, `/refresh`,
+   `X_AUTH_*`, `JWT`, demo bucket names, hardcoded subject
+   formats like `fmt.Sprintf("api.v1.%s…"`).
+3. **Tests and comments** — re-grep `asty/internal/**/*_test.go`
+   and comments for demo-shaped examples — fixtures named
+   `xauth`/`xhttp`, comments showing `/v1/auth/login` as the
+   example. These are easy to miss because they read like docs.
+
+Report as the **first Critical finding** of every audit
+(§1.1), even if empty — write "verified clean" with `[+]` so
+the reader knows the check was done. See
+[[feedback-audit-no-demo-artefacts]],
+[[project-demo-boilerplate]].
+
+## Mandatory check on every audit: read labels, not names
+
+For every Prometheus instrument (or any labelled data point —
+typed events, log fields, NATS subject segments) the audit
+touches, **list the labels and trace the increment sites** before
+making any claim about what the data is. The metric NAME tells
+you where it was registered; the LABELS and the CALL SITES tell
+you what the data actually describes.
+
+A counter named `gateway_http_requests_total{service, method, status}`
+is not "about the gateway" just because of its prefix — if the
+`service` label's value is a user-facing service name, the data
+is about that service. The naming itself is then a finding (the
+name lies about the subject).
+
+See [[feedback-audit-read-labels-not-names]].
+
+## Mandatory check on every audit: format discipline
+
+Binary-first is a project-wide rule (see `project_binary_first`).
+Every audit MUST grep the touched scope for `json.Marshal`/
+`json.Unmarshal` outside the codec package and verify each use is
+on an allowed format boundary — HTTP responses to the dashboard
+or CLI, Server-Sent Events payloads, Prometheus text, or
+application logs. Anything else is a **bug from a previous
+iteration**, not a stylistic remark — report it as such, with the
+specific file:line and a one-line fix (swap to `codec.Wire`/
+`codec.State`).
+
+The rule has exactly five exit doors: HTTP, SSE, Prometheus text,
+logs (zerolog), and the dev-mode escape hatch (`UseJSONForDev`).
+Every other JSON site is a finding.
+
 ## What to look for
 
 1. **Wheels** — handwritten stdlib (own split, own MaxInt, own Prometheus text vs `promhttp.Handler()`).
@@ -31,15 +93,93 @@ Fresh findings always start `[ ]`. User flips marker as work proceeds. Priority 
 10. **Env drift** — structural delta between dev and prod environment configs (`feedback_dev_prod_sync`). Project-specific layout — discover the paths from the repo.
 11. **TS ↔ Go drift** — frontend types referencing enums absent from Go.
 12. **Architecture** — wrapper services that may be unnecessary (e.g. xws bridging WS over NATS). Raise as discussion item, not bug.
+13. **Surface mirror gaps** — when auditing an observability area (logs, metrics, events, status), list ALL parallel surfaces it touches (dashboard SSE, `/metrics`, JSON API, NATS subjects, CLI) and verify the audit covers each. The mirror rule in `CLAUDE.md` ("UI and Prometheus stay in lockstep") is enforceable, not aspirational — auditing one surface in isolation misses half the picture and is a rejectable defect. Before writing the report, enumerate the surfaces explicitly in your head: "this feature is visible at X, Y, Z — have I checked each?"
 
-## Don't claim without verifying
+## Don't claim without verifying — EVERY claim, EVERY section
+
+This is the core rule of the audit skill. An audit that contains one
+unverified statement is compromised in full and the user is right to
+throw the whole report away — not just the offending line. Sloppy
+audits are worse than no audit, because they push the user into
+wasting time chasing claims that don't hold.
+
+### Trust only the executing code — not docs, not comments, not identifiers
+
+**The body of a function is the only source of truth.** Every
+other surface lies eventually:
+
+- **Doc comments at the top of structs / functions / packages.**
+- **Prose paragraphs in CLAUDE.md, READMEs, design docs.**
+- **Function names** — a function called `validateInput` may not
+  validate.
+- **Variable names** — a variable called `safeBuffer` may not be
+  safe.
+- **Struct / type names** — `GatewayConfig` may hold fields that
+  don't belong to a gateway.
+- **File names** — `metrics.go` may not be where the increment
+  happens.
+- **Package names** — `gateway/metrics/` may register metrics
+  about user-facing services, not about the gateway.
+- **Prometheus metric names** — `gateway_http_requests_total`
+  whose `service` label takes user-service values is metric
+  about a user service, not about the gateway. The name prefix
+  lies.
+- **NATS subject literals quoted in docs**, command-line examples
+  copied from old branches, anything that isn't running code.
+
+During an audit:
+- Read functions and call graphs. Read what gets written to the
+  response, registered on the mux, branched on, looped over.
+  Trace label values back to their assignment site.
+- For every claim, the source is the unrolled call graph —
+  never an identifier or a comment.
+- When name and behaviour disagree, the **name is itself a
+  finding**. Report it: "name X promises Y, body does Z." Don't
+  silently rename — surface the gap so the user decides whether
+  to rename the symbol or change the behaviour.
+- Documentation drift is reportable on its own — "comment at
+  file:line claims X, code does Y."
+
+This rule was added after consecutive audit failures: the API
+doc comment promised three-way content negotiation while the
+code did two; the `gateway_*` Prometheus counters described user
+services while their name said gateway. Each time the name was
+misleading and I leaned on it instead of reading the body. The
+rule applies to every audit going forward.
+
+See [[feedback-audit-trust-only-execution]],
+[[feedback-audit-read-labels-not-names]],
+[[feedback-intent-implementation-drift]].
 
 - npm versions → WebFetch `https://registry.npmjs.org/<pkg>/latest` before "version X doesn't exist".
 - Port/listener → `grep -rn "<port>"` before "no listener".
 - Dead function → `grep -rn "<funcName>"` before "unused".
 - Latest tooling → check current state, don't rely on training cutoff.
+- Subject names, file paths, line numbers, struct field lists, function
+  signatures, counts ("two formatters", "three shapes") — re-check
+  against the code at write time. Do not paraphrase from memory of
+  what you read minutes ago.
+- Cross-cutting claims ("same prefix", "every path", "always",
+  "never") — verify both halves. Each universal quantifier multiplies
+  the verification burden.
+- The **top summary is not a free zone**. It restates findings from
+  later sections; if the later section is loose, the summary inherits
+  the looseness — and the user reads the summary first.
 
-If a check is impossible, write "could not verify — assumption needs validation".
+If a check is impossible in this pass, write "could not verify —
+assumption needs validation" instead of asserting.
+
+**Fresh-eyes rule on re-audit.** When re-auditing a file or topic
+after a prior pass (yours or another agent's), do not lean on the
+previous finding's wording. Re-read the code from scratch. Prior
+conclusions are a starting hypothesis to test, not a fact to inherit
+— they may have been wrong, or the code may have changed since.
+
+**No quiet rewording during edits.** If the user rejects a finding
+and you edit the report, do not tighten language ("the same prefix",
+"both", "always") without re-verifying the new wording against code.
+A "fix" that introduces a new unverified claim re-compromises the
+report.
 
 ## Audit method
 
