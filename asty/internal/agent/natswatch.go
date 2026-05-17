@@ -2,9 +2,11 @@ package agent
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"slices"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,8 +28,9 @@ const natsRestartGrace = 10 * time.Second
 // superviseNATS owns the child nats-server lifecycle for the agent.
 // Three things can happen at any time:
 //   - ctx is cancelled → graceful stop, return.
-//   - natsRestartCh fires (watchNATSPeers) → graceful stop, rebootstrap
-//     with the freshest peer list, loop.
+//   - natsRestartCh fires (watchNATSPeers) → try a hot reload via
+//     SIGHUP; fall back to a cold restart only when the JetStream
+//     mode itself flips (standalone↔clustered).
 //   - the child exits on its own → fatal: running without the local
 //     broker is meaningless, and we already issue restarts ourselves
 //     on config changes.
@@ -42,22 +45,78 @@ func (a *Agent) superviseNATS(ctx context.Context) {
 		exitCh := make(chan error, 1)
 		go func(c *exec.Cmd) { exitCh <- c.Wait() }(cmd)
 
-		select {
-		case <-ctx.Done():
-			a.stopNATSChild(cmd, exitCh)
-			return
-		case <-a.natsRestartCh:
-			log.Info().Msg("nats-server peer list changed, restarting child")
-			a.stopNATSChild(cmd, exitCh)
-			if err := a.bootstrapNATS(ctx); err != nil {
-				log.Fatal().Err(err).Msg("nats-server restart: bootstrap failed")
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				a.stopNATSChild(cmd, exitCh)
+				return
+			case <-a.natsRestartCh:
+				if a.tryHotReloadNATS(cmd) {
+					// Same process, same exitCh — keep waiting on it.
+					continue wait
+				}
+				log.Info().Msg("nats-server peer list changed, cold restart")
+				a.stopNATSChild(cmd, exitCh)
+				if err := a.bootstrapNATS(ctx); err != nil {
+					log.Fatal().Err(err).Msg("nats-server restart: bootstrap failed")
+					return
+				}
+				break wait
+			case err := <-exitCh:
+				log.Fatal().Err(err).Msg("nats-server exited unexpectedly; agent cannot continue")
 				return
 			}
-		case err := <-exitCh:
-			log.Fatal().Err(err).Msg("nats-server exited unexpectedly; agent cannot continue")
-			return
 		}
 	}
+}
+
+// tryHotReloadNATS writes the freshly-rendered nats.conf and signals
+// the child with SIGHUP when the change is safe to apply live —
+// meaning both the old and new conf carry a cluster{} block, so the
+// JetStream mode (standalone vs clustered) does not flip. Returns
+// false on any failure or mode flip; the caller then falls back to a
+// cold restart.
+func (a *Agent) tryHotReloadNATS(cmd *exec.Cmd) bool {
+	nodeIP := a.resolveNodeIP()
+	if nodeIP == "" {
+		return false
+	}
+	newConf := a.renderNATSConf(nodeIP)
+
+	oldRaw, err := os.ReadFile(a.natsConfPath())
+	if err != nil {
+		return false
+	}
+	if !natsConfCanHotReload(string(oldRaw), newConf) {
+		return false
+	}
+	if string(oldRaw) == newConf {
+		// Watcher fired but the rendered conf didn't actually change —
+		// peer source produced equivalent output (e.g. duplicate entry
+		// added then removed). Nothing to do.
+		return true
+	}
+	if err := a.writeNATSConf(newConf); err != nil {
+		log.Error().Err(err).Msg("nats-server hot-reload: write conf failed")
+		return false
+	}
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		log.Error().Err(err).Msg("nats-server hot-reload: SIGHUP failed")
+		return false
+	}
+	log.Info().Msg("nats-server peer list changed, hot-reloaded via SIGHUP")
+	return true
+}
+
+// natsConfCanHotReload reports whether NATS can apply the delta from
+// oldConf to newConf without a process restart. The single guard is
+// whether both conf strings still have a cluster{} block — flipping
+// JetStream between standalone and clustered modes requires a fresh
+// bootstrap, but a routes-list change inside an already-clustered
+// node is exactly what SIGHUP exists for.
+func natsConfCanHotReload(oldConf, newConf string) bool {
+	return strings.Contains(oldConf, "cluster {") && strings.Contains(newConf, "cluster {")
 }
 
 // stopNATSChild sends SIGTERM and waits up to natsRestartGrace for the

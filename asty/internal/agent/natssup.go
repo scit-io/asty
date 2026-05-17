@@ -28,8 +28,8 @@ const natsReadyProbeInterval = 100 * time.Millisecond
 // bootstrapNATS launches the local nats-server child process from a
 // configuration rendered out of cfg.NATS. Blocks until the process is
 // accepting connections on the configured listen port. After return,
-// agent.natsServerCmd holds the child; agent.waitForNATSExit must run
-// in a goroutine to surface child-death.
+// agent.natsServerCmd holds the child; superviseNATS owns it from
+// there. Called once at startup and again on every cold restart.
 func (a *Agent) bootstrapNATS(ctx context.Context) error {
 	binary, err := findNATSServerBinary()
 	if err != nil {
@@ -41,26 +41,18 @@ func (a *Agent) bootstrapNATS(ctx context.Context) error {
 		return fmt.Errorf("cannot resolve node IP for nats-server listen address")
 	}
 
-	conf := natsconf.Render(natsconf.Input{
-		Config: a.cfg.NATS,
-		NodeID: a.nodeID,
-		NodeIP: nodeIP,
-		Peers:  a.resolveNATSPeers(nodeIP),
-	})
-
-	confPath := filepath.Join(a.workDir, "nats.conf")
-	if err := os.WriteFile(confPath, []byte(conf), 0o600); err != nil {
-		return fmt.Errorf("write %s: %w", confPath, err)
+	if err := a.writeNATSConf(a.renderNATSConf(nodeIP)); err != nil {
+		return err
 	}
 
-	cmd := exec.CommandContext(ctx, binary, "-c", confPath)
+	cmd := exec.CommandContext(ctx, binary, "-c", a.natsConfPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start nats-server: %w", err)
 	}
 	a.natsServerCmd = cmd
-	log.Info().Str("binary", binary).Str("conf", confPath).Int("pid", cmd.Process.Pid).Msg("nats-server started")
+	log.Info().Str("binary", binary).Str("conf", a.natsConfPath()).Int("pid", cmd.Process.Pid).Msg("nats-server started")
 
 	addr := fmt.Sprintf("%s:%d", nodeIP, a.cfg.NATS.Server.Port)
 	if err := waitForTCP(ctx, addr, natsBootstrapTimeout); err != nil {
@@ -71,6 +63,26 @@ func (a *Agent) bootstrapNATS(ctx context.Context) error {
 	return nil
 }
 
+func (a *Agent) natsConfPath() string {
+	return filepath.Join(a.workDir, "nats.conf")
+}
+
+func (a *Agent) renderNATSConf(nodeIP string) string {
+	return natsconf.Render(natsconf.Input{
+		Config: a.cfg.NATS,
+		NodeID: a.nodeID,
+		NodeIP: nodeIP,
+		Peers:  a.resolveNATSPeers(nodeIP),
+	})
+}
+
+func (a *Agent) writeNATSConf(content string) error {
+	path := a.natsConfPath()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
 
 // resolveNodeIP picks the address nats-server should bind to: explicit
 // NodeIP wins, otherwise we fall back to LocalIPv4 (best effort). The
@@ -92,15 +104,14 @@ func (a *Agent) resolveNodeIP() string {
 	return ""
 }
 
-// resolveNATSPeers returns the IPs of OTHER cluster nodes for inclusion
-// in cluster.routes. A_NATS_PEERS (comma-separated) wins — start.sh
-// uses this in dev to wire the loopback aliases. Otherwise we resolve
-// cfg.Domain via DNS (matches the discovery package). The local IP is
-// filtered out so a node never routes to itself.
+// resolveNATSPeers returns the IPs of OTHER cluster nodes for the
+// rendered cluster.routes. Sources in priority order:
+//  1. A_NATS_PEERS_FILE — one IP per line; dev's DNS-A-record stand-in.
+//  2. A_NATS_PEERS — comma-separated; static, e.g. CI.
+//  3. DNS LookupIP(cfg.Domain) — prod path.
+//
+// Self-IP is filtered so a node never routes to itself.
 func (a *Agent) resolveNATSPeers(selfIP string) []string {
-	// A_NATS_PEERS_FILE wins — it's how dev imitates a DNS A-record:
-	// start.sh maintains the file, agents re-read it on every watcher
-	// tick. In prod the DNS branch below covers the same role.
 	if path := os.Getenv("A_NATS_PEERS_FILE"); path != "" {
 		if raw, err := os.ReadFile(path); err == nil {
 			return filterSelf(splitAndTrim(string(raw)), selfIP)
@@ -131,17 +142,14 @@ func (a *Agent) resolveNATSPeers(selfIP string) []string {
 // so the same parser handles both env-var ("a,b,c") and peers-file
 // ("a\nb\nc") forms.
 func splitAndTrim(raw string) []string {
+	sep := func(r rune) bool { return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' ' }
 	out := make([]string, 0)
-	for _, p := range strings.FieldsFunc(raw, splitPeerSep) {
+	for _, p := range strings.FieldsFunc(raw, sep) {
 		if s := strings.TrimSpace(p); s != "" {
 			out = append(out, s)
 		}
 	}
 	return out
-}
-
-func splitPeerSep(r rune) bool {
-	return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
 }
 
 func filterSelf(ips []string, self string) []string {
@@ -171,8 +179,7 @@ func findNATSServerBinary() (string, error) {
 	return p, nil
 }
 
-// waitForTCP retries connecting to addr until success, ctx cancels, or
-// the timeout fires.
+// waitForTCP retries DialTimeout until success, ctx, or timeout.
 func waitForTCP(ctx context.Context, addr string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {

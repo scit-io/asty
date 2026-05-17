@@ -152,12 +152,21 @@ Each `asty -mode agent` at startup:
 5. `agent/natswatch.go` keeps two goroutines running for the rest of
    the process lifetime:
    - `superviseNATS` owns the child: graceful stop on ctx-cancel,
-     graceful restart on a peer-list change, Fatal on unexpected exit.
+     restart on peer-list change (see below), Fatal on unexpected exit.
    - `watchNATSPeers` re-resolves the peer list every 5 s and signals
-     the supervisor when the sorted set changes. The supervisor then
-     re-renders `nats.conf` via `bootstrapNATS` and restarts the child.
-   `nats.go`-based clients (agent, server, spawned services) reconnect
-   automatically — JS data survives because the store directory does.
+     the supervisor when the sorted set changes.
+
+   On a peer change the supervisor first tries `tryHotReloadNATS`:
+   write the new `nats.conf`, then `kill -HUP` the child. NATS applies
+   the routes delta live, no client reconnect, no JS metadata election.
+   The hot path is taken whenever both the old and new conf carry a
+   `cluster{}` block — i.e. the JetStream mode itself does not flip.
+
+   A cold restart (SIGTERM → re-`bootstrapNATS`) only happens for the
+   `standalone ↔ clustered` transition (first peer joining, or the
+   last peer leaving), which structurally requires a fresh JS init.
+   `nats.go`-based clients reconnect automatically across the cold
+   path; JS data survives because the store directory does.
 
 The agent runs three NATS client connections, all distinct:
 
@@ -364,9 +373,11 @@ deploy/dev/start.sh stop    # tear down everything
 `addnode` appends the new node's IP to `peers.txt`, brings up its
 loopback alias (`127.0.0.$i`), and starts a fresh server+agent pair.
 Existing agents notice the file change on their next watcher tick
-(~5 s), restart their `nats-server` child with the new cluster
-config, and the leader's `watchStreamReplicas` raises replicas on
-existing KV buckets when the cluster has grown.
+(~5 s). For a cluster already at N>1 they SIGHUP their `nats-server`
+to apply the routes delta live (no downtime); growing from N=1 takes
+a cold restart on the existing node because JetStream flips from
+standalone to clustered. Either way the leader's `watchStreamReplicas`
+then raises replicas on existing KV buckets so the cluster has grown.
 
 Authoritative struct layout: `asty/internal/core/config/` —
 `config.go`, `nats.go`, `gateway.go`, `env.go`, `load.go`.
