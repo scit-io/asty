@@ -239,10 +239,8 @@ start_asty() {
 
     # Per-node loopback binds for gateway + orchestrator HTTP so N agents
     # on one host don't collide on shared ports. Each node gets its own
-    # 127.0.0.$i and listens on :80 (gateway), :8080 (orchestrator), :8081
-    # (gateway metrics).
+    # 127.0.0.$i and listens on :80 (gateway) and :8080 (orchestrator).
     local gw_addr="$addr:80"
-    local gw_metrics="$addr:8081"
     local http_addr="$addr:8080"
 
     # Random disk type per node so the cluster aggregates exercise
@@ -261,7 +259,7 @@ start_asty() {
     sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
       A_NATS_MONITORING_PORT="$nats_monitor_port" \
       A_WORK_DIR="$DATA_BASE/work" \
-      A_GATEWAY_ADDR="$gw_addr" A_GATEWAY_METRICS_ADDR="$gw_metrics" \
+      A_GATEWAY_ADDR="$gw_addr" \
       A_DISK_TYPE="$disk_type" \
       "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
     local agent_pid=$!

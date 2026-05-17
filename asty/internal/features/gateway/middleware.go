@@ -3,8 +3,6 @@ package gateway
 import (
 	"net"
 	"net/http"
-
-	"asty/asty/internal/features/gateway/metrics"
 )
 
 // middlewareRateLimit applies per-IP rate limiting to /v1/ routes.
@@ -22,7 +20,6 @@ func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 		if allowed, prefix := gw.rl.allowPath(ip, r.URL.Path); prefix != "" {
 			if !allowed {
 				gw.log.Warn().Str("ip", ip).Str("path", r.URL.Path).Str("rule", prefix).Msg("path rate limit exceeded")
-				metrics.RateLimitRejectedTotal.WithLabelValues(prefix).Inc()
 				writeRateLimited(w)
 				return
 			}
@@ -30,7 +27,6 @@ func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 
 		if !gw.rl.allow(ip) {
 			gw.log.Warn().Str("ip", ip).Str("path", r.URL.Path).Msg("rate limit exceeded")
-			metrics.RateLimitRejectedTotal.WithLabelValues("general").Inc()
 			writeRateLimited(w)
 			return
 		}
@@ -53,10 +49,8 @@ func (gw *Gateway) wsConnGuard() (bool, func()) {
 		gw.rl.wsConns.Add(-1)
 		return false, nil
 	}
-	metrics.WSConnectionsActive.Inc()
 	return true, func() {
 		gw.rl.wsConns.Add(-1)
-		metrics.WSConnectionsActive.Dec()
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"asty/asty/internal/features/deployment"
 	"asty/asty/internal/features/gateway"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/rs/zerolog/log"
 )
 
@@ -19,10 +18,9 @@ import (
 // and WebSocket sessions to drain before forcing the server closed.
 const shutdownGracePeriod = 10 * time.Second
 
-// runGateway starts the embedded HTTP gateway in two goroutines: one
-// for the request server and one for the Prometheus /metrics endpoint
-// on a separate loopback port. Both honour ctx — on cancellation each
-// goes through http.Server.Shutdown with shutdownGracePeriod.
+// runGateway starts the embedded HTTP gateway. The single goroutine
+// runs the request server and honours ctx — on cancellation it goes
+// through http.Server.Shutdown with shutdownGracePeriod.
 //
 // The gateway reuses a.nc (the agent's NATS connection), so there is
 // no extra connection, drain, or auth path to maintain.
@@ -59,9 +57,6 @@ func (a *Agent) runGateway(ctx context.Context) error {
 	}
 
 	go a.serveGateway(ctx, srv)
-	if cfg.MetricsAddr != "" {
-		go a.serveGatewayMetrics(ctx, cfg.MetricsAddr)
-	}
 	return nil
 }
 
@@ -109,38 +104,4 @@ func (a *Agent) serveGateway(ctx context.Context, srv *http.Server) {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error().Err(err).Msg("gateway shutdown error")
 	}
-}
-
-// serveGatewayMetrics serves Prometheus /metrics on a loopback port.
-// A failure here is logged but does not bring down the agent — losing
-// metric scrapes is preferable to losing traffic-serving.
-func (a *Agent) serveGatewayMetrics(ctx context.Context, addr string) {
-	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
-	srv := &http.Server{
-		Addr:              addr,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	errCh := make(chan error, 1)
-	go func() {
-		log.Info().Str("addr", addr).Msg("gateway metrics listening")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
-		}
-		close(errCh)
-	}()
-
-	select {
-	case err, ok := <-errCh:
-		if ok && err != nil {
-			log.Error().Err(err).Msg("gateway metrics server failed")
-		}
-		return
-	case <-ctx.Done():
-	}
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
-	defer cancel()
-	_ = srv.Shutdown(shutdownCtx)
 }

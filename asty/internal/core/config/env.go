@@ -59,7 +59,6 @@ func applyGatewayEnv(g *GatewayConfig) {
 	envDur("A_GATEWAY_NATS_REQUEST_TIMEOUT", &g.HTTP.NATSRequestTimeout)
 	envDur("A_GATEWAY_NATS_RETRY_DELAY", &g.HTTP.NATSRetryDelay)
 	envDur("A_GATEWAY_WS_CONNECT_TIMEOUT", &g.HTTP.WSConnectTimeout)
-	envStr("A_GATEWAY_METRICS_ADDR", &g.MetricsAddr)
 
 	if raw, ok := os.LookupEnv("A_ALLOWED_HOSTS"); ok {
 		g.AllowedHosts = splitCSV(raw)

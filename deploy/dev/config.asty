@@ -60,9 +60,9 @@ agent:
 gateway:
   enabled: true                  # Whether this node serves HTTP/WS traffic (false — control-plane-only node)
   # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
-  # start.sh overrides A_GATEWAY_ADDR / A_GATEWAY_METRICS_ADDR per node.
-  # Without those overrides every agent would race for the same :80 /
-  # 127.0.0.1:8081 and all but the first would fail with "address already in use".
+  # start.sh overrides A_GATEWAY_ADDR per node. Without that override
+  # every agent would race for the same :80 and all but the first would
+  # fail with "address already in use".
   http:
     addr: ":80"                  # HTTP listen address (start.sh overrides per node in dev)
     read_header_timeout: 5s      # Max wait between TCP accept and complete headers
@@ -72,7 +72,6 @@ gateway:
     nats_request_timeout: 5s     # Max wait for NATS backend to respond
     nats_retry_delay: 100ms      # Delay before retrying a failed NATS request
     ws_connect_timeout: 2s       # Max time to establish a WS session
-  metrics_addr: "127.0.0.1:8081" # Prometheus /metrics listen address (internal only)
   # CORS: which origins are allowed to call the gateway.
   # In dev — local Vite dev servers for the Web UI and demo frontend.
   allowed_hosts:                 # CORS-allowed Origin hosts (empty list — allow all)

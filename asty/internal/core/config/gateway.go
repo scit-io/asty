@@ -11,7 +11,6 @@ import (
 type GatewayConfig struct {
 	Enabled      bool                   `yaml:"enabled"`
 	HTTP         GatewayHTTPConfig      `yaml:"http"`
-	MetricsAddr  string                 `yaml:"metrics_addr"`
 	AllowedHosts []string               `yaml:"allowed_hosts"`
 	RateLimit    GatewayRateLimitConfig `yaml:"rate_limit"`
 }
@@ -76,7 +75,6 @@ func gatewayDefaults() GatewayConfig {
 			NATSRetryDelay:     100 * time.Millisecond,
 			WSConnectTimeout:   2 * time.Second,
 		},
-		MetricsAddr: "127.0.0.1:8081",
 		RateLimit: GatewayRateLimitConfig{
 			Rate:       100,
 			Burst:      200,

@@ -192,14 +192,20 @@ content-based alerting.
 
 ### HTTP surfaces
 
-Per node, three HTTP listeners contribute to observability:
+Per node, two HTTP listeners contribute to observability:
 
 | Listener | Port | Path | Served by | Purpose |
 |---|---|---|---|---|
-| Orchestrator | `:8080` | `GET /metrics` | `api.handleMetrics` → `promhttp.HandlerFor` over a private `prometheus.Registry` | Cluster + orchestrator-self instruments |
-| Orchestrator | `:8080` | `GET /api/v1/…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
-| Gateway | `:8081` | `GET /metrics` | `agent.serveGatewayMetrics` (default registerer + `promhttp.Handler`) | Per-node gateway counters: proxied requests, NATS RTT, rate-limit rejects, WS connections |
+| Orchestrator | `:8080` | `GET /metrics` (exact) | `api.handleMetrics` → `promhttp.HandlerFor` over a private `prometheus.Registry` | Cluster + orchestrator-self instruments |
+| Orchestrator | `:8080` | `GET /metrics/…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
 | NATS server | `:8222` | `GET /varz`, `/jsz`, `/connz` | NATS itself | Scraped in-process by the agent and re-exported under `asty_node_nats_*` / `asty_cluster_nats_*` on the orchestrator's `/metrics` |
+
+**The gateway is intentionally observability-silent.** It does not expose
+its own `/metrics` listener — Asty must not serve metrics about user-
+deployed services. The only data the gateway publishes back is the
+`GatewayMetricsReport` over NATS (`asty.v1.metrics.gateway.<nodeID>`,
+`codec.Wire`), which feeds the autoscaler's locality-aware scale-up
+trigger via `server.subscribeGatewayMetrics`.
 
 **NATS monitoring requires explicit opt-in.** NATS does not expose
 `:8222` by default — the operator must launch `nats-server` with `-m
@@ -234,10 +240,8 @@ extension stays orderly:
 | `asty_alloc_*` | per-allocation | `service`, `node_id`, `alloc_id` (+ `state` on `_health`, `status` on `_status`) | `cpu_percent`, `memory_mb`, `disk_mb`, `restarts_total`, `uptime_seconds`, `health`, `status` |
 | `asty_deploy_*` | per-deployment | `service` (+ `state` on `_state`) | `state`, `progress_percent` |
 | `asty_leader` | leader-election state | `node_id` | 1 on the current leader; the row simply doesn't exist on followers because /metrics is only served on the leader's API |
-| `gateway_*` | gateway-internal | as-needed | `http_requests_total`, `http_request_duration_seconds`, `ws_connections_active`, `rate_limit_rejected_total`, `nats_request_duration_seconds`, `nats_request_attempts_total` |
 | `asty_node_nats_*` | scraped from local NATS `/varz` + `/jsz` | `node_id`, `datacenter` | `cpu_percent`, `memory_mb`, `connections`, `subscriptions`, `slow_consumers`, `in_msgs_total` (counter), `out_msgs_total` (counter), `jetstream_messages`, `jetstream_bytes`, `disk_mb` (binary baseline + JS bytes) |
 | `asty_cluster_nats_*` | per-cluster NATS aggregates | none | `connections`, `jetstream_messages`, `jetstream_bytes` |
-| `nats_*` | exported on the gateway's `:8081/metrics` from request-reply round-trip instrumentation | as-needed | `nats_request_duration_seconds`, `nats_request_attempts_total` |
 
 ### Adding a new metric
 
@@ -278,7 +282,6 @@ the orchestrator):
 - `A_GATEWAY_ADDR`, `A_GATEWAY_READ_TIMEOUT`, `A_GATEWAY_WRITE_TIMEOUT`, `A_GATEWAY_IDLE_TIMEOUT`, `A_GATEWAY_READ_HEADER_TIMEOUT`
 - `A_ALLOWED_HOSTS` — comma-separated CORS origins
 - `A_GATEWAY_RATE_LIMIT`, `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`, `A_GATEWAY_TRUSTED_PROXY`
-- `A_GATEWAY_METRICS_ADDR` — Prometheus `/metrics` listener (default `127.0.0.1:8081`)
 
 **Local development with multiple nodes**: `start.sh` exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_NATS_PORT`, `A_UI_ADDR`, `A_WORK_DIR` on top of the shared `config.asty`.
 
@@ -417,7 +420,7 @@ asty/internal/
 │                                  #   subscribers[T]), pubsub.go
 └── agent/                         # Agent sub-package
     ├── agent.go                   # Agent struct + Start
-    ├── gateway.go                 # runGateway + serveGateway + metrics server
+    ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService
     ├── nodeinfo.go                # NodeInfo builder
     ├── commands.go                # NATS command handlers (start/stop/getlogs)

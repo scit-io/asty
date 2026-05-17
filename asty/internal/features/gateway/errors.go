@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-
-	"github.com/nats-io/nats.go"
 )
 
 // isTimeoutError reports whether err is a net.Error-style read timeout.
@@ -24,7 +22,7 @@ func isTimeoutError(err error) bool {
 //   - 499 "client closed request" — client canceled (closed the conn,
 //     server shutdown). Non-standard but widely understood (nginx).
 //     The response usually does not reach the client; the code is for
-//     logs and metrics.
+//     logs.
 //   - 504 "gateway timeout"       — our own deadline fired
 //     (gateway.http.nats_request_timeout); client still connected.
 //   - 503 "service unavailable"   — everything else (NATS disconnected,
@@ -40,26 +38,6 @@ func natsRequestErrStatus(clientCtx context.Context, err error) (int, string) {
 		return http.StatusGatewayTimeout, "gateway timeout"
 	}
 	return http.StatusServiceUnavailable, "service unavailable"
-}
-
-// natsRequestOutcome categorizes a NATS round-trip outcome for the
-// attempts counter metric. Different from natsRequestErrStatus
-// because a nil error counts as "ok" (the HTTP status conveys success
-// separately) and no_responders is distinguished from other failures.
-func natsRequestOutcome(clientCtx context.Context, err error) string {
-	if err == nil {
-		return "ok"
-	}
-	if errors.Is(err, nats.ErrNoResponders) {
-		return "no_responders"
-	}
-	if clientCtx.Err() == context.Canceled {
-		return "canceled"
-	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return "timeout"
-	}
-	return "error"
 }
 
 // newRequestID returns 16 hex chars (8 random bytes). Used for

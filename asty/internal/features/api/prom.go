@@ -10,9 +10,8 @@ import (
 
 // initProm wires a private prometheus.Registry to the API instance and
 // registers the orchestrator-side instruments. A per-instance registry
-// (instead of prometheus.DefaultRegisterer) keeps the gateway's metrics
-// — exposed on its own :8081/metrics — separate, and avoids the
-// double-register panic during tests that spin up multiple APIs.
+// (instead of prometheus.DefaultRegisterer) avoids the double-register
+// panic during tests that spin up multiple APIs.
 //
 // Mirror rule: every gauge here corresponds to something the web UI
 // also displays. When the UI gains a metric, add the matching gauge

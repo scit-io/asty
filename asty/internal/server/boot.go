@@ -92,7 +92,7 @@ func (s *Server) initInfra() error {
 
 // initFeatures wires the higher-level dependencies (scheduler, autoscaler,
 // deployer, …) that need infra in place. Also kicks off background
-// pieces that don't depend on leadership: log buffering, gateway metrics
+// pieces that don't depend on leadership: log buffering, gateway RPS
 // ingest, proximity validation, the snapshot hub.
 func (s *Server) initFeatures(ctx context.Context) {
 	// Mirror server logs into NATS so the UI can stream them.
