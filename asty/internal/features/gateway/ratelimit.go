@@ -1,11 +1,12 @@
 // Rate limiting: two layers of incoming-traffic protection.
 //
 //  1. Per-IP path-prefix rules — declared by services in their .asty files.
-//     Each rule specifies a URL prefix (e.g. "/v1/auth/") with its own
-//     rate/burst. Longest matching prefix wins. Services can declare as many
-//     rules as they need (brute-force defense, write throttling, etc.).
-//  2. Per-IP general cap — applies to all /v1/ routes that don't match
-//     any service-specific rule.
+//     Each rule specifies a URL prefix (e.g. "/<gateway-prefix>/<service>/")
+//     with its own rate/burst. Longest matching prefix wins. Services can
+//     declare as many rules as they need (brute-force defense, write
+//     throttling, etc.).
+//  2. Per-IP general cap — applies to all routes under the configured
+//     gateway prefix that don't match any service-specific rule.
 //  3. Global WS counter — caps simultaneous WebSocket connections.
 //
 // Algorithm: Token Bucket (golang.org/x/time/rate).
@@ -82,7 +83,7 @@ func newRateLimiter(cfg config.GatewayRateLimitConfig, serviceRules []types.Rate
 			table:  newIPTable(),
 		})
 	}
-	// Longest prefix first — so "/v1/auth/login" matches before "/v1/auth/".
+	// Longest prefix first — so "/<gw-prefix>/<service>/<method>" matches before "/<gw-prefix>/<service>/".
 	sort.Slice(rules, func(i, j int) bool {
 		return len(rules[i].prefix) > len(rules[j].prefix)
 	})
