@@ -4,10 +4,11 @@
 # Start and stop the Asty dev environment.
 #
 # Usage:
-#   ./start.sh          — 1 node (server + agent)
-#   ./start.sh 3        — 3 nodes (server + agent each, with leader election)
-#   ./start.sh addnode  — grow a running cluster by one node
-#   ./start.sh stop     — stop everything
+#   ./start.sh             — 1 node (server + agent)
+#   ./start.sh 3           — 3 nodes (server + agent each, with leader election)
+#   ./start.sh addnode     — grow a running cluster by one node
+#   ./start.sh removenode [N] — shrink: tear down node N (default: highest)
+#   ./start.sh stop        — stop everything
 
 set -euo pipefail
 
@@ -20,10 +21,14 @@ COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
 VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
-PID_FILE="/tmp/asty-dev-pids"
+# Per-node PID file: $DATA_BASE/pids-$i, two lines (server, agent).
+# Per-node so removenode can target a specific node's PIDs without
+# scanning ps; stop_all iterates the whole set.
+PID_FILE_TMPL="$DATA_BASE/pids"
 # Shared peer-list file consumed by every agent (A_NATS_PEERS_FILE).
 # Imitates a prod DNS A-record: one IP per line, agents re-read on
-# every watcher tick, self-filter in code. addnode appends a line.
+# every watcher tick, self-filter in code. addnode/removenode update
+# this file; live agents pick up the change on their next tick.
 PEERS_FILE="$DATA_BASE/peers.txt"
 
 # =============================================================================
@@ -194,7 +199,6 @@ start_node() {
     A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
     "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
   local server_pid=$!
-  echo "$server_pid" >> "$PID_FILE"
 
   sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
     A_NATS_PEERS_FILE="$PEERS_FILE" \
@@ -203,7 +207,8 @@ start_node() {
     A_DISK_TYPE="$disk_type" \
     "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
   local agent_pid=$!
-  echo "$agent_pid" >> "$PID_FILE"
+
+  printf '%s\n%s\n' "$server_pid" "$agent_pid" > "${PID_FILE_TMPL}-$i"
 
   info "Node $i: id=dev-node-$i | ip=$addr | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
   info "  logs: $server_log | $agent_log"
@@ -216,8 +221,8 @@ start_node() {
 # restart their nats-server child. Reaching steady-state takes the
 # rendered-conf change + JetStream meta-leader re-election (~10–15 s).
 add_node() {
-  if [[ ! -f "$PID_FILE" ]] || [[ ! -f "$PEERS_FILE" ]]; then
-    die "no running cluster found (no $PID_FILE / $PEERS_FILE). Start one with: $0 [N]"
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
+    die "no running cluster found (no ${PID_FILE_TMPL}-* / $PEERS_FILE). Start one with: $0 [N]"
   fi
 
   # Next free index = max existing + 1. Peers file is the source of
@@ -239,22 +244,91 @@ add_node() {
   info "the next nats-watch tick (~5 s) and restart their nats-server."
 }
 
+# remove_node shrinks a running cluster by tearing down one node and
+# removing its entry from PEERS_FILE. Without args, removes the
+# highest-numbered node (symmetric with add_node). With an explicit
+# index, removes that one. Refuses to take the last node down —
+# stop_all is the right tool for that.
+remove_node() {
+  local target="${1:-}"
+
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
+    die "no running cluster found. Start one with: $0 [N]"
+  fi
+
+  # Resolve target: explicit index wins, otherwise highest in PEERS_FILE.
+  if [[ -z "$target" ]]; then
+    target=0
+    while IFS= read -r ip; do
+      local last="${ip##*.}"
+      [[ -n "$last" && "$last" =~ ^[0-9]+$ && $last -gt $target ]] && target=$last
+    done < "$PEERS_FILE"
+  fi
+  if ! [[ "$target" =~ ^[0-9]+$ ]] || [[ $target -lt 1 ]]; then
+    die "usage: $0 removenode [N]  (N ≥ 1)"
+  fi
+
+  local pidfile="${PID_FILE_TMPL}-$target"
+  if [[ ! -f "$pidfile" ]]; then
+    die "node $target is not running ($pidfile missing)"
+  fi
+  local remaining
+  remaining=$(compgen -G "${PID_FILE_TMPL}-*" | wc -l | tr -d ' ')
+  if [[ "$remaining" -le 1 ]]; then
+    die "refusing to remove the last running node — use '$0 stop' instead"
+  fi
+
+  local addr="127.0.0.$target"
+  log "removing node $target (id=dev-node-$target, ip=$addr)..."
+
+  # 1) SIGTERM the node's server + agent (sudo — agent runs as root).
+  local pid
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    sudo kill "$pid" 2>/dev/null && info "✓ PID $pid terminated" || true
+  done < "$pidfile"
+  sleep 1
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
+  done < "$pidfile"
+
+  # 2) Drop the IP from PEERS_FILE so surviving agents notice on their
+  #    next watcher tick and shrink their cluster.routes (SIGHUP hot
+  #    reload when 2+ nodes remain, cold restart on the 2→1 step).
+  local tmp
+  tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
+  grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
+  mv "$tmp" "$PEERS_FILE"
+
+  # 3) Clean per-node state — pidfile, working dir, JS store. Old
+  #    JetStream data would conflict with a future addnode reusing
+  #    the same index.
+  rm -f "$pidfile"
+  sudo rm -rf "$DATA_BASE/work/dev-node-$target" "$DATA_BASE/jetstream/dev-node-$target" "$DATA_BASE/node$target"
+
+  info "node $target removed. Loopback alias $addr left up; stop_all"
+  info "tears down aliases at end-of-life."
+}
+
 # =============================================================================
 # Wait for Asty readiness
 # =============================================================================
 wait_asty() {
   log "waiting for Asty readiness..."
-  local max_wait=30
-  local elapsed=0
-
   # Simple check: are the processes alive?
   sleep 2
 
-  while IFS= read -r pid; do
-    if ! kill -0 "$pid" 2>/dev/null; then
-      die "Asty process (PID=$pid) died. Check logs in /tmp/asty-dev-*.log"
-    fi
-  done < "$PID_FILE"
+  local pidfile pid
+  for pidfile in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pidfile" ]] || continue
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      if ! kill -0 "$pid" 2>/dev/null; then
+        die "Asty process (PID=$pid, from $pidfile) died. Check logs in /tmp/asty-dev-*.log"
+      fi
+    done < "$pidfile"
+  done
 
   info "Asty up"
 }
@@ -298,17 +372,23 @@ print_status() {
 stop_all() {
   log "stopping Asty..."
 
-  # Asty processes by PID file (sudo — agents run as root).
-  if [[ -f "$PID_FILE" ]]; then
+  # Asty processes by per-node PID files (sudo — agents run as root).
+  local pidfile pid
+  for pidfile in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pidfile" ]] || continue
     while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
       sudo kill "$pid" 2>/dev/null && info "✓ PID $pid terminated" || true
-    done < "$PID_FILE"
-    sleep 1
+    done < "$pidfile"
+  done
+  sleep 1
+  for pidfile in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pidfile" ]] || continue
     while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
       sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
-    done < "$PID_FILE"
-    rm -f "$PID_FILE"
-  fi
+    done < "$pidfile"
+  done
 
   # Orphan processes (our binaries only).
   cleanup_orphans
@@ -316,7 +396,8 @@ stop_all() {
   # Docker infrastructure.
   stop_infra
 
-  # Temporary data (sudo — agents create files as root).
+  # Temporary data (sudo — agents create files as root). pidfiles
+  # live under $DATA_BASE so they go with it.
   sudo rm -rf "$DATA_BASE"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
 
@@ -346,8 +427,13 @@ if [[ "$CMD" == "addnode" ]]; then
   exit 0
 fi
 
+if [[ "$CMD" == "removenode" ]]; then
+  remove_node "${2:-}"
+  exit 0
+fi
+
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop|addnode]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|addnode|removenode [N]]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"
@@ -355,7 +441,7 @@ NODES="$CMD"
 check_deps
 cleanup_orphans
 
-if [[ -f "$PID_FILE" ]]; then
+if compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
   warn "found a running environment. Stopping it before relaunch..."
   stop_all
 fi

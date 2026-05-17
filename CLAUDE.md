@@ -364,10 +364,11 @@ the orchestrator):
 at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
 
 ```
-deploy/dev/start.sh         # 1 node
-deploy/dev/start.sh 3       # 3 nodes (server + agent each)
-deploy/dev/start.sh addnode # grow the running cluster by one
-deploy/dev/start.sh stop    # tear down everything
+deploy/dev/start.sh                  # 1 node
+deploy/dev/start.sh 3                # 3 nodes (server + agent each)
+deploy/dev/start.sh addnode          # grow the running cluster by one
+deploy/dev/start.sh removenode [N]   # shrink: tear down node N (default: highest)
+deploy/dev/start.sh stop             # tear down everything
 ```
 
 `addnode` appends the new node's IP to `peers.txt`, brings up its
@@ -378,6 +379,17 @@ to apply the routes delta live (no downtime); growing from N=1 takes
 a cold restart on the existing node because JetStream flips from
 standalone to clustered. Either way the leader's `watchStreamReplicas`
 then raises replicas on existing KV buckets so the cluster has grown.
+
+`removenode` is the symmetric op: SIGTERM the target node's server +
+agent (sudo), strip its IP from `peers.txt`, and wipe its per-node
+working dir + JetStream store so a later `addnode` reusing the same
+index starts clean. Surviving nodes hot-reload via SIGHUP when 2+
+remain; the 2→1 step is a cold restart (clustered → standalone).
+`removenode` refuses to take the last node down — use `stop` for that.
+
+PID bookkeeping is per-node (`$DATA_BASE/pids-$i`, two lines: server,
+agent), so `removenode` can target one node's processes without
+scanning `ps`.
 
 Authoritative struct layout: `asty/internal/core/config/` —
 `config.go`, `nats.go`, `gateway.go`, `env.go`, `load.go`.
