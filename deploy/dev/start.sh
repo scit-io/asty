@@ -6,6 +6,7 @@
 # Usage:
 #   ./start.sh          — 1 node (server + agent)
 #   ./start.sh 3        — 3 nodes (server + agent each, with leader election)
+#   ./start.sh addnode  — grow a running cluster by one node
 #   ./start.sh stop     — stop everything
 
 set -euo pipefail
@@ -20,7 +21,10 @@ VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
 PID_FILE="/tmp/asty-dev-pids"
-NATS_CONF_RENDERED="/tmp/asty-dev-nats.conf"
+# Shared peer-list file consumed by every agent (A_NATS_PEERS_FILE).
+# Imitates a prod DNS A-record: one IP per line, agents re-read on
+# every watcher tick, self-filter in code. addnode appends a line.
+PEERS_FILE="$DATA_BASE/peers.txt"
 
 # =============================================================================
 # Output helpers
@@ -43,104 +47,13 @@ check_deps() {
 }
 
 # =============================================================================
-# Render NATS config
-# =============================================================================
-render_nats_conf() {
-  local nodes=$1
-
-  cat > "$NATS_CONF_RENDERED" <<'CONF_HEAD'
-port: 4222
-http_port: 8222
-
-jetstream {
-  store_dir: "/data/jetstream"
-  max_mem:   256M
-  max_file:  10G
-}
-CONF_HEAD
-
-  if [[ $nodes -gt 1 ]]; then
-    cat >> "$NATS_CONF_RENDERED" <<'CONF_CLUSTER'
-
-cluster {
-  name:   "asty-dev"
-  port:   6222
-  routes: ["nats-route://nats:6222"]
-}
-CONF_CLUSTER
-  fi
-}
-
-# =============================================================================
-# Infrastructure (NATS + PostgreSQL)
+# Infrastructure (PostgreSQL only — NATS is supervised by each Asty agent)
 # =============================================================================
 start_infra() {
-  local nodes=$1
-  NATS_NODES=$nodes
-
-  log "starting infrastructure: $NATS_NODES NATS nodes + PostgreSQL..."
-  render_nats_conf "$NATS_NODES"
-  export DEV_NATS_CONF="$NATS_CONF_RENDERED"
-
-  if [[ $NATS_NODES -gt 1 ]]; then
-    export NATS_CLIENT_PORTS="4222-4322:4222"
-    export NATS_HTTP_PORTS="8222-8322:8222"
-  else
-    unset NATS_CLIENT_PORTS NATS_HTTP_PORTS
-  fi
-
+  log "starting infrastructure: PostgreSQL..."
   docker compose -f "$COMPOSE_FILE" down --remove-orphans --volumes 2>/dev/null || true
-
-  # Start 1 node first — it immediately becomes the leader.
-  docker compose -f "$COMPOSE_FILE" up -d --scale nats=1
-  info "NATS: 1 node started, waiting for readiness..."
-  local port
-  port=$(docker port dev-nats-1 8222/tcp 2>/dev/null | awk -F: '{print $NF; exit}')
-  local elapsed=0
-  until curl -s "http://127.0.0.1:$port/healthz?js-server-only=true" 2>/dev/null | grep -q '"ok"'; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-    [[ $elapsed -lt 30 ]] || die "NATS not ready after 30s"
-  done
-  info "NATS ready (${elapsed}s)"
-
-  # Add the remaining nodes — they join the existing leader.
-  if [[ $NATS_NODES -gt 1 ]]; then
-    docker compose -f "$COMPOSE_FILE" up -d --scale nats="$NATS_NODES"
-    info "NATS: scaled to $NATS_NODES nodes"
-  fi
-
-  info "NATS: $NATS_NODES nodes | monitoring: http://localhost:8222"
-}
-
-# =============================================================================
-# Wait for NATS (JetStream) readiness
-# =============================================================================
-wait_nats() {
-  local nodes=$1
-  log "waiting for NATS JetStream readiness..."
-  local max_wait=60
-  local elapsed=0
-
-  if [[ $nodes -gt 1 ]]; then
-    until docker compose -f "$COMPOSE_FILE" exec -T nats \
-          wget -q -O - --timeout=2 "http://localhost:8222/jsz" 2>/dev/null \
-          | grep -Eq '"leader":[[:space:]]*"[^"]'; do
-      sleep 1
-      elapsed=$((elapsed + 1))
-      [[ $elapsed -lt $max_wait ]] || die "NATS meta-leader not elected after ${max_wait}s"
-    done
-  fi
-
-  until docker compose -f "$COMPOSE_FILE" exec -T --index 1 nats \
-        wget -q -O /dev/null --timeout=2 "http://localhost:8222/healthz?js-server-only=true" \
-        &>/dev/null; do
-    sleep 1
-    elapsed=$((elapsed + 1))
-    [[ $elapsed -lt $max_wait ]] || die "NATS dev-nats-1 not ready after ${max_wait}s"
-  done
-
-  info "NATS ready (${elapsed}s)"
+  docker compose -f "$COMPOSE_FILE" up -d postgres
+  info "PostgreSQL up"
 }
 
 stop_infra() {
@@ -163,6 +76,11 @@ build_binaries() {
     go build -o "$BIN_DIR/$svc" "./demo/cmd/$svc"
     info "✓ $svc"
   done
+
+  # Fetch the nats-server binary the agent supervises at startup.
+  # Makefile target is a no-op when the pinned version is already on disk.
+  make -C "$ROOT_DIR" nats-server >/dev/null
+  info "✓ nats-server"
 }
 
 # =============================================================================
@@ -175,10 +93,26 @@ setup_loopback_aliases() {
 
   log "setting up loopback aliases 127.0.0.2..127.0.0.$nodes (requires sudo)..."
   for ((i=2; i<=nodes; i++)); do
-    sudo ifconfig lo0 -alias "127.0.0.$i" 2>/dev/null || true
-    sudo ifconfig lo0 alias "127.0.0.$i" up
-    info "alias 127.0.0.$i"
+    ensure_loopback_alias "$i"
   done
+}
+
+# ensure_loopback_alias adds 127.0.0.$i to lo0 if it's not already
+# bound. Idempotent and verifies the result with ifconfig so we never
+# proceed to a process that will then fail with "can't assign requested
+# address". macOS only — on Linux 127.0.0.0/8 is always bindable.
+ensure_loopback_alias() {
+  local i=$1
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  local addr="127.0.0.$i"
+  if ifconfig lo0 2>/dev/null | grep -qE "inet $addr "; then
+    return 0
+  fi
+  sudo ifconfig lo0 alias "$addr" up
+  if ! ifconfig lo0 2>/dev/null | grep -qE "inet $addr "; then
+    die "failed to create loopback alias $addr (sudo ifconfig lo0 alias $addr)"
+  fi
+  info "alias $addr"
 }
 
 teardown_loopback_aliases() {
@@ -211,66 +145,98 @@ start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
 
-  # All Asty nodes connect to a single NATS endpoint — the host port of
-  # dev-nats-1. With --scale nats>1, OrbStack assigns non-sequential host
-  # ports in the 4222-4322 range (4228, 4229, ...), so a base+i-1 formula
-  # breaks. The NATS cluster replicates JetStream itself — one entry
-  # point is enough.
-  local nats_host_port
-  nats_host_port=$(docker port dev-nats-1 4222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
-  [[ -n "$nats_host_port" ]] || die "failed to detect NATS host port"
-  local nats_monitor_port
-  nats_monitor_port=$(docker port dev-nats-1 8222/tcp 2>/dev/null | awk -F: '/0\.0\.0\.0:/ {print $NF; exit}')
-  [[ -n "$nats_monitor_port" ]] || die "failed to detect NATS monitoring host port"
-  info "NATS host port: $nats_host_port | monitoring: $nats_monitor_port"
-
-  # Asty reads $SCRIPT_DIR/config.asty via -config; we only export the
-  # per-node and secret bits that have to be runtime-different per node
-  # (NodeID/IP/Ports) or kept out of the checked-in YAML (secrets).
-  local config_file="$SCRIPT_DIR/config.asty"
-
-  # Each node runs server + agent — both attach to the same NATS endpoint.
-  # sudo is required to bind port 80 (the gateway).
+  # Seed the shared peers file with every node's IP. Agents self-filter
+  # in code, so a single file shared by all of them is enough.
+  mkdir -p "$DATA_BASE"
+  : > "$PEERS_FILE"
   for ((i=1; i<=nodes; i++)); do
-    local addr="127.0.0.$i"
-    local server_log="/tmp/asty-dev-server-$i.log"
-    local agent_log="/tmp/asty-dev-agent-$i.log"
-    mkdir -p "$DATA_BASE/node$i"
+    echo "127.0.0.$i" >> "$PEERS_FILE"
+  done
 
-    # Per-node loopback binds for gateway + orchestrator HTTP so N agents
-    # on one host don't collide on shared ports. Each node gets its own
-    # 127.0.0.$i and listens on :80 (gateway) and :8080 (orchestrator).
-    local gw_addr="$addr:80"
-    local http_addr="$addr:8080"
-
-    # Random disk type per node so the cluster aggregates exercise
-    # both ssd and hdd branches. Server inherits no disk-type env —
-    # only the agent reports physical hardware.
-    local disk_type
-    if (( RANDOM % 2 == 0 )); then disk_type="ssd"; else disk_type="hdd"; fi
-
-    A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
-      A_NATS_MONITORING_PORT="$nats_monitor_port" \
-      A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
-      "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
-    local server_pid=$!
-    echo "$server_pid" >> "$PID_FILE"
-
-    sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NATS_PORT="$nats_host_port" \
-      A_NATS_MONITORING_PORT="$nats_monitor_port" \
-      A_WORK_DIR="$DATA_BASE/work" \
-      A_GATEWAY_ADDR="$gw_addr" \
-      A_DISK_TYPE="$disk_type" \
-      "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
-    local agent_pid=$!
-    echo "$agent_pid" >> "$PID_FILE"
-
-    info "Node $i: id=dev-node-$i | ip=$addr | nats=:$nats_host_port | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
-    info "  logs: $server_log | $agent_log"
+  for ((i=1; i<=nodes; i++)); do
+    start_node "$i"
     # Pause so JetStream confirms the KV bucket before the next agent
     # races to (re)create it — without it: "nats: no response from stream".
     sleep 0.5
   done
+}
+
+# start_node brings up one server + agent pair with the per-node env
+# (NODE_ID/IP/UI/gateway address, fake disk type). Shared by start_asty
+# (initial fan-out) and add_node (live cluster growth). The agent reads
+# the peer list from PEERS_FILE — see watchNATSPeers in the asty agent
+# for how live changes propagate.
+start_node() {
+  local i=$1
+  local addr="127.0.0.$i"
+  local server_log="/tmp/asty-dev-server-$i.log"
+  local agent_log="/tmp/asty-dev-agent-$i.log"
+  local config_file="$SCRIPT_DIR/config.asty"
+  mkdir -p "$DATA_BASE/node$i"
+  # i=1 binds to 127.0.0.1, no alias needed. For i≥2 verify the alias
+  # is up; macOS aliases are ephemeral and prior stop/sleep cycles may
+  # have left things half-configured.
+  if (( i >= 2 )); then
+    ensure_loopback_alias "$i"
+  fi
+
+  # Per-node loopback binds for gateway + orchestrator HTTP.
+  local gw_addr="$addr:80"
+  local http_addr="$addr:8080"
+
+  # Random disk type per node so the cluster aggregates exercise
+  # both ssd and hdd branches. Server inherits no disk-type env —
+  # only the agent reports physical hardware.
+  local disk_type
+  if (( RANDOM % 2 == 0 )); then disk_type="ssd"; else disk_type="hdd"; fi
+
+  A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+    A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
+    "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
+  local server_pid=$!
+  echo "$server_pid" >> "$PID_FILE"
+
+  sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+    A_NATS_PEERS_FILE="$PEERS_FILE" \
+    A_WORK_DIR="$DATA_BASE/work" \
+    A_GATEWAY_ADDR="$gw_addr" \
+    A_DISK_TYPE="$disk_type" \
+    "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
+  local agent_pid=$!
+  echo "$agent_pid" >> "$PID_FILE"
+
+  info "Node $i: id=dev-node-$i | ip=$addr | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
+  info "  logs: $server_log | $agent_log"
+}
+
+# add_node grows a running cluster by one. Picks the next free index,
+# brings up its loopback alias, appends its IP to PEERS_FILE, then
+# starts the new node. Existing agents notice the file change on their
+# next watcher tick (~5 s), pererender nats.conf with the new peer, and
+# restart their nats-server child. Reaching steady-state takes the
+# rendered-conf change + JetStream meta-leader re-election (~10–15 s).
+add_node() {
+  if [[ ! -f "$PID_FILE" ]] || [[ ! -f "$PEERS_FILE" ]]; then
+    die "no running cluster found (no $PID_FILE / $PEERS_FILE). Start one with: $0 [N]"
+  fi
+
+  # Next free index = max existing + 1. Peers file is the source of
+  # truth (PID file holds 2 lines per node so it would double-count).
+  local max_i=0
+  while IFS= read -r ip; do
+    local last="${ip##*.}"
+    [[ -n "$last" && "$last" =~ ^[0-9]+$ && $last -gt $max_i ]] && max_i=$last
+  done < "$PEERS_FILE"
+  local i=$((max_i + 1))
+  local addr="127.0.0.$i"
+
+  log "adding node $i (id=dev-node-$i, ip=$addr)..."
+
+  echo "$addr" >> "$PEERS_FILE"
+  start_node "$i"
+
+  info "node $i started. Existing agents will pick up the new peer on"
+  info "the next nats-watch tick (~5 s) and restart their nats-server."
 }
 
 # =============================================================================
@@ -299,6 +265,7 @@ wait_asty() {
 cleanup_orphans() {
   local killed=0
   sudo pkill -9 -f "$BIN_DIR/asty" 2>/dev/null && killed=1 || true
+  sudo pkill -9 -f "$BIN_DIR/nats-server" 2>/dev/null && killed=1 || true
   sudo pkill -9 -f "$DATA_BASE/work/" 2>/dev/null && killed=1 || true
   for svc in gateway xauth xhttp xws; do
     sudo pkill -9 -f "$BIN_DIR/$svc" 2>/dev/null && killed=1 || true
@@ -315,9 +282,8 @@ print_status() {
   echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Asty UI:    http://localhost:8080 (node 1)"
+  info "Asty UI:    http://127.0.0.1:8080 (node 1)"
   info "Gateway:    http://127.0.0.1:80 (node 1)"
-  info "NATS:       http://localhost:8222"
   info "PostgreSQL: localhost:5432"
   info ""
   info "server-1 log: tail -f /tmp/asty-dev-server-1.log"
@@ -352,7 +318,6 @@ stop_all() {
 
   # Temporary data (sudo — agents create files as root).
   sudo rm -rf "$DATA_BASE"
-  rm -f "$NATS_CONF_RENDERED"
   rm -f /tmp/asty-dev-*.log 2>/dev/null || true
 
   # Loopback aliases (macOS).
@@ -375,8 +340,14 @@ if [[ "$CMD" == "stop" ]]; then
   exit 0
 fi
 
+if [[ "$CMD" == "addnode" ]]; then
+  check_deps
+  add_node
+  exit 0
+fi
+
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|addnode]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"
@@ -389,11 +360,10 @@ if [[ -f "$PID_FILE" ]]; then
   stop_all
 fi
 
-start_infra "$NODES"
+start_infra
 build_binaries
 
 setup_loopback_aliases "$NODES"
-wait_nats "$NATS_NODES"
 
 start_asty "$NODES"
 wait_asty

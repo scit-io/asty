@@ -79,7 +79,7 @@ func (s *Server) initInfra() error {
 
 	leaderIP := s.cfg.NodeIP
 	if leaderIP == "" {
-		leaderIP = netutil.LocalIPv4(s.cfg.NATS.Host)
+		leaderIP = netutil.LocalIPv4("")
 	}
 	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP)
 	if err != nil {

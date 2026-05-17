@@ -32,15 +32,6 @@ type Config struct {
 	Gateway   GatewayConfig   `yaml:"gateway"`
 }
 
-// NATSConfig — where the local NATS sits and how to authenticate.
-type NATSConfig struct {
-	Host           string `yaml:"host"`
-	Port           string `yaml:"port"`
-	MonitoringPort string `yaml:"monitoring_port"`
-	User           string `yaml:"user"`
-	Password       string `yaml:"password"`
-}
-
 // AutoscaleConfig — controller and scaling thresholds.
 type AutoscaleConfig struct {
 	MinCopies           int           `yaml:"min_copies"`
@@ -87,6 +78,9 @@ func (c *Config) Validate() error {
 	if c.Token == "" {
 		return fmt.Errorf("token is required (config.asty: token, env: A_TOKEN)")
 	}
+	if err := c.NATS.Validate(); err != nil {
+		return err
+	}
 	return c.Gateway.Validate()
 }
 
@@ -96,11 +90,7 @@ func defaults() *Config {
 	return &Config{
 		Datacenter: "dc1",
 		LogLevel:   "info",
-		NATS: NATSConfig{
-			Host:           "127.0.0.1",
-			Port:           "4222",
-			MonitoringPort: "8222",
-		},
+		NATS:       natsDefaults(),
 		Autoscale: AutoscaleConfig{
 			MinCopies:           3,
 			TargetCPU:           75,

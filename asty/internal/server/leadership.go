@@ -65,6 +65,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 	ctrl.OnEvent = s.addClusterEvent
 	s.controller = ctrl
 	go ctrl.Run(leaderCtx)
+	go s.watchStreamReplicas(leaderCtx)
 }
 
 func (s *Server) stopLeaderWork() {

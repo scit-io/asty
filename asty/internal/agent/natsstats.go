@@ -4,27 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
 
-// natsScrapeInterval — how often the agent polls the local NATS
-// monitoring endpoints. 5s matches the heartbeat cadence so the values
-// surfaced in NodeInfo are at most one heartbeat behind reality.
-const natsScrapeInterval = 5 * time.Second
+// natsStatsInterval — how often the agent samples local NATS server
+// stats via $SYS request/reply. 5s matches the heartbeat cadence so
+// values surfaced in NodeInfo are at most one heartbeat behind reality.
+const natsStatsInterval = 5 * time.Second
 
-// natsScrapeTimeout — per-request timeout when hitting the monitoring
-// port. Local-only HTTP, so anything beyond 2s means the NATS server
-// is overloaded or unreachable and we should bail out rather than
-// block the scraper goroutine.
-const natsScrapeTimeout = 2 * time.Second
+// natsStatsTimeout caps a single STATSZ/JSZ request. Local NATS, so
+// anything over 2s means the server is overloaded or our connection
+// dropped — log once and try again next tick.
+const natsStatsTimeout = 2 * time.Second
 
-// natsStats holds the last successful scrape. Fields are kept JSON-
-// addressable so they can be folded into NodeInfo without a copy step.
+// natsStats holds the last sample of local NATS server stats. Writers:
+// collectNATSStatsLoop. Reader: getNodeInfo (under RLock).
 type natsStats struct {
 	mu sync.RWMutex
 
@@ -39,86 +36,104 @@ type natsStats struct {
 	jetStreamBytes    int64
 }
 
-// scrapeNATSLoop runs the polling loop until ctx is cancelled. On
-// success it writes into a.natsStats, which getNodeInfo reads under a
-// read-lock. Errors are downgraded to debug after the first warning to
-// avoid drowning the log when NATS monitoring is unconfigured.
-func (a *Agent) scrapeNATSLoop(ctx context.Context) {
-	ticker := time.NewTicker(natsScrapeInterval)
+// statszEnvelope matches the JSON shape published by nats-server on
+// `$SYS.SERVER.<id>.STATSZ` (and returned by REQ.SERVER.<id>.STATSZ).
+// Only the fields used by NodeInfo are decoded; everything else is
+// silently dropped.
+type statszEnvelope struct {
+	Statsz struct {
+		Mem           int64   `json:"mem"`
+		CPU           float64 `json:"cpu"`
+		Connections   int     `json:"connections"`
+		Subscriptions int     `json:"subscriptions"`
+		SlowConsumers int64   `json:"slow_consumers"`
+		Sent          struct {
+			Msgs  int64 `json:"msgs"`
+			Bytes int64 `json:"bytes"`
+		} `json:"sent"`
+		Received struct {
+			Msgs  int64 `json:"msgs"`
+			Bytes int64 `json:"bytes"`
+		} `json:"received"`
+	} `json:"statsz"`
+}
+
+// jszEnvelope matches the JSON shape returned by REQ.SERVER.<id>.JSZ.
+type jszEnvelope struct {
+	Data struct {
+		Messages int64 `json:"messages"`
+		Bytes    int64 `json:"bytes"`
+	} `json:"data"`
+}
+
+// collectNATSStatsLoop polls the local NATS server's $SYS stats every
+// natsStatsInterval and updates a.natsStats. Runs until ctx cancels.
+// Uses the dedicated SYS-account connection (a.ncSys) — the agent's
+// main connection sits in ASTY and cannot read $SYS subjects.
+func (a *Agent) collectNATSStatsLoop(ctx context.Context) {
+	if a.ncSys == nil {
+		log.Warn().Msg("observer NATS connection not configured; asty_node_nats_* metrics will stay zero")
+		return
+	}
+	serverID := a.ncSys.ConnectedServerId()
+	if serverID == "" {
+		log.Warn().Msg("observer NATS connection has no server id; nats_* metrics will stay zero")
+		return
+	}
+	statszSubj := fmt.Sprintf("$SYS.REQ.SERVER.%s.STATSZ", serverID)
+	jszSubj := fmt.Sprintf("$SYS.REQ.SERVER.%s.JSZ", serverID)
+
+	ticker := time.NewTicker(natsStatsInterval)
 	defer ticker.Stop()
 
-	client := &http.Client{Timeout: natsScrapeTimeout}
-	base := fmt.Sprintf("http://%s:%s", a.cfg.NATS.Host, a.cfg.NATS.MonitoringPort)
-	failures := 0
-
+	warned := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := a.scrapeOnce(client, base); err != nil {
-				failures++
-				if failures == 1 {
-					log.Warn().Err(err).Str("base", base).Msg("NATS monitoring unreachable; nats_* metrics will be zero")
-				} else {
-					log.Debug().Err(err).Int("failures", failures).Msg("NATS scrape failed")
+			if err := a.collectNATSStatsOnce(statszSubj, jszSubj); err != nil {
+				if !warned {
+					log.Warn().Err(err).Msg("$SYS stats collection failed; check NATS system_account configuration")
+					warned = true
 				}
 				continue
 			}
-			if failures > 0 {
-				log.Info().Str("base", base).Msg("NATS monitoring recovered")
-				failures = 0
-			}
+			warned = false
 		}
 	}
 }
 
-func (a *Agent) scrapeOnce(client *http.Client, base string) error {
-	var varz struct {
-		CPU           float64 `json:"cpu"`
-		Mem           int64   `json:"mem"` // bytes
-		Connections   int     `json:"connections"`
-		Subscriptions int     `json:"subscriptions"`
-		SlowConsumers int64   `json:"slow_consumers"`
-		InMsgs        int64   `json:"in_msgs"`
-		OutMsgs       int64   `json:"out_msgs"`
+func (a *Agent) collectNATSStatsOnce(statszSubj, jszSubj string) error {
+	msg, err := a.ncSys.Request(statszSubj, nil, natsStatsTimeout)
+	if err != nil {
+		return fmt.Errorf("STATSZ request: %w", err)
 	}
-	if err := fetchJSON(client, base+"/varz", &varz); err != nil {
-		return err
-	}
-
-	var jsz struct {
-		Messages int64 `json:"messages"`
-		Bytes    int64 `json:"bytes"`
-	}
-	if err := fetchJSON(client, base+"/jsz", &jsz); err != nil {
-		// JetStream may be disabled — treat as zero, not as a hard failure.
-		jsz.Messages, jsz.Bytes = 0, 0
+	var st statszEnvelope
+	if err := json.Unmarshal(msg.Data, &st); err != nil {
+		return fmt.Errorf("STATSZ decode: %w", err)
 	}
 
 	a.natsStats.mu.Lock()
-	defer a.natsStats.mu.Unlock()
-	a.natsStats.cpuPercent = varz.CPU
-	a.natsStats.memoryMB = varz.Mem / (1024 * 1024)
-	a.natsStats.connections = varz.Connections
-	a.natsStats.subscriptions = varz.Subscriptions
-	a.natsStats.slowConsumers = varz.SlowConsumers
-	a.natsStats.inMsgs = varz.InMsgs
-	a.natsStats.outMsgs = varz.OutMsgs
-	a.natsStats.jetStreamMessages = jsz.Messages
-	a.natsStats.jetStreamBytes = jsz.Bytes
-	return nil
-}
+	a.natsStats.cpuPercent = st.Statsz.CPU
+	a.natsStats.memoryMB = st.Statsz.Mem / (1024 * 1024)
+	a.natsStats.connections = st.Statsz.Connections
+	a.natsStats.subscriptions = st.Statsz.Subscriptions
+	a.natsStats.slowConsumers = st.Statsz.SlowConsumers
+	a.natsStats.inMsgs = st.Statsz.Received.Msgs
+	a.natsStats.outMsgs = st.Statsz.Sent.Msgs
+	a.natsStats.mu.Unlock()
 
-func fetchJSON(client *http.Client, url string, out any) error {
-	resp, err := client.Get(url)
-	if err != nil {
-		return err
+	// JSZ is best-effort — JetStream may be disabled on this server,
+	// in which case the request fails or the payload is empty.
+	if msg, err := a.ncSys.Request(jszSubj, nil, natsStatsTimeout); err == nil {
+		var js jszEnvelope
+		if err := json.Unmarshal(msg.Data, &js); err == nil {
+			a.natsStats.mu.Lock()
+			a.natsStats.jetStreamMessages = js.Data.Messages
+			a.natsStats.jetStreamBytes = js.Data.Bytes
+			a.natsStats.mu.Unlock()
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return fmt.Errorf("status %d from %s", resp.StatusCode, url)
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return nil
 }

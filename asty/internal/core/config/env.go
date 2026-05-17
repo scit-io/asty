@@ -21,11 +21,12 @@ func applyEnvOverrides(c *Config) {
 	envBool("A_DEV_MODE", &c.DevMode)
 	envInt("A_MOCK_NODES", &c.MockNodes)
 
-	envStr("A_NATS_HOST", &c.NATS.Host)
-	envStr("A_NATS_PORT", &c.NATS.Port)
-	envStr("A_NATS_MONITORING_PORT", &c.NATS.MonitoringPort)
 	envStr("A_NATS_USER", &c.NATS.User)
 	envStr("A_NATS_PASSWORD", &c.NATS.Password)
+	envStr("A_NATS_OBSERVER_USER", &c.NATS.ObserverUser)
+	envStr("A_NATS_OBSERVER_PASSWORD", &c.NATS.ObserverPassword)
+	envStr("A_NATS_APP_USER", &c.NATS.AppUser)
+	envStr("A_NATS_APP_PASSWORD", &c.NATS.AppPassword)
 
 	envInt("A_MIN_COPIES", &c.Autoscale.MinCopies)
 	envInt("A_TARGET_CPU", &c.Autoscale.TargetCPU)

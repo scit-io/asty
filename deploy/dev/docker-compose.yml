@@ -1,26 +1,7 @@
 services:
 
-  # NATS-кластер. --scale nats=N запускает N нод.
-  # Docker DNS резолвит имя сервиса `nats` во все запущенные контейнеры.
-  nats:
-    image: nats:2-alpine
-    entrypoint: ["/bin/sh", "-c"]
-    command: ['exec nats-server -n "nats-$$(hostname)" -c /etc/nats/nats.conf']
-    ports:
-      # Для single-node дефолт — фиксированные 4222/8222 (стабильные адреса).
-      # Для multi-node start.sh экспортирует диапазоны.
-      - "${NATS_CLIENT_PORTS:-4222:4222}"
-      - "${NATS_HTTP_PORTS:-8222:8222}"
-    volumes:
-      # Конфиг рендерится start.sh в /tmp/asty-dev-nats.conf
-      - ${DEV_NATS_CONF:-./nats.conf}:/etc/nats/nats.conf:ro
-    deploy:
-      resources:
-        limits:
-          cpus: "${A_DOCKER_CPUS}"
-          memory: ${A_MEMORY_TOTAL}M
-    networks:
-      - asty
+  # NATS больше не запускается из docker compose — каждый Asty-агент
+  # супервизит собственный nats-server на своём 127.0.0.$i (см. start.sh).
 
   postgres:
     image: postgres:16-alpine

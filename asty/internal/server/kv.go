@@ -15,6 +15,18 @@ import (
 
 const kvProvisionTimeout = 15 * time.Second
 
+// JetStream API error codes we react to when provisioning a KV bucket.
+// They both translate to "this request asked for more replicas than
+// the local JetStream can place" — the difference is whether NATS is
+// running clustered (10005, no eligible peers) or standalone (10074,
+// non-clustered mode rejects replicas > 1 outright). In both cases we
+// degrade by one and retry; the bucket lands with whatever the local
+// JetStream can actually deliver.
+const (
+	jsErrNoPeersForPlacement     = 10005
+	jsErrReplicasNotSupportedJSE = 10074
+)
+
 // provisionKVBuckets creates all KV buckets declared in svc.KV before
 // the service starts. Returns a map of env vars to inject into the
 // process: A_KV_{UPPER_BUCKET} = bucket_name.
@@ -90,10 +102,13 @@ func (s *Server) ensureKVBucket(js jetstream.JetStream, decl types.KVBucket) err
 		}
 
 		var jsErr jetstream.JetStreamError
-		if errors.As(err, &jsErr) && jsErr.APIError() != nil && jsErr.APIError().ErrorCode == 10005 && replicas > 1 {
-			log.Warn().Int("replicas", replicas).Str("bucket", decl.Bucket).Msg("no peers for placement, reducing replicas")
-			replicas--
-			continue
+		if replicas > 1 && errors.As(err, &jsErr) && jsErr.APIError() != nil {
+			code := jsErr.APIError().ErrorCode
+			if code == jsErrNoPeersForPlacement || code == jsErrReplicasNotSupportedJSE {
+				log.Warn().Int("replicas", replicas).Str("bucket", decl.Bucket).Uint16("code", uint16(code)).Msg("reducing KV replicas: cluster cannot place requested count")
+				replicas--
+				continue
+			}
 		}
 
 		return err

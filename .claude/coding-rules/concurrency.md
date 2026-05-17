@@ -21,6 +21,9 @@ Asty was deliberately converted from a polling architecture to an event-driven o
 | `Process.TailLogs` | 100 ms | File reading; fsnotify complicates log rotation |
 | `proximity.RunValidation` | 1 hour | Heavy job, slow drift |
 | `streamHubInterval` | 60 s | Pure safety net for missed events; debounce drives normal path |
+| `agent.watchNATSPeers` | 5 s | Re-resolves peer source (file/env/DNS); no event channel for file/DNS changes |
+| `server.watchStreamReplicas` | 10 s | Leader-only — bumps stream replicas after the cluster grows; no JS event for "peers count changed" |
+| `netutil.ConnectNATS` retry | 500 ms | Bootstrap race: server may start before the agent has the local broker bound |
 
 Each of these has a comment at its `time.NewTicker` site explaining why polling is the right choice.
 

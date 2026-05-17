@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 
 	"asty/asty/internal/core/config"
@@ -37,7 +39,8 @@ const failedServicesBufferSize = 64
 // Agent manages processes on a single node.
 type Agent struct {
 	cfg    *config.Config
-	nc     *nats.Conn
+	nc     *nats.Conn // ASTY account — cluster KV, asty.v1.*, gateway, logs
+	ncSys  *nats.Conn // SYS account — STATSZ/JSZ only; nil if observer creds not configured
 	nodeID string
 
 	processes map[string]*process.Process
@@ -48,6 +51,14 @@ type Agent struct {
 	artifactDownloader *artifacts.Downloader
 	clusterState       *state.ClusterState
 	natsStats          natsStats
+	natsServerCmd      *exec.Cmd
+
+	// natsRestartCh fires when watchNATSPeers detects a change in the
+	// peer list and the supervisor must rebuild nats.conf and restart
+	// the broker. Buffer 1 — a second tick before the supervisor
+	// services the first is harmless: the restart already picks up the
+	// freshest peer list.
+	natsRestartCh chan struct{}
 
 	workDir string
 
@@ -82,6 +93,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		artifactDownloader: artifacts.NewDownloader(),
 		workDir:            workDir,
 		failed:             make(chan string, failedServicesBufferSize),
+		natsRestartCh:      make(chan struct{}, 1),
 	}, nil
 }
 
@@ -95,10 +107,20 @@ func (a *Agent) exportConfigEnv() {
 			os.Setenv(key, val)
 		}
 	}
-	setIfNonEmpty("A_NATS_HOST", a.cfg.NATS.Host)
-	setIfNonEmpty("A_NATS_PORT", a.cfg.NATS.Port)
-	setIfNonEmpty("A_NATS_USER", a.cfg.NATS.User)
-	setIfNonEmpty("A_NATS_PASSWORD", a.cfg.NATS.Password)
+	host := a.cfg.NodeIP
+	if host == "" {
+		host = netutil.LocalIPv4("")
+	}
+	// Spawned services get APP credentials. No fallback to the agent's
+	// own user: that user has JetStream KV access to the asty-cluster
+	// bucket, and a spawned service inheriting it would be able to
+	// rewrite cluster state. If app creds aren't configured, leave
+	// A_NATS_USER/PASSWORD unset so services fail loudly at startup.
+	user, password := a.cfg.NATS.AppCredentials()
+	setIfNonEmpty("A_NATS_HOST", host)
+	setIfNonEmpty("A_NATS_PORT", strconv.Itoa(a.cfg.NATS.Server.Port))
+	setIfNonEmpty("A_NATS_USER", user)
+	setIfNonEmpty("A_NATS_PASSWORD", password)
 	setIfNonEmpty("A_LOG_LEVEL", a.cfg.LogLevel)
 }
 
@@ -114,8 +136,18 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	a.exportConfigEnv()
 
+	if err := a.bootstrapNATS(ctx); err != nil {
+		return fmt.Errorf("failed to bootstrap NATS: %w", err)
+	}
+	go a.superviseNATS(ctx)
+	go a.watchNATSPeers(ctx)
+
+	host := a.cfg.NodeIP
+	if host == "" {
+		host = netutil.LocalIPv4("")
+	}
 	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
-		Host: a.cfg.NATS.Host, Port: a.cfg.NATS.Port,
+		Host: host, Port: a.cfg.NATS.Server.Port,
 		User: a.cfg.NATS.User, Password: a.cfg.NATS.Password,
 	}, "asty-agent-"+a.nodeID)
 	if err != nil {
@@ -123,6 +155,22 @@ func (a *Agent) Start(ctx context.Context) error {
 	}
 	a.nc = nc
 	defer a.nc.Close()
+
+	// Separate connection in the SYS account, used exclusively by
+	// natsstats.go for $SYS.REQ.SERVER.*.STATSZ/JSZ. Optional: if no
+	// observer credentials are configured the agent still comes up and
+	// the asty_node_nats_* metrics simply stay at zero.
+	if a.cfg.NATS.ObserverUser != "" {
+		ncSys, err := netutil.ConnectNATS(netutil.NATSCreds{
+			Host: host, Port: a.cfg.NATS.Server.Port,
+			User: a.cfg.NATS.ObserverUser, Password: a.cfg.NATS.ObserverPassword,
+		}, "asty-observer-"+a.nodeID)
+		if err != nil {
+			return fmt.Errorf("failed to connect to NATS as observer: %w", err)
+		}
+		a.ncSys = ncSys
+		defer a.ncSys.Close()
+	}
 
 	clusterState, err := state.New(a.nc)
 	if err != nil {
@@ -150,7 +198,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.publishHeartbeat(ctx)
 	go a.publishProcessMetrics(ctx)
 	go a.monitorProcesses(ctx)
-	go a.scrapeNATSLoop(ctx)
+	go a.collectNATSStatsLoop(ctx)
 
 	if err := a.runGateway(ctx); err != nil {
 		return fmt.Errorf("failed to start gateway: %w", err)

@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/rs/zerolog"
@@ -13,13 +15,15 @@ import (
 	"asty/asty/internal/agent"
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/config"
+	"asty/asty/internal/core/natsconf"
 	"asty/asty/internal/features/observability/logs"
 	"asty/asty/internal/server"
 )
 
 func main() {
-	mode := flag.String("mode", "agent", "Run mode: agent or server")
+	mode := flag.String("mode", "agent", "Run mode: agent, server, or nats-conf")
 	configPath := flag.String("config", "", "Path to config.asty (default: ./config.asty)")
+	peersFlag := flag.String("peers", "", "Comma-separated peer IPs (nats-conf mode only)")
 	flag.Parse()
 
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
@@ -41,6 +45,18 @@ func main() {
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to load config")
 	}
+
+	// nats-conf only renders the NATS server config; it skips top-level
+	// validation (domain/token) so it can be run against a partial dev
+	// config without forcing the operator to set every prod-required key.
+	if *mode == "nats-conf" {
+		if err := cfg.NATS.Validate(); err != nil {
+			log.Fatal().Err(err).Msg("invalid nats config")
+		}
+		renderNATSConf(cfg, *peersFlag)
+		return
+	}
+
 	if err := cfg.Validate(); err != nil {
 		log.Fatal().Err(err).Msg("invalid config")
 	}
@@ -93,4 +109,33 @@ func runServer(ctx context.Context, cfg *config.Config) {
 
 	<-ctx.Done()
 	log.Info().Msg("server stopped")
+}
+
+// renderNATSConf prints to stdout the nats-server configuration that
+// the agent would write at startup for this node. NodeID and NodeIP
+// come from the loaded config (which already absorbed env overrides).
+// Peers must be supplied via -peers because this subcommand does not
+// run DNS discovery — its purpose is offline inspection.
+func renderNATSConf(cfg *config.Config, peers string) {
+	if cfg.NodeID == "" {
+		log.Fatal().Msg("node_id is required (set via config.asty or A_NODE_ID)")
+	}
+	if cfg.NodeIP == "" {
+		log.Fatal().Msg("node_ip is required (set via config.asty or A_NODE_IP)")
+	}
+
+	var peerList []string
+	for _, p := range strings.Split(peers, ",") {
+		if s := strings.TrimSpace(p); s != "" {
+			peerList = append(peerList, s)
+		}
+	}
+
+	out := natsconf.Render(natsconf.Input{
+		Config: cfg.NATS,
+		NodeID: cfg.NodeID,
+		NodeIP: cfg.NodeIP,
+		Peers:  peerList,
+	})
+	fmt.Print(out)
 }

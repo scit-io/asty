@@ -4,8 +4,9 @@
 # Every field here can be overridden per-node via A_* env vars (useful in start.sh
 # when running multiple agents on loopback with different ports).
 #
-# Secrets (A_NATS_USER, A_NATS_PASSWORD, A_TOKEN) are NOT stored here —
-# they live in dev.vars and are exported by start.sh into the process env.
+# Secrets (A_NATS_PASSWORD, A_NATS_OBSERVER_PASSWORD, A_NATS_APP_PASSWORD,
+# A_TOKEN) are NOT stored here — they live in dev.vars and are exported
+# by start.sh into the process env.
 
 # Cluster identity.
 domain: dev.local   # Cluster domain (used in NATS subject namespacing and API auth)
@@ -13,13 +14,58 @@ datacenter: dc1     # This node's DC; used by proximity-aware scheduling
 log_level: debug    # Zerolog level (debug — verbose; in prod typically info)
 dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod-like CBOR)
 
-# NATS connection for both server and agent.
-# In dev, start.sh overrides A_NATS_PORT per node so multiple agents
-# can coexist on the same machine without port conflicts.
+# NATS — the agent supervises a local nats-server on each node and
+# renders its config from the `server:` subsection below.
+#
+# Three client-side credentials, all distinct:
+#   - user/password           — ASTY account; main connection. Server uses
+#                               it for everything. Agent uses it for cluster
+#                               KV, asty.v1.*, log streams, gateway, ping.
+#   - observer_user/password  — SYS account; agent-only second connection,
+#                               permissions-restricted to STATSZ/JSZ. Used
+#                               solely to feed asty_node_nats_* metrics.
+#   - app_user/password       — ASTY account; passed to spawned services via
+#                               A_NATS_USER/A_NATS_PASSWORD. MUST differ from
+#                               user/password — otherwise apps inherit the
+#                               agent's JetStream KV access to asty-cluster.
 nats:
-  host: 127.0.0.1            # Local NATS server address (always loopback by design)
-  port: "4222"               # Local NATS server port (overridden per node in dev via A_NATS_PORT)
-  monitoring_port: "8222"    # NATS /varz /jsz endpoint (overridden per node in dev via A_NATS_MONITORING_PORT)
+  user: asty-agent                                 # Client: agent's main user (ASTY)
+  password: "${A_NATS_PASSWORD}"                   # Substituted from env (see dev.vars)
+  observer_user: asty-observer                     # Client: agent's STATSZ/JSZ user (SYS)
+  observer_password: "${A_NATS_OBSERVER_PASSWORD}" # Substituted from env (see dev.vars)
+  app_user: asty-app                               # Client: credentials handed to spawned services
+  app_password: "${A_NATS_APP_PASSWORD}"           # Substituted from env (see dev.vars)
+  server:
+    port: 4222                                     # nats-server client port
+    jetstream:
+      store_dir: /tmp/asty-dev/jetstream/${A_NODE_ID}  # Per-node JS store path (NodeID makes it unique per agent on a shared host)
+      max_memory: 256M                             # JetStream in-memory cap
+      max_file: 10G                                # JetStream on-disk cap
+    cluster:
+      name: asty-dev                               # Cluster name (used to gate route advertisement)
+      port: 6222                                   # Cluster gossip port
+    accounts:
+      ASTY:                                        # Application + agent traffic; cluster state KV lives here
+        jetstream: true                            # Enables JetStream/KV in this account (asty-cluster, asty-leader, user buckets)
+        users:
+          - user: asty-agent                       # Agent's main user — full ASTY rights
+            password: "${A_NATS_PASSWORD}"
+          - user: asty-app                         # Spawned services — full ASTY rights (KV, api.v1.*, etc.)
+            password: "${A_NATS_APP_PASSWORD}"
+      SYS:                                         # System account — observability only, no JS
+        users:
+          - user: asty-observer                    # Read-only-ish: STATSZ/JSZ request-reply only
+            password: "${A_NATS_OBSERVER_PASSWORD}"
+            permissions:                           # Allowlist; everything else (SHUTDOWN, account ops) is denied
+              publish:
+                allow:                             # Subjects this user may publish to
+                  - "$SYS.REQ.SERVER.*.STATSZ"     # Server-stats request
+                  - "$SYS.REQ.SERVER.*.JSZ"        # JetStream-stats request
+                  - "_INBOX.>"                     # Auto-inbox for the request-reply reply
+              subscribe:
+                allow:
+                  - "_INBOX.>"                     # Listen for the reply only
+    system_account: SYS                            # Required for $SYS event publication
 
 # Autoscaler thresholds.
 # The controller evaluates these every eval_interval and decides

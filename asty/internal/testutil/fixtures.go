@@ -15,8 +15,7 @@ func NewTestConfig() *config.Config {
 		NodeID:     "test-node-1",
 		NodeIP:     "127.0.0.1",
 		NATS: config.NATSConfig{
-			Host: "127.0.0.1",
-			Port: "4222",
+			Server: config.NATSServerConfig{Port: 4222},
 		},
 		Autoscale: config.AutoscaleConfig{
 			MinCopies:           3,
