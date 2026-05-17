@@ -210,6 +210,16 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent ready")
 
 	<-ctx.Done()
+	// Best-effort deregister: drop our node entry from the cluster KV
+	// so the leader's snapshot (and the asty_node_* metrics it feeds)
+	// stops reporting us on the next watcher tick. NATS-graceful path —
+	// the supervisor hasn't SIGTERM'd nats-server yet, so the KV write
+	// still has a working broker on the same loopback.
+	if a.clusterState != nil {
+		if err := a.clusterState.RemoveNode(a.nodeID); err != nil {
+			log.Warn().Err(err).Msg("graceful shutdown: failed to deregister node from cluster state")
+		}
+	}
 	a.stopAllProcesses()
 	return nil
 }
