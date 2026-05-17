@@ -77,7 +77,7 @@ func splitByType(allocs []allocOnNode) (system, regular []allocOnNode) {
 }
 
 // markCurrent records the alloc currently being processed so the API
-// can show "now migrating xhttp …".
+// can show "now migrating <service> …".
 func (dm *DrainManager) markCurrent(op *drainOp, serviceName string) {
 	dm.mu.Lock()
 	op.status.CurrentAllocation = serviceName
