@@ -13,6 +13,8 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:8080',
+      // /metrics is the Prometheus exposition path; SPA does not call
+      // it, but proxy it through so local browsing of /metrics works.
       '/metrics': 'http://localhost:8080',
       '/health': 'http://localhost:8080',
     }
