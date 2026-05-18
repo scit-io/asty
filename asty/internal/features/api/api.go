@@ -16,7 +16,17 @@ import (
 // Changing this string moves all of the SPA's API calls in one place;
 // the SPA reads the matching `API_PREFIX` constant in
 // `asty/web/src/api/client.ts` — change both in lockstep.
-const apiPrefix = "/metrics"
+//
+// Note (migration/tz §14.2): the prefix moved from "/metrics" to
+// "/api/v1" so that the Prometheus exposition path "/metrics" (exact)
+// and the data namespace stop semantically overlapping. legacyAPIPrefix
+// preserves the old route for one cycle so existing UI builds and CLI
+// tooling don't break; responses on the legacy prefix carry the
+// Deprecation header and a Sunset hint.
+const (
+	apiPrefix       = "/api/v1"
+	legacyAPIPrefix = "/metrics"
+)
 
 // API provides the orchestrator's HTTP surface: SSE streams, polling
 // endpoints, and command POSTs — all on a single port. Content-
@@ -74,10 +84,17 @@ func (api *API) Start(ctx context.Context) error {
 	// Outer mux: infra endpoints at the root, data namespace nested.
 	// /health and /metrics stay at the root because the probes and
 	// Prometheus scrape don't know about our prefix.
+	//
+	// The legacy /metrics/* data prefix is wired to the same sub-mux
+	// with a deprecation header, so existing UI builds keep working
+	// while they migrate to /api/v1. http.ServeMux routes /metrics
+	// (exact) and /metrics/ (prefix) independently, so the Prometheus
+	// path is unaffected.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", api.handleHealth)
 	mux.HandleFunc("GET /metrics", api.handleMetrics)
 	mux.Handle(apiPrefix+"/", http.StripPrefix(apiPrefix, data))
+	mux.Handle(legacyAPIPrefix+"/", deprecatedAPI(http.StripPrefix(legacyAPIPrefix, data)))
 
 	api.httpServer = &http.Server{
 		Addr:              api.addr,

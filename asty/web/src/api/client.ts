@@ -11,7 +11,12 @@ import type {
 // `apiPrefix` constant in features/api/api.go — change both in
 // lockstep when renaming. Every fetch and EventSource in the SPA
 // goes through this.
-export const API_PREFIX = '/metrics'
+//
+// Moved from /metrics to /api/v1 (migration/tz §14.2) so the data
+// namespace stops overlapping with the Prometheus exposition path.
+// The old /metrics/* prefix remains supported on the backend for one
+// cycle with a Deprecation header.
+export const API_PREFIX = '/api/v1'
 
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, options)
