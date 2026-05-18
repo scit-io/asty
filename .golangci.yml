@@ -1,0 +1,71 @@
+# golangci-lint configuration for Asty.
+#
+# Enforces the discipline laid out in .audit/TZ.md (the target
+# architecture) without yet enforcing the full L0..L4 onion model —
+# that needs the directory reshuffle in TZ §14.4. For now we lock in
+# the cheap-to-enforce invariants:
+#
+#   - os.Getenv is forbidden outside core/config (TZ §2.9).
+#   - features/api may not import internal/server (only the other way).
+#   - core/* may not import anything from internal/features or above.
+#
+# Run with `make lint` (golangci-lint run) — kept out of `make ci` so
+# the aggregator does not require a third-party tool.
+
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - depguard
+    - govet
+    - staticcheck
+    - unused
+    - gosimple
+
+linters-settings:
+  depguard:
+    rules:
+      # No raw env reads outside the single config path.
+      env:
+        list-mode: lax
+        files:
+          - "**/asty/internal/**/*.go"
+          - "!**/asty/internal/core/config/**/*.go"
+        deny:
+          - pkg: "os"
+            desc: "os.Getenv/Setenv outside core/config violates TZ §2.9 (single config path); add the field to core/config and read it through cfg."
+        # The os package itself is OK; we only block os.Getenv/Setenv
+        # via the pattern below. depguard cannot block individual
+        # symbols, so this rule is informational — pair with a CI grep
+        # that fails on `os\.Getenv` outside core/config.
+
+      # Core primitives must not depend on higher layers.
+      core_purity:
+        files:
+          - "**/asty/internal/core/**/*.go"
+        deny:
+          - pkg: "asty/asty/internal/features"
+            desc: "core/* is L0; it may not import features/* (L1..L3)."
+          - pkg: "asty/asty/internal/server"
+            desc: "core/* is L0; it may not import the server composition root."
+          - pkg: "asty/asty/internal/agent"
+            desc: "core/* is L0; it may not import the agent composition root."
+
+      # API edges must not import the server's internals; server uses
+      # api/, not the reverse.
+      api_purity:
+        files:
+          - "**/asty/internal/features/api/**/*.go"
+        deny:
+          - pkg: "asty/asty/internal/server"
+            desc: "features/api is L4; depend on server only through the ServerContext interface."
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - depguard

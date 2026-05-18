@@ -65,10 +65,18 @@ race:
 tidy:
 	go mod tidy
 
+# layer-check enforces TZ §2.9: env reads outside core/config are
+# forbidden. Only os.Getenv/os.LookupEnv match — os.Setenv is fine,
+# it's how the agent pushes env to its child processes. The grep
+# pattern requires `(` to skip references inside comments. depguard
+# in .golangci.yml documents the same rule for editors.
+layer-check:
+	@bad=$$(grep -rnE '(os\.Getenv|os\.LookupEnv)\(' asty/internal/ --include='*.go' | grep -v '_test\.go' | grep -v 'asty/internal/core/config/' || true); \
+	if [ -n "$$bad" ]; then echo "layer-check: env reads outside core/config detected"; echo "$$bad"; exit 1; fi
+
 # CI aggregator — runs the four mandatory checks from
-# testing.md plus integration tests. A green `make ci` is what
-# every commit should produce.
-ci: build vet race test-integration
+# testing.md plus integration tests plus the layer-check.
+ci: build vet race test-integration layer-check
 
 # Run agent
 run-agent: build
