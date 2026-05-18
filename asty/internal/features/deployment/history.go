@@ -131,13 +131,19 @@ func (d *Deployer) revertDeployment(ctx context.Context, plan *DeploymentPlan, s
 }
 
 // markRollbackFailed finalises the deployment in RollbackFailed state.
-// The service is left in mixed-version limbo and the orchestrator
-// should refuse to autoscale it until operator clears the flag.
+// The service is left in mixed-version limbo, and the per-service
+// RollbackFailed flag is set in KV so the autoscaler refuses to act
+// on this service until the operator clears it. The deployer logs
+// loudly because nothing else will — there is no automatic recovery
+// path from here.
 func (d *Deployer) markRollbackFailed(status *DeploymentStatus, err error) (*DeploymentStatus, error) {
 	log.Error().
 		Err(err).
 		Str("service", status.ServiceName).
 		Msg("rollback failed — service in mixed-version state, operator intervention required")
+	if flagErr := d.clusterState.SetRollbackFailed(status.ServiceName, true); flagErr != nil {
+		log.Warn().Err(flagErr).Str("service", status.ServiceName).Msg("failed to set rollback_failed flag in KV")
+	}
 	status.Status = StateRollbackFailed
 	status.Error = err.Error()
 	status.EndTime = time.Now()

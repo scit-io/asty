@@ -44,6 +44,11 @@ type DeploymentPlan struct {
 }
 
 // UpdateStrategy defines how to update.
+//
+// CanaryRetries is the number of times the canary phase will retry
+// dispatch before declaring the canary unhealthy. 0 means "no retry";
+// 1 (default in svc.Update.GetCanaryRetries) covers the common slow-
+// artifact-pull case without infinite re-tries.
 type UpdateStrategy struct {
 	MaxParallel      int
 	MinHealthyTime   time.Duration
@@ -51,6 +56,7 @@ type UpdateStrategy struct {
 	ProgressDeadline time.Duration
 	AutoRevert       bool
 	Canary           int
+	CanaryRetries    int
 }
 
 // DeploymentStatus tracks deployment progress.
@@ -67,10 +73,14 @@ type DeploymentStatus struct {
 }
 
 // StateAccessor provides access to cluster state for deployments. Kept
-// minimal so tests can inject a stub.
+// minimal so tests can inject a stub. SetRollbackFailed lets the
+// deployer flag a service that failed auto_revert so the autoscaler
+// stops touching it; the operator clears the flag via the API once
+// they reconcile the mixed-version state.
 type StateAccessor interface {
 	GetAllocation(serviceName, nodeID string) (*types.ServiceAllocation, error)
 	MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error
+	SetRollbackFailed(serviceName string, failed bool) error
 }
 
 // SendRestartCommand is the dispatcher the deployer uses to tell an
@@ -131,7 +141,7 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		Msg("starting deployment")
 
 	if plan.UpdateStrategy.Canary > 0 {
-		ok, err := d.deployCanary(ctx, plan, status)
+		ok, err := d.deployCanaryWithRetries(ctx, plan, status)
 		if err != nil {
 			return d.handleFailure(ctx, plan, status, fmt.Errorf("canary failed: %w", err))
 		}

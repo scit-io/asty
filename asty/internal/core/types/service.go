@@ -13,6 +13,7 @@ const (
 	defaultRestartTries   = 3
 	defaultMaxParallel    = 1
 	defaultCanary         = 1
+	defaultCanaryRetries  = 1
 )
 
 // ServiceType defines how the service is scheduled.
@@ -94,9 +95,16 @@ type Logs struct {
 // Update governs rolling-update behaviour. MaxParallel and Canary
 // default to 1 in Resolve() — a zero MaxParallel would deadlock the
 // rolling loop, and a zero Canary disables the canary phase.
+//
+// CanaryRetries (default 1) is the number of times the deployer
+// re-dispatches an unhealthy canary before failing/reverting. Useful
+// when the artifact pulls slowly on a cold cache: the first attempt
+// might just miss the HealthyDeadline, while the second arrives with
+// the binary already on disk.
 type Update struct {
 	MaxParallel      int    `yaml:"max_parallel"`
 	Canary           int    `yaml:"canary"`
+	CanaryRetries    int    `yaml:"canary_retries"`
 	MinHealthyTime   string `yaml:"min_healthy_time"`
 	HealthyDeadline  string `yaml:"healthy_deadline"`
 	ProgressDeadline string `yaml:"progress_deadline"`
@@ -161,6 +169,9 @@ func (s *ServiceDefinition) Resolve() {
 	}
 	if s.Update.Canary < 0 {
 		s.Update.Canary = 0
+	}
+	if s.Update.CanaryRetries < 0 {
+		s.Update.CanaryRetries = 0
 	}
 }
 

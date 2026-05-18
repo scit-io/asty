@@ -44,6 +44,35 @@ func (d *Deployer) deployCanary(ctx context.Context, plan *DeploymentPlan, statu
 	return d.waitForBatchHealth(ctx, canaryAllocs, plan), nil
 }
 
+// deployCanaryWithRetries wraps deployCanary with the CanaryRetries
+// budget. Each retry re-dispatches the canary batch and waits for
+// health; the loop exits the first time health passes or the budget
+// is exhausted. Errors from dispatch propagate immediately because
+// they signal transport/KV failures unlikely to clear by retrying.
+func (d *Deployer) deployCanaryWithRetries(ctx context.Context, plan *DeploymentPlan, status *DeploymentStatus) (bool, error) {
+	attempts := plan.UpdateStrategy.CanaryRetries + 1 // initial try + retries
+	if attempts < 1 {
+		attempts = 1
+	}
+	for i := 0; i < attempts; i++ {
+		ok, err := d.deployCanary(ctx, plan, status)
+		if err != nil {
+			return false, err
+		}
+		if ok {
+			return true, nil
+		}
+		if i < attempts-1 {
+			log.Warn().
+				Str("service", plan.ServiceName).
+				Int("attempt", i+1).
+				Int("budget", attempts).
+				Msg("canary unhealthy, retrying within budget")
+		}
+	}
+	return false, nil
+}
+
 // markPending atomically pins an allocation to the given version and
 // sets status to Pending — that's the signal for the agent to (re)start
 // the process. Used by both forward dispatch (TargetVersion) and

@@ -95,10 +95,19 @@ func (s AllocationStatus) Occupies() bool {
 // TZ §5.2). IdleSince is zero whenever the service is not currently
 // observed as idle; the autoscaler resets it on every evaluation that
 // exits the floor and seeds it on every evaluation that enters.
+//
+// RollbackFailed reflects the deploy FSM's terminal RollbackFailed
+// state at the service level: the last deploy attempted auto_revert
+// and the rollback dispatch itself did not return to healthy. The
+// autoscaler reads this flag and refuses to act (scale up or scale
+// down) until the operator clears it via the API. Without this gate
+// the autoscaler would "fix" a mixed-version cluster by adding more
+// copies, which is more dangerous than leaving it alone.
 type ServiceCooldown struct {
-	LastScaleUp   time.Time `json:"last_scale_up,omitempty"`
-	LastScaleDown time.Time `json:"last_scale_down,omitempty"`
-	IdleSince     time.Time `json:"idle_since,omitempty"`
+	LastScaleUp    time.Time `json:"last_scale_up,omitempty"`
+	LastScaleDown  time.Time `json:"last_scale_down,omitempty"`
+	IdleSince      time.Time `json:"idle_since,omitempty"`
+	RollbackFailed bool      `json:"rollback_failed,omitempty"`
 }
 
 // CooldownStatus describes which cooldowns are currently active and what

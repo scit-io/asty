@@ -45,6 +45,11 @@ func NewAutoscaler(clusterState *state.ClusterState, scheduler *scheduling.Sched
 
 // EvaluateService decides whether svc should grow, shrink, or stay put.
 // Cooldowns are checked first so we don't oscillate on every tick.
+// A service whose previous deployment ended in RollbackFailed is left
+// alone entirely — the cluster is in mixed-version limbo and any
+// "fixup" the autoscaler attempts could amplify the inconsistency.
+// The operator clears the flag via the API after reconciling state
+// manually.
 func (as *Autoscaler) EvaluateService(ctx context.Context, svc *types.ServiceDefinition) (*ScalingDecision, error) {
 	allocs, err := as.clusterState.ListAllocations(svc.Name)
 	if err != nil {
@@ -53,6 +58,10 @@ func (as *Autoscaler) EvaluateService(ctx context.Context, svc *types.ServiceDef
 	nodes, err := as.clusterState.ListNodes()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	if cd, err := as.clusterState.GetServiceCooldown(svc.Name); err == nil && cd.RollbackFailed {
+		return noop(svc.Name, "rollback_failed: operator intervention required"), nil
 	}
 
 	live := scheduling.LiveAllocations(allocs)

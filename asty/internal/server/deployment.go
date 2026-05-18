@@ -61,6 +61,7 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 			ProgressDeadline: progressDeadline,
 			AutoRevert:       svc.Update.AutoRevert,
 			Canary:           svc.Update.Canary,
+			CanaryRetries:    svc.Update.CanaryRetries,
 		},
 	}
 

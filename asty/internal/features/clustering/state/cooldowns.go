@@ -49,6 +49,14 @@ func (cs *ClusterState) MarkIdleSince(service string, when time.Time) error {
 	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.IdleSince = when })
 }
 
+// SetRollbackFailed flips the per-service RollbackFailed flag. The
+// deployer writes true after a failed rollback; the autoscaler reads
+// it and bails out without acting; the operator clears it (false) via
+// the API once they've reconciled the mixed-version state manually.
+func (cs *ClusterState) SetRollbackFailed(service string, failed bool) error {
+	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.RollbackFailed = failed })
+}
+
 func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCooldown)) error {
 	key := fmt.Sprintf(serviceCooldownKey, service)
 	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {
