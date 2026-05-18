@@ -1,0 +1,61 @@
+# asty-agent — supervises the local nats-server, runs the embedded
+# gateway, and is the parent of every user-service process on this
+# node. Must start before asty-server: the server connects to NATS,
+# and NATS is the agent's child, so without a live agent the server
+# has nothing to talk to.
+#
+# Operator install:
+#   cp deploy/prod/systemd/asty-agent.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now asty-agent
+#
+# Tuning:
+#   - EnvironmentFile=/etc/asty/asty.env  for A_* overrides (token,
+#     observer creds, capacity overrides) — keep secrets out of unit.
+#   - LimitNOFILE bumped so a busy gateway can hold many WS clients.
+#   - Restart=always with a small backoff so a crash loop is visible
+#     to systemd journal but the cluster heals itself.
+#   - StartLimitBurst caps the loop; past it systemd backs off and
+#     the heartbeat going stale tells the leader to migrate allocs.
+
+[Unit]
+Description=Asty agent — process supervisor + embedded gateway + NATS supervisor
+Documentation=https://github.com/example/asty/blob/main/CLAUDE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=asty
+Group=asty
+WorkingDirectory=/var/lib/asty
+ExecStart=/usr/local/bin/asty -mode agent -config /etc/asty/config.asty
+EnvironmentFile=-/etc/asty/asty.env
+
+# nats-server child + many gateway connections + many spawned services.
+LimitNOFILE=65535
+LimitNPROC=8192
+
+# Stop semantics: SIGTERM, give the agent up to a minute to drain
+# its supervised processes cleanly before SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=60
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=10
+
+# Hardening — leave the kernel surface as narrow as the agent can
+# tolerate. The agent itself needs to spawn user processes so we
+# can't strip CAP_SYS_ADMIN entirely on systems that need cgroup
+# attribution, but everything below is safe.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

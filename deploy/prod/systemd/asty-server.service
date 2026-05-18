@@ -1,0 +1,49 @@
+# asty-server — control-plane process: leader election, reconciler,
+# scheduler, autoscaler, deployer, drainer, dashboard HTTP. Connects
+# to the agent's supervised NATS, so it must start AFTER asty-agent
+# has had a chance to bring NATS up.
+#
+# `Wants=asty-agent.service` ensures the agent is started when this
+# unit is started (but doesn't fail if the agent fails — the server
+# will retry the NATS connection on its own).
+# `After=asty-agent.service` orders the boot so the NATS socket is
+# usually ready when the server first dials.
+#
+# Operator install:
+#   cp deploy/prod/systemd/asty-server.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now asty-server
+
+[Unit]
+Description=Asty server — leader election + controller + dashboard API
+Documentation=https://github.com/example/asty/blob/main/CLAUDE.md
+After=asty-agent.service network-online.target
+Wants=asty-agent.service network-online.target
+
+[Service]
+Type=simple
+User=asty
+Group=asty
+WorkingDirectory=/var/lib/asty
+ExecStart=/usr/local/bin/asty -mode server -config /etc/asty/config.asty
+EnvironmentFile=-/etc/asty/asty.env
+
+LimitNOFILE=65535
+
+KillSignal=SIGTERM
+TimeoutStopSec=30
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=10
+
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
