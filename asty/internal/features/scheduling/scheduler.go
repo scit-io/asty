@@ -82,10 +82,14 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefi
 }
 
 // FilterHealthyNodes keeps only ready nodes with recent heartbeats.
+// Joining/Stale/Draining/etc. are excluded explicitly via EffectiveStatus
+// so a brief network blip or a still-initialising node doesn't get a
+// new copy placed on it.
 func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
 	healthy := make([]*types.NodeInfo, 0, len(nodes))
+	now := time.Now()
 	for _, node := range nodes {
-		if node.Status != types.NodeReady {
+		if node.EffectiveStatus(now) != types.NodeReady {
 			continue
 		}
 		if time.Since(node.LastSeen) > nodeStaleAfter {

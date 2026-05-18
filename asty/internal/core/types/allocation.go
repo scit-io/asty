@@ -17,15 +17,28 @@ const (
 	// by the controller (see startingStuckAfter).
 	AllocStarting AllocationStatus = "starting"
 
-	// AllocRunning — agent has reported the process as alive.
+	// AllocRunning — agent has reported the process as alive AND the
+	// first health probe passed.
 	AllocRunning AllocationStatus = "running"
+
+	// AllocRestarting — agent has observed an unexpected exit and is
+	// inside the restart budget. The slot is still occupied by this
+	// allocation; the next agent report will move it back to Running
+	// (restart succeeded) or to Failed (attempts exhausted).
+	AllocRestarting AllocationStatus = "restarting"
+
+	// AllocStopping — Stop command dispatched; agent is asking the
+	// process to exit gracefully. Followed by AllocStopped on clean
+	// exit within kill_timeout or by AllocFailed on SIGKILL.
+	AllocStopping AllocationStatus = "stopping"
 
 	// AllocStopped — agent reported a clean exit (from a Stop call
 	// or a drain). Not eligible for restart.
 	AllocStopped AllocationStatus = "stopped"
 
-	// AllocFailed — agent reported an unexpected exit. The restart
-	// budget governs whether it's retried or pruned.
+	// AllocFailed — agent reported an unexpected exit with no restart
+	// budget left, OR a kill_timeout-bound stop was escalated to
+	// SIGKILL. The reconciler eventually prunes Failed records.
 	AllocFailed AllocationStatus = "failed"
 
 	// AllocDeleted — synthetic marker the state-watcher emits for KV
@@ -53,10 +66,13 @@ type ServiceAllocation struct {
 }
 
 // IsLive reports whether the allocation counts toward the desired set
-// for placement decisions (pending, starting, or running).
+// for placement decisions. Restarting counts as live because the slot
+// is held while the agent re-runs the process; Stopping is also live
+// because the process is still draining and another copy on the same
+// node would race with it.
 func (s AllocationStatus) IsLive() bool {
 	switch s {
-	case AllocPending, AllocStarting, AllocRunning:
+	case AllocPending, AllocStarting, AllocRunning, AllocRestarting, AllocStopping:
 		return true
 	}
 	return false
@@ -67,7 +83,7 @@ func (s AllocationStatus) IsLive() bool {
 // to IsLive because the slot is still owned until pruning catches up.
 func (s AllocationStatus) Occupies() bool {
 	switch s {
-	case AllocPending, AllocStarting, AllocRunning, AllocFailed:
+	case AllocPending, AllocStarting, AllocRunning, AllocRestarting, AllocStopping, AllocFailed:
 		return true
 	}
 	return false

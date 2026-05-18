@@ -64,7 +64,16 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	// alone would miss it.
 	selfDisk := astyBinarySizeMB() + dirSizeMB(a.workDir)
 
+	// Status defaults to Ready once the agent has real capacity numbers
+	// (CPU + memory). The first heartbeat may arrive before sysinfo
+	// readers populate them in dev/CI; in that window we stay Joining
+	// so the scheduler doesn't place onto a zero-capacity node.
+	// Operator-set states (Draining, Drained, Paused) are preserved
+	// across heartbeats.
 	status := types.NodeReady
+	if cpuTotal == 0 || memTotal == 0 {
+		status = types.NodeJoining
+	}
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
 		switch existing.Status {
 		case types.NodeDraining, types.NodeDrained, types.NodePaused:

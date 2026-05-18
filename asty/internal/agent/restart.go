@@ -61,6 +61,12 @@ func (a *Agent) attemptRestart(ctx context.Context, name string, proc *process.P
 			alloc.Status = types.AllocFailed
 			giveUp = true
 		} else {
+			// Distinguish "scheduled restart within budget" from
+			// "running normally": observers (UI, metrics) see Restarting
+			// during the delay window and the moment the agent re-spawns
+			// the process. The status flips to Pending below so the
+			// controller dispatches a fresh start RPC.
+			alloc.Status = types.AllocRestarting
 			alloc.Restarts++
 			alloc.ConsecutiveFailures++
 			restarts = alloc.Restarts

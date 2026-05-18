@@ -2,6 +2,13 @@ package types
 
 import "time"
 
+// nodeHeartbeatFreshAfter — heartbeat must be within this window to
+// count as "fresh". Beyond it the node is Stale: still in KV, still
+// hosting allocations, but not eligible for new placement until a new
+// heartbeat lands. Picked at ~6× the agent's 5s tick so a single
+// missed beat doesn't flip status.
+const NodeHeartbeatFreshAfter = 30 * time.Second
+
 // nodeHeartbeatStaleAfter is the heartbeat-age threshold beyond which a
 // node is considered unhealthy even if it last reported "ready". The agent
 // publishes a heartbeat every 5 s, so 2 min is a wide safety margin that
@@ -14,8 +21,23 @@ const nodeHeartbeatStaleAfter = 2 * time.Minute
 type NodeStatus string
 
 const (
+	// NodeJoining — first heartbeat received but the node hasn't yet
+	// reported full capacity (CPU/memory/disk are zero). Reflects the
+	// brief window between an agent's first KV write and its first
+	// healthy NodeInfo. Scheduler does not place new copies onto
+	// Joining — capacity numbers can't be trusted — but existing
+	// allocations are honoured.
+	NodeJoining NodeStatus = "joining"
+
 	// NodeReady — accepting new allocations.
 	NodeReady NodeStatus = "ready"
+
+	// NodeStale — heartbeat overdue but not yet over the down
+	// threshold. Treated as "do not place new copies here" while
+	// existing allocations are left alone, so a brief network blip
+	// doesn't trigger a migration storm. Returns to NodeReady on the
+	// next heartbeat.
+	NodeStale NodeStatus = "stale"
 
 	// NodeDraining — actively being emptied by drain; existing
 	// allocations migrate to peers.
@@ -110,4 +132,27 @@ type NodeInfo struct {
 // snapshot builds) can reuse a single timestamp.
 func (n *NodeInfo) IsHealthy(at time.Time) bool {
 	return n.Status == NodeReady && at.Sub(n.LastSeen) < nodeHeartbeatStaleAfter
+}
+
+// EffectiveStatus folds heartbeat age into the persisted status. A
+// node persisted as Ready but with an overdue heartbeat is reported
+// as Stale; further-overdue becomes Down. Operator-set states
+// (Draining/Drained/Paused/Joining) bypass the freshness check
+// because they're intentional. Returning a value rather than mutating
+// keeps EffectiveStatus pure — callers decide whether to persist the
+// derived state back to KV.
+func (n *NodeInfo) EffectiveStatus(at time.Time) NodeStatus {
+	switch n.Status {
+	case NodeJoining, NodeDraining, NodeDrained, NodePaused, NodeDeleted:
+		return n.Status
+	}
+	age := at.Sub(n.LastSeen)
+	switch {
+	case age >= nodeHeartbeatStaleAfter:
+		return NodeDown
+	case age >= NodeHeartbeatFreshAfter:
+		return NodeStale
+	default:
+		return NodeReady
+	}
 }

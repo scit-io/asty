@@ -100,6 +100,13 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 // agent (e.g. agent restarted between drain and stop), the allocation
 // is still marked stopped — the cluster shouldn't keep "running" state
 // for a process that does not actually exist on this node.
+//
+// The status sequence is:
+//   Running → Stopping (right after dispatch) → Stopped (on confirmed exit)
+//
+// AllocStopping is the explicit "graceful exit in flight" window —
+// the slot is still occupied so the scheduler does not race another
+// copy into it before the agent confirms.
 func (a *Agent) StopService(serviceName string) error {
 	a.mu.Lock()
 	proc, exists := a.processes[serviceName]
@@ -117,6 +124,15 @@ func (a *Agent) StopService(serviceName string) error {
 	}
 	delete(a.processes, serviceName)
 	a.mu.Unlock()
+
+	// Mark Stopping so observers see the intent in flight.
+	_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
+		if alloc.Status == types.AllocStopped || alloc.Status == types.AllocFailed {
+			return false
+		}
+		alloc.Status = types.AllocStopping
+		return true
+	})
 
 	a.healthChecker.Unregister(serviceName)
 	a.metricsCollector.Unregister(proc.PID())
