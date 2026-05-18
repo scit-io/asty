@@ -32,15 +32,21 @@ type Config struct {
 	Gateway   GatewayConfig   `yaml:"gateway"`
 }
 
-// AutoscaleConfig — controller and scaling thresholds.
+// AutoscaleConfig — controller and scaling thresholds. MaxCopies and
+// IdleHold come from TZ §5.2: the former caps runaway scale-up, the
+// latter requires the service to stay idle for a continuous window
+// before a scale-down decision fires (anti-flap hysteresis on top of
+// the cooldown gate).
 type AutoscaleConfig struct {
 	MinCopies           int           `yaml:"min_copies"`
+	MaxCopies           int           `yaml:"max_copies"`
 	TargetCPU           int           `yaml:"target_cpu"`
 	TargetMemory        int           `yaml:"target_memory"`
 	TrafficRPSThreshold int           `yaml:"traffic_rps_threshold"`
 	TrafficWindow       time.Duration `yaml:"traffic_window"`
 	CooldownUp          time.Duration `yaml:"cooldown_up"`
 	CooldownDown        time.Duration `yaml:"cooldown_down"`
+	IdleHold            time.Duration `yaml:"idle_hold"`
 	EvalInterval        time.Duration `yaml:"eval_interval"`
 	DCLatency           string        `yaml:"dc_latency"`
 	ControllerWorkers   int           `yaml:"controller_workers"`
@@ -93,12 +99,14 @@ func defaults() *Config {
 		NATS:       natsDefaults(),
 		Autoscale: AutoscaleConfig{
 			MinCopies:           3,
+			MaxCopies:           0, // 0 = unlimited (cluster-size cap is the only ceiling)
 			TargetCPU:           75,
 			TargetMemory:        75,
 			TrafficRPSThreshold: 5,
 			TrafficWindow:       time.Minute,
 			CooldownUp:          30 * time.Second,
 			CooldownDown:        5 * time.Minute,
+			IdleHold:            5 * time.Minute,
 			EvalInterval:        10 * time.Second,
 			ControllerWorkers:   2,
 		},

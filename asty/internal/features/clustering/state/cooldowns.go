@@ -41,6 +41,14 @@ func (cs *ClusterState) MarkScaleDown(service string, when time.Time) error {
 	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.LastScaleDown = when })
 }
 
+// MarkIdleSince persists the moment the service was first observed
+// below the scale-down floor. The autoscaler calls it on every
+// evaluation; passing a zero `when` clears the marker (service exited
+// the idle window).
+func (cs *ClusterState) MarkIdleSince(service string, when time.Time) error {
+	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.IdleSince = when })
+}
+
 func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCooldown)) error {
 	key := fmt.Sprintf(serviceCooldownKey, service)
 	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {

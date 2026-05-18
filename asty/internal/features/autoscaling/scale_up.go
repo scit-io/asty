@@ -22,8 +22,13 @@ const trafficWindow = 60 * time.Second
 //  2. Resource pressure: an existing copy is over TargetCPU or
 //     TargetMemory — add another copy on a free node.
 //
-// Returns nil if neither rule fires.
+// Returns nil if neither rule fires, or if MaxCopies (when set > 0)
+// is already reached. MaxCopies=0 means unlimited — the only ceiling
+// then is the number of healthy nodes the scheduler can place onto.
 func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*types.ServiceAllocation, nodes []*types.NodeInfo) *ScalingDecision {
+	if cap := as.cfg.Autoscale.MaxCopies; cap > 0 && len(live) >= cap {
+		return nil
+	}
 	if node := as.findNodeWithTrafficWithoutService(nodes, live); node != nil {
 		return &ScalingDecision{
 			ServiceName: svc.Name,

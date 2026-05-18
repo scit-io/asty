@@ -3,9 +3,12 @@ package autoscaling
 import (
 	"fmt"
 	"sort"
+	"time"
 
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/features/scheduling"
+
+	"github.com/rs/zerolog/log"
 )
 
 // idleFloorDivisor — when average usage drops below TargetCPU/this and
@@ -15,10 +18,18 @@ import (
 // flap right back to scale-up after a scale-down.
 const idleFloorDivisor = 2
 
-// evaluateScaleDown returns a scale_down decision when MinCopies is
-// satisfied AND average resource use across running copies is below
-// half of the scale-up target. The chosen victim is the alloc on the
-// most-crowded DC (preserves geo-diversity).
+// evaluateScaleDown returns a scale_down decision when:
+//
+//   - MinCopies is satisfied,
+//   - average resource use across running copies is below the floor,
+//   - service has stayed under the floor continuously for IdleHold
+//     (anti-flap hysteresis on top of cooldown).
+//
+// The chosen victim is the alloc on the most-crowded DC (preserves
+// geo-diversity). IdleSince in the cooldown record is the timestamp
+// when the service first dropped below the floor; we clear it whenever
+// usage rises above the floor so the next idle window is measured
+// fresh.
 func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*types.ServiceAllocation) *ScalingDecision {
 	floor := as.cfg.Autoscale.MinCopies
 	if override, ok := as.clusterState.GetServiceScale(svc.Name); ok {
@@ -28,11 +39,13 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 		floor = 1
 	}
 	if len(live) <= floor {
+		as.clearIdleMarker(svc.Name)
 		return nil
 	}
 
 	running := liveRunning(live)
 	if len(running) <= floor {
+		as.clearIdleMarker(svc.Name)
 		return nil
 	}
 
@@ -40,6 +53,7 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	cpuFloor := as.cfg.Autoscale.TargetCPU / idleFloorDivisor
 	memFloor := as.cfg.Autoscale.TargetMemory / idleFloorDivisor
 	if avgCPU > cpuFloor {
+		as.clearIdleMarker(svc.Name)
 		return nil
 	}
 	// Memory check is in percent of svc.Resources.Memory; skip when the
@@ -48,8 +62,16 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	if svc.Resources.Memory > 0 {
 		avgMemPct := avgMem * 100 / svc.Resources.Memory
 		if avgMemPct > memFloor {
+			as.clearIdleMarker(svc.Name)
 			return nil
 		}
+	}
+
+	// Usage is below the floor — service is idle. If this is the first
+	// observation we mark it; if the idle window hasn't elapsed yet we
+	// withhold the scale-down decision.
+	if !as.idleWindowSatisfied(svc.Name) {
+		return nil
 	}
 
 	nodes, err := as.clusterState.ListNodes()
@@ -94,6 +116,44 @@ func averageUsage(allocs []*types.ServiceAllocation) (avgCPU, avgMem int) {
 		memSum += a.MemoryUsage
 	}
 	return cpuSum / len(allocs), memSum / len(allocs)
+}
+
+// idleWindowSatisfied implements the IdleHold hysteresis. The first
+// time usage drops below the floor it stamps IdleSince=now and returns
+// false (so this tick doesn't yet scale down). Subsequent ticks check
+// elapsed time against cfg.Autoscale.IdleHold; only after the full
+// window has passed does the function return true and clear the
+// marker. Returning early on cooldown-read errors (treat as "not yet"
+// — safer to under-scale than to over-shrink during a transient).
+func (as *Autoscaler) idleWindowSatisfied(service string) bool {
+	hold := as.cfg.Autoscale.IdleHold
+	if hold <= 0 {
+		return true
+	}
+	cd, err := as.clusterState.GetServiceCooldown(service)
+	if err != nil {
+		log.Warn().Err(err).Str("service", service).Msg("idle-window read failed; deferring scale-down")
+		return false
+	}
+	if cd.IdleSince.IsZero() {
+		if err := as.clusterState.MarkIdleSince(service, time.Now()); err != nil {
+			log.Warn().Err(err).Str("service", service).Msg("failed to mark idle_since")
+		}
+		return false
+	}
+	return time.Since(cd.IdleSince) >= hold
+}
+
+// clearIdleMarker is the inverse: usage rose back above the floor, so
+// the next idle window must restart from scratch.
+func (as *Autoscaler) clearIdleMarker(service string) {
+	cd, err := as.clusterState.GetServiceCooldown(service)
+	if err != nil || cd.IdleSince.IsZero() {
+		return
+	}
+	if err := as.clusterState.MarkIdleSince(service, time.Time{}); err != nil {
+		log.Warn().Err(err).Str("service", service).Msg("failed to clear idle_since")
+	}
 }
 
 // pickAllocationToRemove chooses the victim for scale-down: prefer

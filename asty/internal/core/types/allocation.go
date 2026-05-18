@@ -74,10 +74,15 @@ func (s AllocationStatus) Occupies() bool {
 }
 
 // ServiceCooldown captures the timestamps of the most recent autoscaler
-// actions for a service.
+// actions for a service plus the moment usage first dropped into the
+// scale-down floor (drives the idle_hold hysteresis introduced in
+// TZ §5.2). IdleSince is zero whenever the service is not currently
+// observed as idle; the autoscaler resets it on every evaluation that
+// exits the floor and seeds it on every evaluation that enters.
 type ServiceCooldown struct {
 	LastScaleUp   time.Time `json:"last_scale_up,omitempty"`
 	LastScaleDown time.Time `json:"last_scale_down,omitempty"`
+	IdleSince     time.Time `json:"idle_since,omitempty"`
 }
 
 // CooldownStatus describes which cooldowns are currently active and what
