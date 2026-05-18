@@ -11,58 +11,71 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// dropTarget is the resolved uid/gid the agent (and its spawned
-// children) will run as after bootstrap. Zero value means "no drop";
-// it's also the dev-mode default — RunAsUser empty in config.
+// dropUserName is the dedicated unprivileged identity Asty drops to
+// after bootstrap. A dedicated account (not `nobody`) matters for
+// blast-radius reasons:
+//
+//   - `nobody` is shared with whatever else on the host happens to
+//     drop to it. Same-uid processes can ptrace each other and read
+//     each other's /proc/<pid>/mem; with `nobody` an unrelated
+//     daemon's RCE would buy access to Asty's memory (and therefore
+//     its NATS credentials → the whole cluster).
+//   - `asty` is created at install (one `useradd --system asty`
+//     line). Nothing else on the host runs as it, so the same-uid
+//     attack vector closes.
+//
+// The name is hardcoded — no env wiring, no operator confusion. If
+// the user is missing on the host the agent stays as root and logs
+// a loud warning so the misconfiguration is visible.
+const dropUserName = "asty"
+
+// dropTarget is the resolved uid/gid the agent (and the nats-server
+// it exec's pre-drop) will run as. Empty when:
+//   - the agent didn't start as root (nothing to drop), or
+//   - the host has no `nobody` user (e.g. distroless without it).
 type dropTarget struct {
 	Enabled bool
 	UID     int
 	GID     int
-	User    string // copied from cfg for log lines
-	Group   string
 }
 
-// resolveDropTarget reads cfg.Agent.RunAsUser / RunAsGroup, looks up
-// the corresponding uid/gid and returns the resolved tuple. Errors
-// propagate so an operator who typed a wrong name learns about it at
-// startup, not later when a chown fails. An empty RunAsUser disables
-// the drop (returns Enabled=false, no error).
+// resolveDropTarget decides whether to drop and, if yes, where to.
+// Two checks:
+//
+//  1. If we didn't start as root, drop is a no-op — there is nothing
+//     to give up. Many dev / container setups already run as some
+//     non-root uid; in that case the function returns Enabled=false.
+//
+//  2. If we did start as root, look up the dedicated dropUserName
+//     ("asty"). Missing user is logged loudly but NOT fatal — the
+//     agent continues as root so the operator notices the misconfig
+//     immediately in journalctl, instead of failing some downstream
+//     KV write at 3 AM.
+//
+// Returns the target uid/gid pair; the rest of the drop sequence
+// consumes it.
 func (a *Agent) resolveDropTarget() (dropTarget, error) {
-	cfg := a.cfg.Agent
-	if cfg.RunAsUser == "" {
+	if os.Geteuid() != 0 {
 		return dropTarget{}, nil
 	}
 
-	u, err := user.Lookup(cfg.RunAsUser)
+	u, err := user.Lookup(dropUserName)
 	if err != nil {
-		return dropTarget{}, fmt.Errorf("lookup user %q: %w", cfg.RunAsUser, err)
+		log.Warn().
+			Err(err).
+			Str("user", dropUserName).
+			Msg("drop-root: no `asty` user on this host (run `useradd --system asty`); agent will continue as root")
+		return dropTarget{}, nil
 	}
 	uid, err := strconv.Atoi(u.Uid)
 	if err != nil {
-		return dropTarget{}, fmt.Errorf("parse uid for %q: %w", cfg.RunAsUser, err)
+		return dropTarget{}, fmt.Errorf("parse %s uid %q: %w", dropUserName, u.Uid, err)
 	}
-
-	gidStr := u.Gid
-	groupName := cfg.RunAsGroup
-	if groupName != "" {
-		g, err := user.LookupGroup(groupName)
-		if err != nil {
-			return dropTarget{}, fmt.Errorf("lookup group %q: %w", groupName, err)
-		}
-		gidStr = g.Gid
-	}
-	gid, err := strconv.Atoi(gidStr)
+	gid, err := strconv.Atoi(u.Gid)
 	if err != nil {
-		return dropTarget{}, fmt.Errorf("parse gid: %w", err)
+		return dropTarget{}, fmt.Errorf("parse %s gid %q: %w", dropUserName, u.Gid, err)
 	}
-
-	return dropTarget{
-		Enabled: true,
-		UID:     uid,
-		GID:     gid,
-		User:    cfg.RunAsUser,
-		Group:   groupName,
-	}, nil
+	return dropTarget{Enabled: true, UID: uid, GID: gid}, nil
 }
 
 // dropPrivileges chown's the directories the agent will need write
@@ -71,11 +84,6 @@ func (a *Agent) resolveDropTarget() (dropTarget, error) {
 // AllThreadsSyscall on Linux, so the change applies to every OS thread
 // in the runtime — not just the calling one. On macOS the call is a
 // direct setuid(2) which is process-wide by definition.
-//
-// Idempotence: if the agent already runs as the target uid (operator
-// started us under that account via systemd User=asty, say) we skip
-// the syscalls — the chown is still useful when work_dir was
-// pre-created by root during install.
 //
 // Order matters: setgid before setuid. Once euid != 0 we lose the
 // privilege to call setgid(2), so the gid switch must come first.
@@ -94,11 +102,6 @@ func (a *Agent) dropPrivileges() error {
 		}
 	}
 
-	if os.Getuid() == a.drop.UID && os.Getgid() == a.drop.GID {
-		log.Info().Str("user", a.drop.User).Int("uid", a.drop.UID).Msg("agent already at target uid/gid, skipping setuid/setgid")
-		return nil
-	}
-
 	if err := syscall.Setgid(a.drop.GID); err != nil {
 		return fmt.Errorf("setgid %d: %w", a.drop.GID, err)
 	}
@@ -107,8 +110,7 @@ func (a *Agent) dropPrivileges() error {
 	}
 
 	log.Info().
-		Str("user", a.drop.User).
-		Str("group", a.drop.Group).
+		Str("user", dropUserName).
 		Int("uid", a.drop.UID).
 		Int("gid", a.drop.GID).
 		Msg("agent privileges dropped")
@@ -137,21 +139,13 @@ func chownTree(path string, uid, gid int) error {
 
 // credentialForChildren returns the syscall.Credential to attach to
 // a child process that's exec'd BEFORE the agent has dropped its own
-// privileges — currently only nats-server in bootstrapNATS. User
-// services start after the drop, so fork+exec inherits the agent's
-// (already-dropped) uid naturally and Credential is not needed.
-//
-// Returns nil when drop is disabled OR when the agent is already
-// running at the target uid/gid (e.g. systemd User=asty + a
-// CAP_NET_BIND_SERVICE ambient cap to bind :80 without root). In
-// that case the agent was never root, so asking exec to setuid would
-// be a redundant syscall — and if it tried to change to a gid the
-// process can't reach, it would fail with EPERM.
+// privileges — currently only nats-server in bootstrapNATS. Without
+// this, nats-server would inherit the agent's uid=0, and the post-
+// drop agent (now nobody) wouldn't be able to signal it for SIGHUP /
+// SIGTERM. Returns nil when drop is disabled (agent stays at the OS
+// uid throughout, so the child inherits it correctly).
 func (a *Agent) credentialForChildren() *syscall.Credential {
 	if !a.drop.Enabled {
-		return nil
-	}
-	if os.Getuid() == a.drop.UID && os.Getgid() == a.drop.GID {
 		return nil
 	}
 	return &syscall.Credential{

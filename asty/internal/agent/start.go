@@ -19,16 +19,19 @@ import (
 // background goroutines for heartbeats, metrics publishing, and process
 // monitoring. Blocks until ctx is cancelled, then stops all processes.
 //
-// Privilege ordering, when cfg.Agent.RunAsUser is set:
+// Privilege ordering, when the OS started us as root:
 //
-//  1. resolveDropTarget — fail fast on a bad user/group name.
-//  2. bootstrapNATS — exec'd with SysProcAttr.Credential pointing at
-//     the target uid/gid so the nats-server child starts non-root.
+//  1. resolveDropTarget — looks up `nobody`. If we didn't start as
+//     root, or there is no `nobody` user, drop is disabled.
+//  2. bootstrapNATS — exec'd with SysProcAttr.Credential = nobody so
+//     the nats-server child is non-root from the start. Required
+//     because post-drop the agent (now nobody) couldn't signal a
+//     root child.
 //  3. connectAndWireNATS — opens our two NATS connections.
 //  4. preBindGateway — listen(2) on the privileged port WHILE we're
 //     still root (the listener FD survives setuid).
-//  5. dropPrivileges — chown work_dir + store_dir, setgid, setuid.
-//     Everything that follows runs as the target user.
+//  5. dropPrivileges — chown work_dir + store_dir to nobody, setgid,
+//     setuid. Everything below runs as nobody.
 //  6. subscribe + background goroutines + gateway Serve on the pre-
 //     bound listener.
 func (a *Agent) Start(ctx context.Context) error {
