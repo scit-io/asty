@@ -15,61 +15,28 @@
 | `7699122` | §14.6 | Все файлы `≤200` строк, кроме `workqueue.go` (документированное исключение) |
 | `59387d4` | §2.9 | Все `A_*` env-чтения собраны в `core/config`, `Agent.Capacity`/`NATS.Peers*`/`Artifact` под-структуры |
 | `ae6609e` | §14.6 | `make layer-check` + `.golangci.yml` (depguard) ловят регрессию принципа §2.9 в CI |
+| `701909a` | §5.3 | FSM-расширения: `AllocStopping`, `AllocRestarting`, `NodeJoining`, `NodeStale`, `EffectiveStatus` |
+| `5ceab5c` | §4.4 | `update.canary_retries`, `ServiceCooldown.RollbackFailed`-флаг как gate для автоскейлера |
+| `341bc43` | §10 (часть) | `tokenAuth` middleware на POST `/api/v1` (Authorization / X-Asty-Token, constant-time) |
+| `4f86c2a` | §14.2 (sunset) | Legacy `/metrics/*` data-prefix удалён; `deprecatedAPI` middleware больше нет |
+| `6809da5` | §14.4 | Большой рефактор: `features/*` → `infra/`, `domain/`, `ops/`, `api/`; depguard правила L0..L4 |
 
 Все коммиты с `make ci` passing (`build vet race test-integration
 layer-check`).
 
 ## Что осталось
 
-Эти разделы TZ требуют больших структурных правок и в эту сессию не
-вошли. Каждое — отдельная ветка / PR-серия:
+Эти участки требуют отдельных PR-серий:
 
-### §14.4 — рефактор слоёв L0..L4 (6 недель по плану TZ)
+### §14.4 — внутри `api/rest` (не разделён на rest/prom/stream)
 
-Самое объёмное. Перенос пакетов:
-
-- `asty/internal/features/*` → разнести по `infra/`, `domain/`, `ops/`, `api/`.
-- `asty/internal/server`, `asty/internal/agent` остаются composition
-  roots, но избавляются от любой бизнес-логики.
-- `depguard` правила из `.golangci.yml` уже описывают будущую онион-структуру —
-  включить enforcement, когда переезд состоится.
-- Скрипт переезда: переименовать каталоги, потом `goimports -w
-  ./...`, потом починить тесты, которые ссылаются на старые пути.
-
-### §5.3 — FSM состояний `Allocation`/`Node`
-
-Добавить `Stopping`, `Restarting`, `Joining`, `Stale`. Это требует:
-- Расширить `core/types` enum'ы.
-- Обновить `state.AllocationStatus.IsLive` / `Occupies`.
-- Поправить агентский путь `restart.go` чтобы перевод в `Restarting`
-  был явным, а не маскировался в `Running`.
-- Обновить таблицы метрик (`asty_alloc_status`) и UI-теги.
-
-### §4.4 — продвинутые поля деплоя
-
-Уже частично сделано (canary, max_parallel, auto_revert с настоящим
-откатом, RollbackFailed). Остаётся:
-- `CanaryRetry`-фаза с конечным бюджетом ретраев канарейки.
-- Метка `state=rollback_failed` в KV на уровне сервиса, которую
-  autoscaler читает и **прекращает** работу с сервисом до явного
-  снятия оператором.
-- `RollbackSteps[]` в `DeploymentRecord` для аудита.
-
-### §4.2 — FSM `Node`
-
-`Joining` и `Stale` как явные состояния. Heartbeat-таймауты:
-- `stalenessThreshold` (default 30 с) → `Stale`.
-- `downThreshold` (default 2 минуты) → `Down`.
-- Scheduler пропускает `Stale` для нового размещения, но не убивает
-  существующее.
-
-### §7.2 — UI обновление под `/api/v1`
-
-`asty/web/src/api/client.ts` уже переключён, легаси `/metrics/*` на
-backend'е держится один цикл. Полный sunset:
-- Убрать legacy mux в `api.go`.
-- Удалить vite-proxy для `/metrics` (оставить только `/api`,
-  `/health`).
+Большой рефактор слоёв сделан, но `api/rest` пока — единая директория с
+prom_*.go и stream_*.go рядом. TZ §12 хочет их в `api/prom/` и
+`api/stream/`. Это вторая итерация рефактора, требует:
+- Поднять отдельный частный `prometheus.Registry` из `prom` в
+  `api/prom/registry.go`.
+- Передавать `Snapshot()` через интерфейс, который `api/prom` импортирует
+  из `api/rest` (или из новой `api/internal/snapshot/`-точки).
 
 ### §11.1 — bootstrap последовательности
 
@@ -79,11 +46,11 @@ backend'е держится один цикл. Полный sunset:
 задокументировать, но если хочется enforcement — `systemd Wants=`/
 `After=` в unit-файлах prod-деплоя.
 
-### Безопасность (§10)
+### Безопасность (§10) — частично
 
+Token-auth middleware на `/api/v1` сделан (`341bc43`). Остаётся:
 - Drop-root для агента после fork+exec.
-- Token-auth middleware на `/api/v1` (TLS + token проверяется
-  constant-time).
+- TLS termination (front-proxy схема, не сам Asty).
 - Audit-log: write-операции пишут в `asty.v1.audit.*` сабжект.
 
 ## Откат
@@ -105,6 +72,6 @@ termination, audit log, identity bootstrap, persistent service state),
 ## Следующий шаг
 
 `git push origin migration/tz`, открыть PR с заголовком вида
-"migration to TZ — stages 1, 2, 3, 5.1, 5.2, 6.1, 6.2, 6.3", в
-описании сослаться на `.audit/TZ.md` и этот журнал. CI должен
-зеленить (`make ci`).
+"migration to TZ — stages 1, 2, 3, 4.4, 5.1, 5.2, 5.3, 6.1, 6.2, 6.3,
+7.2, 10 (partial), 14.4", в описании сослаться на `.audit/TZ.md` и
+этот журнал. CI должен зеленить (`make ci`).
