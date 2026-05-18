@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"asty/asty/internal/features/observability/logs"
+	"asty/asty/internal/infra/logs"
 
 	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog/log"

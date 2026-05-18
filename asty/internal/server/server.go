@@ -7,20 +7,20 @@ import (
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/features/autoscaling"
-	autometrics "asty/asty/internal/features/autoscaling/metrics"
-	"asty/asty/internal/features/clustering/controller"
-	"asty/asty/internal/features/clustering/discovery"
-	"asty/asty/internal/features/clustering/leader"
-	"asty/asty/internal/features/clustering/state"
-	"asty/asty/internal/features/deployment"
-	"asty/asty/internal/features/draining"
-	"asty/asty/internal/features/observability/events"
-	"asty/asty/internal/features/observability/logs"
-	"asty/asty/internal/features/scheduling"
-	"asty/asty/internal/features/scheduling/proximity"
+	"asty/asty/internal/ops/autoscaler"
+	autometrics "asty/asty/internal/ops/autoscaler/metrics"
+	"asty/asty/internal/ops/reconciler"
+	"asty/asty/internal/ops/discovery"
+	"asty/asty/internal/ops/leader"
+	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/ops/deployer"
+	"asty/asty/internal/ops/drainer"
+	"asty/asty/internal/infra/events"
+	"asty/asty/internal/infra/logs"
+	"asty/asty/internal/ops/scheduler"
+	"asty/asty/internal/domain/proximity"
 
-	apiPkg "asty/asty/internal/features/api"
+	apiPkg "asty/asty/internal/api/rest"
 
 	"github.com/nats-io/nats.go"
 )
@@ -34,20 +34,20 @@ type Server struct {
 	nc     *nats.Conn
 	nodeID string
 
-	clusterState    *state.ClusterState
+	clusterState    *kv.ClusterState
 	leaderElection  *leader.Election
 	nodeDiscovery   *discovery.NodeDiscovery
-	scheduler       *scheduling.Scheduler
-	autoscaler      *autoscaling.Autoscaler
+	scheduler       *scheduler.Scheduler
+	autoscaler      *autoscaler.Autoscaler
 	proximityMatrix *proximity.Matrix
-	deployer        *deployment.Deployer
-	serviceLoader   *deployment.ServiceLoader
+	deployer        *deployer.Deployer
+	serviceLoader   *deployer.ServiceLoader
 	services        []*types.ServiceDefinition
 	httpAPI         *apiPkg.API
 	metricsStore    *autometrics.Store
 	logBuffer       *logs.Buffer
 	eventBuffer     *events.Buffer
-	drainManager    *draining.DrainManager
+	drainManager    *drainer.DrainManager
 	streamHub       *streamHub
 
 	// Leadership-scoped goroutines (scheduler/autoscaler) run under
@@ -55,7 +55,7 @@ type Server struct {
 	// cancel handle and the controller reference when leadership flips.
 	mu           sync.Mutex
 	leaderCancel context.CancelFunc
-	controller   *controller.ServiceController // non-nil only while this node is the leader
+	controller   *reconciler.ServiceController // non-nil only while this node is the leader
 }
 
 // New creates a new Server. NodeID falls back to the OS hostname if the

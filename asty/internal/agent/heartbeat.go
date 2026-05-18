@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/features/execution/process"
+	"asty/asty/internal/infra/process"
 
 	"github.com/rs/zerolog/log"
 )

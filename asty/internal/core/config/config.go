@@ -10,7 +10,7 @@ import (
 // well and the Go code refers to grouped fields the same way.
 //
 // Loaded by Load() with the same yaml.Unmarshal pattern used for the
-// service definitions in features/deployment/loader.go.
+// service definitions in ops/deployer/loader.go.
 type Config struct {
 	// Cluster identity
 	Domain     string `yaml:"domain"`

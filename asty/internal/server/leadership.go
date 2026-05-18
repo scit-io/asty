@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"asty/asty/internal/features/clustering/controller"
+	"asty/asty/internal/ops/reconciler"
 
 	"github.com/rs/zerolog/log"
 )
@@ -53,7 +53,7 @@ func (s *Server) startLeaderWork(parent context.Context) {
 	s.leaderCancel = cancel
 
 	resync := computeResync(s.cfg.Autoscale.EvalInterval)
-	ctrl := controller.NewServiceController(
+	ctrl := reconciler.NewServiceController(
 		s.clusterState,
 		s.scheduler,
 		s.autoscaler,

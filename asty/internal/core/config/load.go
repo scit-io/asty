@@ -16,7 +16,7 @@ const DefaultPath = "./config.asty"
 
 // Load builds a Config from defaults, the YAML file at path, and
 // finally environment overrides. The same yaml.Unmarshal pattern as
-// features/deployment/loader.go: read file → unmarshal into the
+// ops/deployer/loader.go: read file → unmarshal into the
 // pre-populated struct → env overrides on top.
 //
 // path == "" falls back to DefaultPath. An explicit -config path that

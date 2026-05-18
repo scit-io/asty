@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/features/deployment"
+	"asty/asty/internal/ops/deployer"
 )
 
 // Deployment timing defaults — used when a service .asty file leaves
@@ -25,7 +25,7 @@ const (
 // the rollout fan-out, and hands the plan to the deployer. KV buckets
 // are provisioned in sendStartCommand — the single dispatch point for
 // all start paths.
-func (s *Server) DeployService(ctx context.Context, serviceName, version string) (*deployment.DeploymentStatus, error) {
+func (s *Server) DeployService(ctx context.Context, serviceName, version string) (*deployer.DeploymentStatus, error) {
 	svc, err := s.serviceLoader.GetService(serviceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load service definition: %w", err)
@@ -48,13 +48,13 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 	minHealthy := types.ParseDurationOr(svc.Update.MinHealthyTime, defaultMinHealthyTime)
 	progressDeadline := types.ParseDurationOr(svc.Update.ProgressDeadline, defaultProgressDeadline)
 
-	plan := &deployment.DeploymentPlan{
+	plan := &deployer.DeploymentPlan{
 		ServiceName:    serviceName,
 		CurrentVersion: currentVersion,
 		TargetVersion:  version,
 		Allocations:    allocs,
 		Service:        svc,
-		UpdateStrategy: deployment.UpdateStrategy{
+		UpdateStrategy: deployer.UpdateStrategy{
 			MaxParallel:      svc.Update.GetMaxParallel(),
 			MinHealthyTime:   minHealthy,
 			HealthyDeadline:  healthyDeadline,

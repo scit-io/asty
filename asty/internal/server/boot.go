@@ -8,19 +8,19 @@ import (
 
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/features/autoscaling"
-	autometrics "asty/asty/internal/features/autoscaling/metrics"
-	"asty/asty/internal/features/clustering/discovery"
-	"asty/asty/internal/features/clustering/leader"
-	"asty/asty/internal/features/clustering/state"
-	"asty/asty/internal/features/deployment"
-	"asty/asty/internal/features/draining"
-	"asty/asty/internal/features/observability/events"
-	"asty/asty/internal/features/observability/logs"
-	"asty/asty/internal/features/scheduling"
-	"asty/asty/internal/features/scheduling/proximity"
+	"asty/asty/internal/ops/autoscaler"
+	autometrics "asty/asty/internal/ops/autoscaler/metrics"
+	"asty/asty/internal/ops/discovery"
+	"asty/asty/internal/ops/leader"
+	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/ops/deployer"
+	"asty/asty/internal/ops/drainer"
+	"asty/asty/internal/infra/events"
+	"asty/asty/internal/infra/logs"
+	"asty/asty/internal/ops/scheduler"
+	"asty/asty/internal/domain/proximity"
 
-	apiPkg "asty/asty/internal/features/api"
+	apiPkg "asty/asty/internal/api/rest"
 
 	"github.com/rs/zerolog/log"
 )
@@ -71,7 +71,7 @@ func (s *Server) initInfra() error {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
 
-	clusterState, err := state.New(s.nc)
+	clusterState, err := kv.New(s.nc)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cluster state: %w", err)
 	}
@@ -99,11 +99,11 @@ func (s *Server) initFeatures(ctx context.Context) {
 	natsWriter := logs.NewNATSWriter(s.nc, "asty.v1.server.logs")
 	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
 
-	s.scheduler = scheduling.NewScheduler(s.clusterState, s.cfg)
+	s.scheduler = scheduler.NewScheduler(s.clusterState, s.cfg)
 	s.metricsStore = autometrics.NewStore(metricsRetention)
 	s.logBuffer = logs.NewBuffer(logBufferLines)
 	s.eventBuffer = events.NewBuffer(eventBufferEntries)
-	s.autoscaler = autoscaling.NewAutoscaler(s.clusterState, s.scheduler, s.cfg, s.metricsStore)
+	s.autoscaler = autoscaler.NewAutoscaler(s.clusterState, s.scheduler, s.cfg, s.metricsStore)
 
 	s.proximityMatrix = proximity.NewMatrix()
 	if err := s.proximityMatrix.LoadFromConfig(s.cfg.Autoscale.DCLatency); err != nil {
@@ -111,15 +111,15 @@ func (s *Server) initFeatures(ctx context.Context) {
 	}
 	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState, s.pingPair)
 
-	s.deployer = deployment.NewDeployer(s.clusterState, s.nc, s.sendRestartCommand)
-	s.serviceLoader = deployment.NewServiceLoader(s.cfg.Agent.ServiceDir)
+	s.deployer = deployer.NewDeployer(s.clusterState, s.nc, s.sendRestartCommand)
+	s.serviceLoader = deployer.NewServiceLoader(s.cfg.Agent.ServiceDir)
 	services, err := s.serviceLoader.LoadAll()
 	if err != nil {
 		log.Error().Err(err).Msg("failed to load service definitions")
 	}
 	s.services = services
 
-	s.drainManager = draining.NewDrainManager(s)
+	s.drainManager = drainer.NewDrainManager(s)
 
 	s.subscribeGatewayMetrics()
 	s.startLogBuffering()

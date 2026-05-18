@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"asty/asty/internal/features/execution/process"
-	"asty/asty/internal/features/observability/logs"
+	"asty/asty/internal/infra/process"
+	"asty/asty/internal/infra/logs"
 
 	"github.com/rs/zerolog/log"
 )

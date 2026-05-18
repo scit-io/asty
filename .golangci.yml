@@ -43,26 +43,66 @@ linters-settings:
         # symbols, so this rule is informational — pair with a CI grep
         # that fails on `os\.Getenv` outside core/config.
 
-      # Core primitives must not depend on higher layers.
+      # L0 core: no internal/* deps at all.
       core_purity:
         files:
           - "**/asty/internal/core/**/*.go"
         deny:
-          - pkg: "asty/asty/internal/features"
-            desc: "core/* is L0; it may not import features/* (L1..L3)."
+          - pkg: "asty/asty/internal/infra"
+            desc: "core/* is L0; it may not import infra/* (L1)."
+          - pkg: "asty/asty/internal/domain"
+            desc: "core/* is L0; it may not import domain/* (L2)."
+          - pkg: "asty/asty/internal/ops"
+            desc: "core/* is L0; it may not import ops/* (L3)."
+          - pkg: "asty/asty/internal/api"
+            desc: "core/* is L0; it may not import api/* (L4)."
           - pkg: "asty/asty/internal/server"
             desc: "core/* is L0; it may not import the server composition root."
           - pkg: "asty/asty/internal/agent"
             desc: "core/* is L0; it may not import the agent composition root."
 
-      # API edges must not import the server's internals; server uses
-      # api/, not the reverse.
+      # L1 infra: may depend on core only.
+      infra_purity:
+        files:
+          - "**/asty/internal/infra/**/*.go"
+        deny:
+          - pkg: "asty/asty/internal/domain"
+            desc: "infra/* is L1; it may not import domain/* (L2)."
+          - pkg: "asty/asty/internal/ops"
+            desc: "infra/* is L1; it may not import ops/* (L3)."
+          - pkg: "asty/asty/internal/api"
+            desc: "infra/* is L1; it may not import api/* (L4)."
+          - pkg: "asty/asty/internal/server"
+            desc: "infra/* is L1; it may not import composition roots."
+          - pkg: "asty/asty/internal/agent"
+            desc: "infra/* is L1; it may not import composition roots."
+
+      # L2 domain: pure types + state machines, no infra or above.
+      domain_purity:
+        files:
+          - "**/asty/internal/domain/**/*.go"
+        deny:
+          - pkg: "asty/asty/internal/infra"
+            desc: "domain/* is L2; it may not import infra/* (L1)."
+          - pkg: "asty/asty/internal/ops"
+            desc: "domain/* is L2; it may not import ops/* (L3)."
+          - pkg: "asty/asty/internal/api"
+            desc: "domain/* is L2; it may not import api/* (L4)."
+          - pkg: "asty/asty/internal/server"
+            desc: "domain/* is L2; it may not import composition roots."
+          - pkg: "asty/asty/internal/agent"
+            desc: "domain/* is L2; it may not import composition roots."
+
+      # L4 api edges: may not import composition roots; talks to ops/
+      # via interfaces (e.g. ServerContext).
       api_purity:
         files:
-          - "**/asty/internal/features/api/**/*.go"
+          - "**/asty/internal/api/**/*.go"
         deny:
           - pkg: "asty/asty/internal/server"
-            desc: "features/api is L4; depend on server only through the ServerContext interface."
+            desc: "api/* is L4; depend on server only through the ServerContext interface."
+          - pkg: "asty/asty/internal/agent"
+            desc: "api/* is L4; depend on the agent through its handler surface, not by import."
 
 issues:
   exclude-rules:

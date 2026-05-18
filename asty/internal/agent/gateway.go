@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/features/deployment"
-	"asty/asty/internal/features/gateway"
+	"asty/asty/internal/ops/deployer"
+	"asty/asty/internal/api/gateway"
 
 	"github.com/rs/zerolog/log"
 )
@@ -64,7 +64,7 @@ func (a *Agent) runGateway(ctx context.Context) error {
 // collects rate_limit rules declared by each service. Called once at
 // gateway startup — rules are static for the agent's lifetime.
 func (a *Agent) collectRateLimitRules() []types.RateLimitRule {
-	loader := deployment.NewServiceLoader(a.cfg.Agent.ServiceDir)
+	loader := deployer.NewServiceLoader(a.cfg.Agent.ServiceDir)
 	services, err := loader.LoadAll()
 	if err != nil {
 		log.Warn().Err(err).Msg("failed to load service definitions for rate-limit rules")

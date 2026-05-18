@@ -10,11 +10,11 @@ import (
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
-	"asty/asty/internal/features/clustering/state"
-	"asty/asty/internal/features/deployment/artifacts"
-	"asty/asty/internal/features/execution/health"
-	"asty/asty/internal/features/execution/process"
-	"asty/asty/internal/features/observability/metrics"
+	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/infra/artifact"
+	"asty/asty/internal/infra/probe"
+	"asty/asty/internal/infra/process"
+	"asty/asty/internal/infra/metrics"
 
 	"github.com/nats-io/nats.go"
 )
@@ -42,10 +42,10 @@ type Agent struct {
 	processes map[string]*process.Process
 	mu        sync.RWMutex
 
-	healthChecker      *health.Checker
+	healthChecker      *probe.Checker
 	metricsCollector   *metrics.Collector
-	artifactDownloader *artifacts.Downloader
-	clusterState       *state.ClusterState
+	artifactDownloader *artifact.Downloader
+	clusterState       *kv.ClusterState
 	natsStats          natsStats
 	natsServerCmd      *exec.Cmd
 
@@ -86,7 +86,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		nodeID:             nodeID,
 		processes:          make(map[string]*process.Process),
 		metricsCollector:   metrics.NewCollector(cfg.Autoscale.EvalInterval),
-		artifactDownloader: artifacts.NewDownloader(),
+		artifactDownloader: artifact.NewDownloader(),
 		workDir:            workDir,
 		failed:             make(chan string, failedServicesBufferSize),
 		natsRestartCh:      make(chan struct{}, 1),

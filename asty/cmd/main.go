@@ -16,7 +16,7 @@ import (
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/natsconf"
-	"asty/asty/internal/features/observability/logs"
+	"asty/asty/internal/infra/logs"
 	"asty/asty/internal/server"
 )
 

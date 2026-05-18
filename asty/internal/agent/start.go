@@ -7,9 +7,9 @@ import (
 	"os"
 
 	"asty/asty/internal/core/netutil"
-	"asty/asty/internal/features/clustering/state"
-	"asty/asty/internal/features/execution/health"
-	"asty/asty/internal/features/observability/logs"
+	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/infra/probe"
+	"asty/asty/internal/infra/logs"
 
 	"github.com/rs/zerolog/log"
 )
@@ -100,13 +100,13 @@ func (a *Agent) connectAndWireNATS(ctx context.Context) error {
 		a.ncSys = ncSys
 	}
 
-	clusterState, err := state.New(a.nc)
+	clusterState, err := kv.New(a.nc)
 	if err != nil {
 		return fmt.Errorf("failed to initialize cluster state: %w", err)
 	}
 	a.clusterState = clusterState
 
-	a.healthChecker = health.NewChecker(a.nc)
+	a.healthChecker = probe.NewChecker(a.nc)
 
 	agentSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID)
 	natsWriter := logs.NewNATSWriter(a.nc, agentSubject)
