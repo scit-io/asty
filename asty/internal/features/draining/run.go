@@ -9,9 +9,23 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// maxConcurrentMigrations bounds the number of regular-allocation
+// migrations executed in parallel during a drain. Without a cap a
+// busy node could fan out dozens of placeReplacement+finalize
+// goroutines simultaneously, swamping NATS RPC and the scheduler.
+// 4 is conservative; tune via field on DrainManager if dev loads grow.
+const maxConcurrentMigrations = 4
+
 // runDrain is the orchestrator: split allocs into system (one-per-node,
 // have to dismantle in place) and regular (migrate to a peer first),
-// drive each in parallel, then mark the node drained when both finish.
+// drive both groups in parallel, then mark the node drained when
+// everything finishes.
+//
+// Regular migrations run with a semaphore of size maxConcurrentMigrations
+// — within that budget, multiple replacements can be placed and
+// finalised concurrently. Previously this loop processed regular
+// allocations sequentially, which scaled drain time linearly with
+// allocation count.
 func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []allocOnNode, op *drainOp) {
 	defer func() {
 		dm.mu.Lock()
@@ -25,7 +39,9 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 	var wg sync.WaitGroup
 
 	// System services run one-per-node — there is no peer to migrate
-	// to. Just stop and forget.
+	// to. Just stop and forget. Parallel by construction (one goroutine
+	// per alloc); no NATS RPC fan-out concern because there is no
+	// scheduler involvement.
 	for _, a := range systemAllocs {
 		wg.Add(1)
 		go func(a allocOnNode) {
@@ -35,25 +51,33 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 	}
 
 	// Regular services need a healthy replacement before we can stop
-	// the local copy.
+	// the local copy. Semaphore caps concurrency so we don't drown
+	// NATS or the scheduler.
+	sem := make(chan struct{}, maxConcurrentMigrations)
 	for _, a := range regularAllocs {
 		if ctx.Err() != nil {
 			break
 		}
-		dm.markCurrent(op, a.alloc.ServiceName)
-
-		fellBack, err := dm.placeReplacement(ctx, nodeID, a)
-		if err != nil {
-			dm.recordError(op, a.svc.Name, err)
-			log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain replacement failed")
-			continue
-		}
-
 		wg.Add(1)
-		go func(a allocOnNode, oldDeleted bool) {
+		go func(a allocOnNode) {
 			defer wg.Done()
-			dm.finalizeMigration(ctx, nodeID, a, oldDeleted, op, total)
-		}(a, fellBack)
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			dm.markCurrent(op, a.alloc.ServiceName)
+
+			fellBack, err := dm.placeReplacement(ctx, nodeID, a)
+			if err != nil {
+				dm.recordError(op, a.svc.Name, err)
+				log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain replacement failed")
+				return
+			}
+			dm.finalizeMigration(ctx, nodeID, a, fellBack, op, total)
+		}(a)
 	}
 
 	wg.Wait()
