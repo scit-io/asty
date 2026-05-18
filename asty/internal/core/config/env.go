@@ -27,6 +27,8 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_NATS_OBSERVER_PASSWORD", &c.NATS.ObserverPassword)
 	envStr("A_NATS_APP_USER", &c.NATS.AppUser)
 	envStr("A_NATS_APP_PASSWORD", &c.NATS.AppPassword)
+	envStr("A_NATS_PEERS_FILE", &c.NATS.PeersFile)
+	envStr("A_NATS_PEERS", &c.NATS.Peers)
 
 	envInt("A_MIN_COPIES", &c.Autoscale.MinCopies)
 	envInt("A_MAX_COPIES", &c.Autoscale.MaxCopies)
@@ -47,6 +49,17 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_HTTP_ADDR", &c.HTTP.Addr)
 	envStr("A_WORK_DIR", &c.Agent.WorkDir)
 	envStr("A_SERVICE_DIR", &c.Agent.ServiceDir)
+
+	envInt("A_CPU_TOTAL", &c.Agent.Capacity.CPUTotal)
+	envInt64("A_MEMORY_TOTAL", &c.Agent.Capacity.MemoryTotal)
+	envInt64("A_DISK_TOTAL", &c.Agent.Capacity.DiskTotal)
+	envInt64("A_SWAP_TOTAL", &c.Agent.Capacity.SwapTotal)
+	envInt64("A_DISK_OS_BASELINE", &c.Agent.Capacity.DiskOSBaseline)
+	envInt64("A_NATS_DISK_BASELINE", &c.Agent.Capacity.NATSDiskBaseline)
+	envStr("A_DISK_TYPE", &c.Agent.Capacity.DiskType)
+
+	envStr("A_ARCH", &c.Artifact.Arch)
+	envStr("A_GITHUB_REPO", &c.Artifact.GitHubRepo)
 
 	applyGatewayEnv(&c.Gateway)
 }

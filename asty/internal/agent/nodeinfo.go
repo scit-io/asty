@@ -39,13 +39,18 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		nodeIP = netutil.LocalIPv4("")
 	}
 
-	cpuTotal := detectCPUMHz()
-	memTotal := detectMemoryMB()
+	caps := a.cfg.Agent.Capacity
+	cpuTotal := detectCPUMHz(caps.CPUTotal)
+	memTotal := detectMemoryMB(caps.MemoryTotal)
 	diskTotal, diskAvail := detectDiskMB(a.workDir)
 	swapTotal, swapAvail := detectSwapMB()
-	diskTotal = envOverrideInt64("A_DISK_TOTAL", diskTotal)
-	swapTotal = envOverrideInt64("A_SWAP_TOTAL", swapTotal)
-	diskType := detectDiskType()
+	if caps.DiskTotal > 0 {
+		diskTotal = caps.DiskTotal
+	}
+	if caps.SwapTotal > 0 {
+		swapTotal = caps.SwapTotal
+	}
+	diskType := detectDiskType(caps.DiskType)
 
 	var selfCPU float64
 	var selfMem int64
@@ -79,14 +84,14 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	natsJSBytes := a.natsStats.jetStreamBytes
 	a.natsStats.mu.RUnlock()
 
-	// In dev with A_CPU_TOTAL/A_MEMORY_TOTAL overrides the host's real
-	// usage is unrelated to the fake totals — a 16 GB host doesn't fit
-	// into a 466 MB pretend-node. Sum the components Asty observes
-	// instead (managed processes from the loop above + agent + NATS).
-	// In prod we ask the OS for the system-wide usage so OS daemons,
-	// page cache, and unmanaged processes all count honestly.
+	// In dev with capacity overrides the host's real usage is unrelated
+	// to the fake totals — a 16 GB host doesn't fit into a 466 MB
+	// pretend-node. Sum the components Asty observes instead (managed
+	// processes from the loop above + agent + NATS). In prod we ask the
+	// OS for the system-wide usage so OS daemons, page cache, and
+	// unmanaged processes all count honestly.
 	var cpuAvail int
-	if os.Getenv("A_CPU_TOTAL") != "" {
+	if caps.CPUTotal > 0 {
 		totalUsed := cpuUsed + int(selfCPU*cpuPctToMHzFactor) + int(natsCPU*cpuPctToMHzFactor)
 		cpuAvail = cpuTotal - totalUsed
 	} else {
@@ -97,7 +102,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	}
 
 	var memAvail int64
-	if os.Getenv("A_MEMORY_TOTAL") != "" {
+	if caps.MemoryTotal > 0 {
 		totalUsed := memUsed + selfMem + natsMem
 		memAvail = memTotal - totalUsed
 	} else {
@@ -111,19 +116,19 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	// JetStream on-disk bytes. The baseline gives the NATS card a
 	// non-zero starting point in dev where JS streams are empty.
 	natsDiskMB := natsJSBytes / (1024 * 1024)
-	if os.Getenv("A_DISK_TOTAL") != "" {
-		natsDiskMB += natsDiskBaselineMB()
+	if caps.DiskTotal > 0 {
+		natsDiskMB += natsDiskBaselineMB(caps.NATSDiskBaseline)
 	}
 
-	// When A_DISK_TOTAL fakes the disk size (dev), statfs reports the
-	// real host filesystem — unrelated to the fake total. Synthesize
-	// dev disk usage as:
+	// When DiskTotal fakes the disk size (dev), statfs reports the real
+	// host filesystem — unrelated to the fake total. Synthesize dev
+	// disk usage as:
 	//
-	//   OS baseline      ← 20% of fake_total, or A_DISK_OS_BASELINE in MB
+	//   OS baseline      ← 20% of fake_total, or caps.DiskOSBaseline in MB
 	//   + Asty footprint ← bin/asty + work_dir (services + logs)
 	//   + NATS footprint ← NATS binary baseline + JS bytes
-	if os.Getenv("A_DISK_TOTAL") != "" {
-		used := diskOSBaselineMB(diskTotal) + selfDisk + natsDiskMB
+	if caps.DiskTotal > 0 {
+		used := diskOSBaselineMB(diskTotal, caps.DiskOSBaseline) + selfDisk + natsDiskMB
 		diskAvail = diskTotal - used
 		if diskAvail < 0 {
 			diskAvail = 0
@@ -134,7 +139,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	// servers run at 0% swap usage anyway, so leaving swap "free"
 	// matches reality. If real swap activity ever happens in dev it'll
 	// be invisible here; revisit when that becomes a use case.
-	if os.Getenv("A_SWAP_TOTAL") != "" {
+	if caps.SwapTotal > 0 {
 		swapAvail = swapTotal
 	}
 

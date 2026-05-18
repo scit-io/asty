@@ -3,11 +3,18 @@ package server
 import (
 	"runtime"
 	"testing"
+
+	"asty/asty/internal/core/config"
 )
 
+func newArtifactTestServer(arch, repo string) *Server {
+	return &Server{cfg: &config.Config{
+		Artifact: config.ArtifactConfig{Arch: arch, GitHubRepo: repo},
+	}}
+}
+
 func TestResolveArtifactURL(t *testing.T) {
-	t.Setenv("A_GITHUB_REPO", "acme/asty")
-	t.Setenv("A_ARCH", "")
+	s := newArtifactTestServer("", "acme/asty")
 
 	cases := []struct {
 		name     string
@@ -43,7 +50,7 @@ func TestResolveArtifactURL(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := resolveArtifactURL(c.template, c.version)
+			got := s.resolveArtifactURL(c.template, c.version)
 			if got != c.want {
 				t.Errorf("got %q, want %q", got, c.want)
 			}
@@ -52,10 +59,9 @@ func TestResolveArtifactURL(t *testing.T) {
 }
 
 func TestResolveArtifactURL_ARCHOverride(t *testing.T) {
-	t.Setenv("A_ARCH", "arm64")
-	t.Setenv("A_GITHUB_REPO", "")
+	s := newArtifactTestServer("arm64", "")
 
-	got := resolveArtifactURL("path-${ARCH}-${VERSION}", "v9.9.9")
+	got := s.resolveArtifactURL("path-${ARCH}-${VERSION}", "v9.9.9")
 	want := "path-arm64-v9.9.9"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)

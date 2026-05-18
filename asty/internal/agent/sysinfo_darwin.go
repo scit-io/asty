@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -15,17 +14,14 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func detectCPUMHz() int {
-	if override := os.Getenv("A_CPU_TOTAL"); override != "" {
-		log.Debug().Str("A_CPU_TOTAL", override).Msg("cpu override env detected")
-		if val, err := strconv.Atoi(override); err == nil && val > 0 {
-			log.Info().Int("cpu_mhz", val).Msg("using CPU override from A_CPU_TOTAL")
-			return val
-		} else {
-			log.Warn().Str("A_CPU_TOTAL", override).Err(err).Msg("failed to parse A_CPU_TOTAL")
-		}
+// detectCPUMHz returns the host's aggregate CPU capacity in MHz, or
+// the supplied override if non-zero. The override flows from
+// cfg.Agent.Capacity.CPUTotal (env A_CPU_TOTAL via core/config).
+func detectCPUMHz(override int) int {
+	if override > 0 {
+		log.Info().Int("cpu_mhz", override).Msg("using CPU override from cfg.Agent.Capacity.CPUTotal")
+		return override
 	}
-
 	out, err := exec.Command("sysctl", "-n", "hw.cpufrequency").Output()
 	if err != nil {
 		out, err = exec.Command("sysctl", "-n", "hw.cpufrequency_max").Output()
@@ -43,17 +39,14 @@ func detectCPUMHz() int {
 	return runtime.NumCPU() * mhzPerCore
 }
 
-func detectMemoryMB() int64 {
-	if override := os.Getenv("A_MEMORY_TOTAL"); override != "" {
-		log.Debug().Str("A_MEMORY_TOTAL", override).Msg("memory override env detected")
-		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
-			log.Info().Int64("memory_mb", val).Msg("using Memory override from A_MEMORY_TOTAL")
-			return val
-		} else {
-			log.Warn().Str("A_MEMORY_TOTAL", override).Err(err).Msg("failed to parse A_MEMORY_TOTAL")
-		}
+// detectMemoryMB returns the host's memory total in MB, or the
+// supplied override if non-zero. Override flows from
+// cfg.Agent.Capacity.MemoryTotal (env A_MEMORY_TOTAL via core/config).
+func detectMemoryMB(override int64) int64 {
+	if override > 0 {
+		log.Info().Int64("memory_mb", override).Msg("using Memory override from cfg.Agent.Capacity.MemoryTotal")
+		return override
 	}
-
 	out, err := exec.Command("sysctl", "-n", "hw.memsize").Output()
 	if err != nil {
 		return 8192
@@ -132,10 +125,11 @@ func parseSwapField(fields []string, i int) int64 {
 // detectDiskType reports the physical class (ssd | hdd | unknown) of
 // the disk hosting the agent work_dir. On macOS we default to ssd —
 // every shipping Mac since 2018 is solid-state, and parsing diskutil
-// output reliably is more work than it's worth. A_DISK_TYPE overrides.
-func detectDiskType() types.DiskType {
-	if override := os.Getenv("A_DISK_TYPE"); override != "" {
-		log.Info().Str("disk_type", override).Msg("using DiskType override from A_DISK_TYPE")
+// output reliably is more work than it's worth. Override flows from
+// cfg.Agent.Capacity.DiskType (env A_DISK_TYPE via core/config).
+func detectDiskType(override string) types.DiskType {
+	if override != "" {
+		log.Info().Str("disk_type", override).Msg("using DiskType override from cfg.Agent.Capacity.DiskType")
 		return normaliseDiskType(override)
 	}
 	return types.DiskSSD

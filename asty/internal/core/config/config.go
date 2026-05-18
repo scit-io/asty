@@ -30,6 +30,7 @@ type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
 	Agent     AgentConfig     `yaml:"agent"`
 	Gateway   GatewayConfig   `yaml:"gateway"`
+	Artifact  ArtifactConfig  `yaml:"artifact"`
 }
 
 // AutoscaleConfig — controller and scaling thresholds. MaxCopies and
@@ -66,10 +67,39 @@ type HTTPConfig struct {
 	Addr string `yaml:"addr"`
 }
 
-// AgentConfig — agent-specific paths.
+// AgentConfig — agent-specific paths and capacity overrides. Capacity
+// overrides used to be read with os.Getenv at the point of use; they
+// now live here as part of the single-config-path discipline (TZ §2.9).
 type AgentConfig struct {
-	WorkDir    string `yaml:"work_dir"`
-	ServiceDir string `yaml:"service_dir"`
+	WorkDir    string             `yaml:"work_dir"`
+	ServiceDir string             `yaml:"service_dir"`
+	Capacity   AgentCapacityConfig `yaml:"capacity"`
+}
+
+// AgentCapacityConfig overrides the values detect*() helpers would
+// produce from the host. Used in dev to fake a heterogeneous cluster
+// from a single physical machine. Values that mean "no override":
+//   - CPUTotal, MemoryTotal, DiskTotal, SwapTotal: 0
+//   - DiskOSBaseline, NATSDiskBaseline: negative (sentinel for "use
+//     defaults"); zero is a legitimate explicit value.
+//   - DiskType: empty string.
+type AgentCapacityConfig struct {
+	CPUTotal         int    `yaml:"cpu_total"`           // MHz aggregate
+	MemoryTotal      int64  `yaml:"memory_total"`        // MB
+	DiskTotal        int64  `yaml:"disk_total"`          // MB
+	SwapTotal        int64  `yaml:"swap_total"`          // MB
+	DiskOSBaseline   int64  `yaml:"disk_os_baseline"`    // MB (-1 unset)
+	NATSDiskBaseline int64  `yaml:"nats_disk_baseline"`  // MB (-1 unset)
+	DiskType         string `yaml:"disk_type"`           // ssd|hdd
+}
+
+// ArtifactConfig holds template variables substituted into artifact
+// URLs (server-side). Lives at top-level because both server and dev
+// tooling refer to it; the .asty's per-service "artifact.url" expands
+// these via os.Expand at deploy time.
+type ArtifactConfig struct {
+	Arch       string `yaml:"arch"`
+	GitHubRepo string `yaml:"github_repo"`
 }
 
 // Validate rejects required-field gaps early. Dev-mode opts out so a
@@ -118,7 +148,12 @@ func defaults() *Config {
 		Agent: AgentConfig{
 			WorkDir:    "/var/lib/asty",
 			ServiceDir: "/etc/asty/services",
+			Capacity: AgentCapacityConfig{
+				DiskOSBaseline:   -1, // sentinel "use ratio default"
+				NATSDiskBaseline: -1, // sentinel "use NATS default"
+			},
 		},
-		Gateway: gatewayDefaults(),
+		Gateway:  gatewayDefaults(),
+		Artifact: ArtifactConfig{},
 	}
 }

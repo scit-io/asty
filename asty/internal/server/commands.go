@@ -106,7 +106,7 @@ func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinit
 		version = "latest"
 	}
 	resolved := *svc
-	resolved.Artifact.URL = resolveArtifactURL(svc.Artifact.URL, version)
+	resolved.Artifact.URL = s.resolveArtifactURL(svc.Artifact.URL, version)
 	return &resolved
 }
 

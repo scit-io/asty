@@ -106,18 +106,21 @@ func (a *Agent) resolveNodeIP() string {
 
 // resolveNATSPeers returns the IPs of OTHER cluster nodes for the
 // rendered cluster.routes. Sources in priority order:
-//  1. A_NATS_PEERS_FILE — one IP per line; dev's DNS-A-record stand-in.
-//  2. A_NATS_PEERS — comma-separated; static, e.g. CI.
+//  1. cfg.NATS.PeersFile (env A_NATS_PEERS_FILE) — one IP per line;
+//     dev's DNS-A-record stand-in.
+//  2. cfg.NATS.Peers (env A_NATS_PEERS) — comma-separated; static, e.g. CI.
 //  3. DNS LookupIP(cfg.Domain) — prod path.
 //
-// Self-IP is filtered so a node never routes to itself.
+// Self-IP is filtered so a node never routes to itself. Env values
+// arrive through core/config; this function does not call os.Getenv
+// directly (TZ §2.9).
 func (a *Agent) resolveNATSPeers(selfIP string) []string {
-	if path := os.Getenv("A_NATS_PEERS_FILE"); path != "" {
+	if path := a.cfg.NATS.PeersFile; path != "" {
 		if raw, err := os.ReadFile(path); err == nil {
 			return filterSelf(splitAndTrim(string(raw)), selfIP)
 		}
 	}
-	if raw := os.Getenv("A_NATS_PEERS"); raw != "" {
+	if raw := a.cfg.NATS.Peers; raw != "" {
 		return filterSelf(splitAndTrim(raw), selfIP)
 	}
 	if a.cfg.Domain == "" {

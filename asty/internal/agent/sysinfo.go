@@ -2,55 +2,43 @@ package agent
 
 import (
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 
 	"asty/asty/internal/core/types"
 )
 
-// envOverrideInt64 returns the parsed value of an env var when set to
-// a valid non-negative integer; otherwise returns the supplied fallback.
-// Used by nodeinfo.go to apply A_*_TOTAL overrides on top of real OS
-// readings without scattering parse logic.
-func envOverrideInt64(name string, fallback int64) int64 {
-	v := os.Getenv(name)
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.ParseInt(v, 10, 64)
-	if err != nil || n < 0 {
-		return fallback
-	}
-	return n
-}
-
 // defaultDiskOSBaselineRatio is the fallback share of the fake disk
 // counted as pre-occupied by the simulated OS when neither
-// A_DISK_OS_BASELINE nor any other override is set. 20% on a 20 GB
-// fake disk = 4 GB — realistic for a minimal Linux install. Real
-// defaults live in deploy/dev/dev.vars; this only fires if dev.vars
-// is missing or doesn't define A_DISK_OS_BASELINE.
+// cfg.Agent.Capacity.DiskOSBaseline nor any other override is set.
+// 20% on a 20 GB fake disk = 4 GB — realistic for a minimal Linux
+// install.
 const defaultDiskOSBaselineRatio = 0.20
 
-// defaultNATSBaselineMB is the fallback for A_NATS_DISK_BASELINE —
-// matches a stock nats-server binary on disk.
+// defaultNATSBaselineMB is the fallback for
+// cfg.Agent.Capacity.NATSDiskBaseline — matches a stock nats-server
+// binary on disk.
 const defaultNATSBaselineMB = 30
 
 // diskOSBaselineMB returns the fake-OS baseline used in dev disk
-// projection: A_DISK_OS_BASELINE (absolute MB) if set, otherwise
+// projection: cfg.Agent.Capacity.DiskOSBaseline (absolute MB) when
+// the caller passes a non-negative override, otherwise
 // defaultDiskOSBaselineRatio × fakeTotal.
-func diskOSBaselineMB(fakeTotal int64) int64 {
-	if v := envOverrideInt64("A_DISK_OS_BASELINE", -1); v >= 0 {
-		return v
+func diskOSBaselineMB(fakeTotal, override int64) int64 {
+	if override >= 0 {
+		return override
 	}
 	return int64(float64(fakeTotal) * defaultDiskOSBaselineRatio)
 }
 
 // natsDiskBaselineMB returns the synthesized NATS binary footprint:
-// A_NATS_DISK_BASELINE if set, otherwise defaultNATSBaselineMB.
-func natsDiskBaselineMB() int64 {
-	return envOverrideInt64("A_NATS_DISK_BASELINE", defaultNATSBaselineMB)
+// cfg.Agent.Capacity.NATSDiskBaseline when the caller passes a
+// non-negative override, otherwise defaultNATSBaselineMB.
+func natsDiskBaselineMB(override int64) int64 {
+	if override >= 0 {
+		return override
+	}
+	return defaultNATSBaselineMB
 }
 
 // astyBinarySizeMB returns the size of the running asty binary, in MB.

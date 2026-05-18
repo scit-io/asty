@@ -13,15 +13,13 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-func detectCPUMHz() int {
-	if override := os.Getenv("A_CPU_TOTAL"); override != "" {
-		log.Debug().Str("A_CPU_TOTAL", override).Msg("cpu override env detected")
-		if val, err := strconv.Atoi(override); err == nil && val > 0 {
-			log.Info().Int("cpu_mhz", val).Msg("using CPU override from A_CPU_TOTAL")
-			return val
-		} else {
-			log.Warn().Str("A_CPU_TOTAL", override).Err(err).Msg("failed to parse A_CPU_TOTAL")
-		}
+// detectCPUMHz returns the host's aggregate CPU capacity in MHz, or
+// the supplied override if non-zero. Override flows from
+// cfg.Agent.Capacity.CPUTotal (env A_CPU_TOTAL via core/config).
+func detectCPUMHz(override int) int {
+	if override > 0 {
+		log.Info().Int("cpu_mhz", override).Msg("using CPU override from cfg.Agent.Capacity.CPUTotal")
+		return override
 	}
 
 	data, err := os.ReadFile("/proc/cpuinfo")
@@ -50,15 +48,13 @@ func detectCPUMHz() int {
 	return int(totalMHz)
 }
 
-func detectMemoryMB() int64 {
-	if override := os.Getenv("A_MEMORY_TOTAL"); override != "" {
-		log.Debug().Str("A_MEMORY_TOTAL", override).Msg("memory override env detected")
-		if val, err := strconv.ParseInt(override, 10, 64); err == nil && val > 0 {
-			log.Info().Int64("memory_mb", val).Msg("using Memory override from A_MEMORY_TOTAL")
-			return val
-		} else {
-			log.Warn().Str("A_MEMORY_TOTAL", override).Err(err).Msg("failed to parse A_MEMORY_TOTAL")
-		}
+// detectMemoryMB returns the host's memory total in MB, or the
+// supplied override if non-zero. Override flows from
+// cfg.Agent.Capacity.MemoryTotal (env A_MEMORY_TOTAL via core/config).
+func detectMemoryMB(override int64) int64 {
+	if override > 0 {
+		log.Info().Int64("memory_mb", override).Msg("using Memory override from cfg.Agent.Capacity.MemoryTotal")
+		return override
 	}
 
 	data, err := os.ReadFile("/proc/meminfo")
@@ -130,10 +126,11 @@ func detectSwapMB() (total, available int64) {
 // non-rotational device flips the result to SSD; we report HDD only
 // when every block device reports rotational=1. This is a reasonable
 // approximation in containerised dev too: the host's /sys is exposed
-// read-only and reflects real hardware. A_DISK_TYPE overrides.
-func detectDiskType() types.DiskType {
-	if override := os.Getenv("A_DISK_TYPE"); override != "" {
-		log.Info().Str("disk_type", override).Msg("using DiskType override from A_DISK_TYPE")
+// read-only and reflects real hardware. Override flows from
+// cfg.Agent.Capacity.DiskType (env A_DISK_TYPE via core/config).
+func detectDiskType(override string) types.DiskType {
+	if override != "" {
+		log.Info().Str("disk_type", override).Msg("using DiskType override from cfg.Agent.Capacity.DiskType")
 		return normaliseDiskType(override)
 	}
 
