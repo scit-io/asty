@@ -56,6 +56,8 @@ func applyEnvOverrides(c *Config) {
 
 	envStr("A_WORK_DIR", &c.Agent.WorkDir)
 	envStr("A_SERVICE_DIR", &c.Agent.ServiceDir)
+	envStr("A_RUN_AS_USER", &c.Agent.RunAsUser)
+	envStr("A_RUN_AS_GROUP", &c.Agent.RunAsGroup)
 
 	envInt("A_CPU_TOTAL", &c.Agent.Capacity.CPUTotal)
 	envInt64("A_MEMORY_TOTAL", &c.Agent.Capacity.MemoryTotal)

@@ -62,6 +62,12 @@ type Agent struct {
 	// Populated by per-process OnExit callbacks; drained by
 	// monitorProcesses, which decides whether to restart or give up.
 	failed chan string
+
+	// drop is the resolved run-as uid/gid pair the agent (and every
+	// child it spawns) will run as after dropPrivileges. Zero value
+	// when cfg.Agent.RunAsUser is unset — agent stays at the OS uid.
+	// Resolved once at Start so a typo in the user name fails fast.
+	drop dropTarget
 }
 
 // New creates a new Asty agent. The work directory is created on disk

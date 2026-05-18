@@ -18,6 +18,19 @@ import (
 // forwarding, health/metrics collectors, command subscriptions, and the
 // background goroutines for heartbeats, metrics publishing, and process
 // monitoring. Blocks until ctx is cancelled, then stops all processes.
+//
+// Privilege ordering, when cfg.Agent.RunAsUser is set:
+//
+//  1. resolveDropTarget — fail fast on a bad user/group name.
+//  2. bootstrapNATS — exec'd with SysProcAttr.Credential pointing at
+//     the target uid/gid so the nats-server child starts non-root.
+//  3. connectAndWireNATS — opens our two NATS connections.
+//  4. preBindGateway — listen(2) on the privileged port WHILE we're
+//     still root (the listener FD survives setuid).
+//  5. dropPrivileges — chown work_dir + store_dir, setgid, setuid.
+//     Everything that follows runs as the target user.
+//  6. subscribe + background goroutines + gateway Serve on the pre-
+//     bound listener.
 func (a *Agent) Start(ctx context.Context) error {
 	log.Info().
 		Str("node_id", a.nodeID).
@@ -25,6 +38,12 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent starting")
 
 	a.exportConfigEnv()
+
+	drop, err := a.resolveDropTarget()
+	if err != nil {
+		return fmt.Errorf("resolve run-as target: %w", err)
+	}
+	a.drop = drop
 
 	if err := a.bootstrapNATS(ctx); err != nil {
 		return fmt.Errorf("failed to bootstrap NATS: %w", err)
@@ -40,6 +59,18 @@ func (a *Agent) Start(ctx context.Context) error {
 		defer a.ncSys.Close()
 	}
 
+	gwListener, err := a.preBindGateway()
+	if err != nil {
+		return fmt.Errorf("failed to pre-bind gateway: %w", err)
+	}
+
+	if err := a.dropPrivileges(); err != nil {
+		if gwListener != nil {
+			_ = gwListener.Close()
+		}
+		return fmt.Errorf("drop privileges: %w", err)
+	}
+
 	if err := a.subscribeCommands(); err != nil {
 		return fmt.Errorf("failed to subscribe to commands: %w", err)
 	}
@@ -52,7 +83,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	go a.monitorProcesses(ctx)
 	go a.collectNATSStatsLoop(ctx)
 
-	if err := a.runGateway(ctx); err != nil {
+	if err := a.runGatewayWith(ctx, gwListener); err != nil {
 		return fmt.Errorf("failed to start gateway: %w", err)
 	}
 

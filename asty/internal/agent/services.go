@@ -47,6 +47,11 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 		}
 	}
 
+	// No explicit Credential needed: this code path runs after
+	// dropPrivileges, so fork+exec naturally inherits the agent's
+	// current uid (RunAsUser when configured, original uid otherwise).
+	// nats-server is the one exception — see bootstrapNATS — because
+	// it's exec'd BEFORE the drop while the agent is still root.
 	proc := process.New(svc, a.nodeID, serviceDir)
 	// Register before Start so we never miss an exit. The callback
 	// runs on the process monitor goroutine; it must not block, hence

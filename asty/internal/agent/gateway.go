@@ -3,13 +3,14 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"time"
 
+	"asty/asty/internal/api/gateway"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/ops/deployer"
-	"asty/asty/internal/api/gateway"
 
 	"github.com/rs/zerolog/log"
 )
@@ -18,23 +19,63 @@ import (
 // and WebSocket sessions to drain before forcing the server closed.
 const shutdownGracePeriod = 10 * time.Second
 
-// runGateway starts the embedded HTTP gateway. The single goroutine
-// runs the request server and honours ctx — on cancellation it goes
-// through http.Server.Shutdown with shutdownGracePeriod.
+// gatewayAddr resolves the gateway's bind address. New deployments
+// use cfg.Gateway.Host/Port; cfg.Gateway.HTTP.Addr is the legacy
+// combined form kept for un-migrated configs (it wins when set).
+func (a *Agent) gatewayAddr() string {
+	cfg := a.cfg.Gateway
+	if cfg.HTTP.Addr != "" {
+		return cfg.HTTP.Addr
+	}
+	return cfg.Addr()
+}
+
+// preBindGateway calls net.Listen on the gateway's address while the
+// agent still holds whatever privileges it started with. Returns the
+// open listener; the dropPrivileges step that follows shrinks the
+// agent down to RunAsUser, and the listener — being an open FD —
+// survives the setuid. runGatewayWith then serves on it.
+//
+// Returns nil (no error) when gateway is disabled, so the caller can
+// pass the nil through to runGatewayWith without a branch.
+func (a *Agent) preBindGateway() (net.Listener, error) {
+	if !a.cfg.Gateway.Enabled {
+		return nil, nil
+	}
+	addr := a.gatewayAddr()
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s: %w", addr, err)
+	}
+	log.Info().Str("addr", listener.Addr().String()).Msg("gateway listener pre-bound")
+	return listener, nil
+}
+
+// runGatewayWith starts the embedded HTTP gateway serving on the
+// pre-bound listener. The single goroutine runs http.Server.Serve
+// and honours ctx — on cancellation it goes through Shutdown with
+// shutdownGracePeriod.
 //
 // The gateway reuses a.nc (the agent's NATS connection), so there is
 // no extra connection, drain, or auth path to maintain.
-func (a *Agent) runGateway(ctx context.Context) error {
+func (a *Agent) runGatewayWith(ctx context.Context, listener net.Listener) error {
 	cfg := a.cfg.Gateway
 	if !cfg.Enabled {
+		if listener != nil {
+			_ = listener.Close()
+		}
 		log.Info().Msg("gateway disabled — skipping")
 		return nil
+	}
+	if listener == nil {
+		return fmt.Errorf("gateway: no pre-bound listener")
 	}
 
 	serviceRules := a.collectRateLimitRules()
 
 	gw, err := gateway.New(ctx, a.nc, cfg, a.nodeID, serviceRules, log.Logger)
 	if err != nil {
+		_ = listener.Close()
 		return err
 	}
 
@@ -43,16 +84,7 @@ func (a *Agent) runGateway(ctx context.Context) error {
 	// context so it exits with the rest of the gateway on shutdown.
 	go gw.ReportRPSLoop(gw.RootContext())
 
-	// Bind address now comes from cfg.Gateway.Addr() (Host:Port). The
-	// legacy cfg.Gateway.HTTP.Addr field is kept as a fallback for
-	// configs that haven't been migrated; new deployments should set
-	// gateway.port and gateway.host (or A_GATEWAY_PORT/A_GATEWAY_HOST).
-	addr := cfg.Addr()
-	if cfg.HTTP.Addr != "" {
-		addr = cfg.HTTP.Addr
-	}
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           gw.Handler(),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,
@@ -64,7 +96,7 @@ func (a *Agent) runGateway(ctx context.Context) error {
 		BaseContext: func(net.Listener) context.Context { return gw.RootContext() },
 	}
 
-	go a.serveGateway(ctx, srv)
+	go a.serveGateway(ctx, srv, listener)
 	return nil
 }
 
@@ -85,15 +117,16 @@ func (a *Agent) collectRateLimitRules() []types.RateLimitRule {
 	return rules
 }
 
-// serveGateway runs the HTTP server and shuts it down on ctx cancel.
-// A ListenAndServe error other than ErrServerClosed terminates the
-// agent — that is the same posture as the controller and command
-// subscriptions: a fatal mis-bind should not be hidden behind a log.
-func (a *Agent) serveGateway(ctx context.Context, srv *http.Server) {
+// serveGateway runs the HTTP server on the pre-bound listener and
+// shuts it down on ctx cancel. A Serve error other than ErrServerClosed
+// terminates the agent — that is the same posture as the controller
+// and command subscriptions: a fatal mis-bind should not be hidden
+// behind a log.
+func (a *Agent) serveGateway(ctx context.Context, srv *http.Server, listener net.Listener) {
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info().Str("addr", srv.Addr).Msg("gateway listening")
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Info().Str("addr", listener.Addr().String()).Msg("gateway listening")
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 		close(errCh)

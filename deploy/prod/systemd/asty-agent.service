@@ -4,14 +4,30 @@
 # and NATS is the agent's child, so without a live agent the server
 # has nothing to talk to.
 #
+# Privilege model: this unit runs as root (User= is unset → systemd
+# default) so the agent can bind :80 for the gateway and exec
+# nats-server while still privileged. The agent reads
+# A_RUN_AS_USER=asty / A_RUN_AS_GROUP=asty from /etc/asty/asty.env,
+# pre-binds the gateway socket, exec's nats-server with Credential
+# {uid: asty, gid: asty}, then setuid/setgid to asty for the rest of
+# its lifetime. From that point onward every fork+exec spawn (user
+# services) naturally inherits the non-root identity.
+#
+# Alternative on Linux: omit RUN_AS_*, set User=asty and
+# AmbientCapabilities=CAP_NET_BIND_SERVICE here. The agent never
+# touches root then, and dropPrivileges becomes a no-op because the
+# OS-uid already matches.
+#
 # Operator install:
+#   useradd --system --no-create-home --shell /usr/sbin/nologin asty
+#   mkdir -p /var/lib/asty && chown asty:asty /var/lib/asty
 #   cp deploy/prod/systemd/asty-agent.service /etc/systemd/system/
 #   systemctl daemon-reload
 #   systemctl enable --now asty-agent
 #
 # Tuning:
-#   - EnvironmentFile=/etc/asty/asty.env  for A_* overrides (token,
-#     observer creds, capacity overrides) — keep secrets out of unit.
+#   - EnvironmentFile=/etc/asty/asty.env carries A_TOKEN, NATS
+#     passwords, AND A_RUN_AS_USER/A_RUN_AS_GROUP.
 #   - LimitNOFILE bumped so a busy gateway can hold many WS clients.
 #   - Restart=always with a small backoff so a crash loop is visible
 #     to systemd journal but the cluster heals itself.
@@ -26,8 +42,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=asty
-Group=asty
+# No User= / Group= — agent starts as root so it can bind :80 and
+# exec nats-server, then drops itself to A_RUN_AS_USER from the
+# environment file (defaults to no-drop if unset).
 WorkingDirectory=/var/lib/asty
 ExecStart=/usr/local/bin/asty -mode agent -config /etc/asty/config.asty
 EnvironmentFile=-/etc/asty/asty.env

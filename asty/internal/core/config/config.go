@@ -100,13 +100,28 @@ type PrometheusConfig struct {
 // Addr returns "<host>:<port>".
 func (p PrometheusConfig) Addr() string { return joinHostPort(p.Host, p.Port) }
 
-// AgentConfig — agent-specific paths and capacity overrides. Capacity
-// overrides used to be read with os.Getenv at the point of use; they
-// now live here as part of the single-config-path discipline (TZ §2.9).
+// AgentConfig — agent-specific paths, capacity overrides, and the
+// optional run-as identity the agent drops to after bootstrap.
+// Capacity overrides used to be read with os.Getenv at the point of
+// use; they now live here as part of the single-config-path
+// discipline (TZ §2.9).
 type AgentConfig struct {
 	WorkDir    string             `yaml:"work_dir"`
 	ServiceDir string             `yaml:"service_dir"`
 	Capacity   AgentCapacityConfig `yaml:"capacity"`
+
+	// RunAsUser / RunAsGroup — when set, the agent drops to this
+	// uid/gid after all root-requiring work is done (bind privileged
+	// gateway port, exec nats-server, chown work dirs). Empty values
+	// mean "stay at whichever uid the OS started us with"; the
+	// typical prod pattern is RunAsUser=asty in the systemd unit's
+	// EnvironmentFile and User=root in the unit itself, so the agent
+	// can bind :80 and then shed root.
+	//
+	// Setting RunAsGroup independently is supported but rarely
+	// needed; the default is the user's primary group.
+	RunAsUser  string `yaml:"run_as_user"`
+	RunAsGroup string `yaml:"run_as_group"`
 }
 
 // AgentCapacityConfig overrides the values detect*() helpers would

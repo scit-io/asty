@@ -48,6 +48,15 @@ func (a *Agent) bootstrapNATS(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, binary, "-c", a.natsConfPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// When drop-root is configured, the nats-server child must start
+	// already under the target uid/gid — otherwise the agent (running
+	// as asty-svc post-drop) can't signal a root child for SIGHUP
+	// (peer-list hot reload) or SIGTERM (clean shutdown). Pre-chown
+	// of store_dir in dropPrivileges() complements this so the child
+	// can write JetStream files.
+	if cred := a.credentialForChildren(); cred != nil {
+		cmd.SysProcAttr = withCredential(cmd.SysProcAttr, cred)
+	}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start nats-server: %w", err)
 	}
