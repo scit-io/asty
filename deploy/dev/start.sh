@@ -4,11 +4,10 @@
 # Start and stop the Asty dev environment.
 #
 # Usage:
-#   ./start.sh             — 1 node (server + agent)
-#   ./start.sh 3           — 3 nodes (server + agent each, with leader election)
-#   ./start.sh add     — grow a running cluster by one node
-#   ./start.sh remove [N] — shrink: tear down node N (default: highest)
-#   ./start.sh stop        — stop everything
+#   ./start.sh        — 1 node (server + agent)
+#   ./start.sh 3      — 3 nodes (server + agent each, with leader election)
+#   ./start.sh add    — grow a running cluster by one node
+#   ./start.sh stop   — stop everything
 
 set -euo pipefail
 
@@ -22,13 +21,13 @@ VARS_FILE="$SCRIPT_DIR/dev.vars"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
 # Per-node PID file: $DATA_BASE/pids-$i, two lines (server, agent).
-# Per-node so remove can target a specific node's PIDs without
-# scanning ps; stop_all iterates the whole set.
+# Per-node so each "add" leaves a self-contained record; stop_all
+# iterates the whole set.
 PID_FILE_TMPL="$DATA_BASE/pids"
 # Shared peer-list file consumed by every agent (A_NATS_PEERS_FILE).
 # Imitates a prod DNS A-record: one IP per line, agents re-read on
-# every watcher tick, self-filter in code. add/remove update
-# this file; live agents pick up the change on their next tick.
+# every watcher tick, self-filter in code. add appends a line; live
+# agents pick up the change on their next tick.
 PEERS_FILE="$DATA_BASE/peers.txt"
 
 # =============================================================================
@@ -244,73 +243,6 @@ add_node() {
   info "the next nats-watch tick (~5 s) and restart their nats-server."
 }
 
-# remove_node shrinks a running cluster by tearing down one node and
-# removing its entry from PEERS_FILE. Without args, removes the
-# highest-numbered node (symmetric with add_node). With an explicit
-# index, removes that one. Refuses to take the last node down —
-# stop_all is the right tool for that.
-remove_node() {
-  local target="${1:-}"
-
-  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
-    die "no running cluster found. Start one with: $0 [N]"
-  fi
-
-  # Resolve target: explicit index wins, otherwise highest in PEERS_FILE.
-  if [[ -z "$target" ]]; then
-    target=0
-    while IFS= read -r ip; do
-      local last="${ip##*.}"
-      [[ -n "$last" && "$last" =~ ^[0-9]+$ && $last -gt $target ]] && target=$last
-    done < "$PEERS_FILE"
-  fi
-  if ! [[ "$target" =~ ^[0-9]+$ ]] || [[ $target -lt 1 ]]; then
-    die "usage: $0 remove [N]  (N ≥ 1)"
-  fi
-
-  local pidfile="${PID_FILE_TMPL}-$target"
-  if [[ ! -f "$pidfile" ]]; then
-    die "node $target is not running ($pidfile missing)"
-  fi
-  local remaining
-  remaining=$(compgen -G "${PID_FILE_TMPL}-*" | wc -l | tr -d ' ')
-  if [[ "$remaining" -le 1 ]]; then
-    die "refusing to remove the last running node — use '$0 stop' instead"
-  fi
-
-  local addr="127.0.0.$target"
-  log "removing node $target (id=dev-node-$target, ip=$addr)..."
-
-  # 1) SIGTERM the node's server + agent (sudo — agent runs as root).
-  local pid
-  while IFS= read -r pid; do
-    [[ -n "$pid" ]] || continue
-    sudo kill "$pid" 2>/dev/null && info "✓ PID $pid terminated" || true
-  done < "$pidfile"
-  sleep 1
-  while IFS= read -r pid; do
-    [[ -n "$pid" ]] || continue
-    sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
-  done < "$pidfile"
-
-  # 2) Drop the IP from PEERS_FILE so surviving agents notice on their
-  #    next watcher tick and shrink their cluster.routes (SIGHUP hot
-  #    reload when 2+ nodes remain, cold restart on the 2→1 step).
-  local tmp
-  tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
-  grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
-  mv "$tmp" "$PEERS_FILE"
-
-  # 3) Clean per-node state — pidfile, working dir, JS store. Old
-  #    JetStream data would conflict with a future add reusing
-  #    the same index.
-  rm -f "$pidfile"
-  sudo rm -rf "$DATA_BASE/work/dev-node-$target" "$DATA_BASE/jetstream/dev-node-$target" "$DATA_BASE/node$target"
-
-  info "node $target removed. Loopback alias $addr left up; stop_all"
-  info "tears down aliases at end-of-life."
-}
-
 # =============================================================================
 # Wait for Asty readiness
 # =============================================================================
@@ -427,13 +359,8 @@ if [[ "$CMD" == "add" ]]; then
   exit 0
 fi
 
-if [[ "$CMD" == "remove" ]]; then
-  remove_node "${2:-}"
-  exit 0
-fi
-
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop|add|remove [N]]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|add]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"

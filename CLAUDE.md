@@ -364,11 +364,10 @@ the orchestrator):
 at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
 
 ```
-deploy/dev/start.sh                  # 1 node
-deploy/dev/start.sh 3                # 3 nodes (server + agent each)
-deploy/dev/start.sh add          # grow the running cluster by one
-deploy/dev/start.sh remove [N]   # shrink: tear down node N (default: highest)
-deploy/dev/start.sh stop             # tear down everything
+deploy/dev/start.sh        # 1 node
+deploy/dev/start.sh 3      # 3 nodes (server + agent each)
+deploy/dev/start.sh add    # grow the running cluster by one
+deploy/dev/start.sh stop   # tear down everything
 ```
 
 `add` appends the new node's IP to `peers.txt`, brings up its
@@ -380,16 +379,9 @@ a cold restart on the existing node because JetStream flips from
 standalone to clustered. Either way the leader's `watchStreamReplicas`
 then raises replicas on existing KV buckets so the cluster has grown.
 
-`remove` is the symmetric op: SIGTERM the target node's server +
-agent (sudo), strip its IP from `peers.txt`, and wipe its per-node
-working dir + JetStream store so a later `add` reusing the same
-index starts clean. Surviving nodes hot-reload via SIGHUP when 2+
-remain; the 2→1 step is a cold restart (clustered → standalone).
-`remove` refuses to take the last node down — use `stop` for that.
-
-PID bookkeeping is per-node (`$DATA_BASE/pids-$i`, two lines: server,
-agent), so `remove` can target one node's processes without
-scanning `ps`.
+PID bookkeeping is per-node (`$DATA_BASE/pids-$i`, two lines:
+server, agent) so each `add` leaves a self-contained record;
+`stop` iterates the whole set.
 
 Authoritative struct layout: `asty/internal/core/config/` —
 `config.go`, `nats.go`, `gateway.go`, `env.go`, `load.go`.
