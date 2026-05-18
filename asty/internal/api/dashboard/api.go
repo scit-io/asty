@@ -1,4 +1,4 @@
-package rest
+package dashboard
 
 import (
 	"context"
@@ -9,32 +9,23 @@ import (
 	"asty/asty/internal/api/health"
 	"asty/asty/internal/api/prometheus"
 	"asty/asty/internal/api/stream"
+	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/kv"
 
 	"github.com/rs/zerolog/log"
 )
 
-// apiPrefix is the single source of truth for the HTTP namespace under
-// which every data route is registered on the orchestrator side.
-// Changing this string moves all of the SPA's API calls in one place;
-// the SPA reads the matching `API_PREFIX` constant in
-// `asty/web/src/api/client.ts` — change both in lockstep.
-//
-// "/metrics" is the Prometheus exposition path (exact match in the
-// outer mux) and no longer overlaps with the data namespace. The
-// legacy /metrics/* data alias from migration/tz §14.2 was removed
-// after the UI release that ships /api/v1 — see TZ §14.2 sunset note.
-const apiPrefix = "/api/v1"
-
-// API provides the orchestrator's dashboard HTTP surface (REST + SSE)
-// plus the Prometheus exposition mounted at /metrics. Content
-// negotiation per route picks JSON or SSE for the dashboard paths;
-// the prometheus handler is built once and reused.
+// API provides the orchestrator's dashboard HTTP surface (REST + SSE).
+// When cfg.Dashboard.Port == cfg.Prometheus.Port the same listener
+// also mounts the Prometheus exposition at cfg.Prometheus.Prefix; if
+// the ports differ, the prometheus handler is exposed via
+// PrometheusHandler() so the composition root can spawn a second
+// listener.
 type API struct {
 	ctx               ServerContext
 	httpServer        *http.Server
-	addr              string
+	cfg               *config.Config
 	prometheusHandler http.Handler   // built by api/prometheus.Handler.
 	streamCtx         stream.Context // narrowed view for api/stream handlers.
 }
@@ -45,14 +36,21 @@ type API struct {
 // the double-register panic during tests). The package-local adapters
 // (prometheusAdapter, streamAdapter) narrow ServerContext's concrete
 // return types to the smaller interfaces each sub-package declares.
-func New(ctx ServerContext, addr string) *API {
+func New(ctx ServerContext) *API {
+	cfg := ctx.Config()
 	return &API{
 		ctx:               ctx,
-		addr:              addr,
+		cfg:               cfg,
 		prometheusHandler: prometheus.Handler(prometheusAdapter{ctx: ctx}),
 		streamCtx:         streamAdapter{ctx: ctx},
 	}
 }
+
+// PrometheusHandler returns the Prometheus exposition handler. When
+// dashboard and prometheus listeners share a port this handler is
+// mounted alongside the dashboard router by Start; when they don't,
+// the composition root uses this method to spawn a second listener.
+func (api *API) PrometheusHandler() http.Handler { return api.prometheusHandler }
 
 // prometheusAdapter bridges rest.ServerContext (concrete return types,
 // useful elsewhere in api/rest) to prometheus.Context (narrower
@@ -78,13 +76,16 @@ func (a streamAdapter) StreamHub() stream.Hub          { return a.ctx.StreamHub(
 func (a streamAdapter) MetricsStore() stream.RPSSource { return a.ctx.MetricsStore() }
 
 // Start starts the API server. Data routes register on a sub-mux
-// with bare paths; the namespace lives in apiPrefix and is added once
-// via http.StripPrefix at the outer mux. Methods on the same path
-// are separate registrations so the stdlib mux can fan them out.
+// with bare paths; the namespace lives in cfg.Dashboard.Prefix and
+// is added once via http.StripPrefix at the outer mux. Methods on
+// the same path are separate registrations so the stdlib mux can
+// fan them out. When cfg.Dashboard.Port == cfg.Prometheus.Port the
+// /metrics handler is mounted on the same listener.
 func (api *API) Start(ctx context.Context) error {
-	// Data routes register on a sub-mux with bare paths; the prefix
-	// gets added once below via http.StripPrefix(apiPrefix, …) so
-	// every route reads naturally and the prefix moves in one place.
+	dashboardPrefix := api.cfg.Dashboard.Prefix
+	prometheusPrefix := api.cfg.Prometheus.Prefix
+	addr := api.cfg.Dashboard.Addr()
+
 	data := http.NewServeMux()
 	data.HandleFunc("GET /{$}", api.handleCluster)
 	data.HandleFunc("GET /logs", api.handleClusterLogs)
@@ -118,23 +119,25 @@ func (api *API) Start(ctx context.Context) error {
 	data.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
 	data.HandleFunc("POST /services/{name}/deploy", write(api.handleServiceDeploy))
 
-	// Outer mux: infra endpoints at the root, data namespace nested.
-	// /health and /metrics stay at the root because the probes and
-	// Prometheus scrape don't know about our prefix.
+	// Outer mux: /health at the root, /metrics at the configured
+	// prometheus prefix when the listener is shared with the
+	// dashboard, and the dashboard router under its own prefix.
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", health.Handler())
-	mux.Handle("GET /metrics", api.prometheusHandler)
-	mux.Handle(apiPrefix+"/", http.StripPrefix(apiPrefix, data))
+	mux.Handle("GET "+dashboardPrefix+"/", http.StripPrefix(dashboardPrefix, data))
+	if api.cfg.Dashboard.Port == api.cfg.Prometheus.Port {
+		mux.Handle("GET "+prometheusPrefix, api.prometheusHandler)
+	}
 
 	api.httpServer = &http.Server{
-		Addr:              api.addr,
+		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE connections are long-lived
 	}
 
-	log.Info().Str("addr", api.addr).Msg("API server starting")
+	log.Info().Str("addr", addr).Str("prefix", dashboardPrefix).Msg("dashboard API listening")
 
 	go func() {
 		if err := api.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {

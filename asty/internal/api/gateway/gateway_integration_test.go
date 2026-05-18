@@ -102,7 +102,7 @@ func TestIntegration_HTTPToNATSRoundTrip(t *testing.T) {
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
 
-	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/v1/echo/ping", strings.NewReader("hello"))
+	req, err := http.NewRequest(http.MethodPost, httpSrv.URL+"/api/v1/echo/ping", strings.NewReader("hello"))
 	if err != nil {
 		t.Fatalf("new request: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestIntegration_PanicPropagatesRequestID(t *testing.T) {
 	httpSrv := httptest.NewServer(gw.Handler())
 	defer httpSrv.Close()
 
-	resp, err := http.Post(httpSrv.URL+"/v1/boom/panic", "application/json", strings.NewReader(`{}`))
+	resp, err := http.Post(httpSrv.URL+"/api/v1/boom/panic", "application/json", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatalf("http request: %v", err)
 	}

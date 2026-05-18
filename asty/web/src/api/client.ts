@@ -6,17 +6,15 @@ import type {
   DrainStatus,
 } from '../types'
 
-// API_PREFIX is the single source of truth for the orchestrator's HTTP
-// namespace on the frontend side. The backend has the matching
-// `apiPrefix` constant in features/api/api.go — change both in
-// lockstep when renaming. Every fetch and EventSource in the SPA
-// goes through this.
+// API_PREFIX is the single source of truth for the dashboard's HTTP
+// namespace on the frontend side. The backend default is
+// /dashboard/v1; configurable per deployment via A_DASHBOARD_PREFIX
+// on the orchestrator. Every fetch and EventSource in the SPA goes
+// through this.
 //
-// Moved from /metrics to /api/v1 (migration/tz §14.2) so the data
-// namespace stops overlapping with the Prometheus exposition path.
-// The old /metrics/* prefix remains supported on the backend for one
-// cycle with a Deprecation header.
-export const API_PREFIX = '/api/v1'
+// /metrics is reserved for Prometheus exposition; /api/v1 is the
+// gateway entry point for user traffic and is NOT used by the SPA.
+export const API_PREFIX = '/dashboard/v1'
 
 // authToken returns the Bearer token the client attaches to write
 // requests. We pull it from VITE_ASTY_TOKEN at build time and from

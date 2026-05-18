@@ -12,11 +12,15 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://localhost:8080',
-      // /metrics is the Prometheus exposition path; SPA does not call
-      // it, but proxy it through so local browsing of /metrics works.
-      '/metrics': 'http://localhost:8080',
-      '/health': 'http://localhost:8080',
+      // Dashboard listener (REST + SSE) — default :7060 with prefix
+      // /dashboard/v1. Match the orchestrator's A_DASHBOARD_PORT and
+      // A_DASHBOARD_PREFIX defaults; if you change them on the
+      // backend, mirror here.
+      '/dashboard': 'http://localhost:7060',
+      // Prometheus exposition shares the same listener by default.
+      '/metrics': 'http://localhost:7060',
+      // Health probe.
+      '/health': 'http://localhost:7060',
     }
   }
 })

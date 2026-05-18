@@ -43,8 +43,16 @@ func (a *Agent) runGateway(ctx context.Context) error {
 	// context so it exits with the rest of the gateway on shutdown.
 	go gw.ReportRPSLoop(gw.RootContext())
 
+	// Bind address now comes from cfg.Gateway.Addr() (Host:Port). The
+	// legacy cfg.Gateway.HTTP.Addr field is kept as a fallback for
+	// configs that haven't been migrated; new deployments should set
+	// gateway.port and gateway.host (or A_GATEWAY_PORT/A_GATEWAY_HOST).
+	addr := cfg.Addr()
+	if cfg.HTTP.Addr != "" {
+		addr = cfg.HTTP.Addr
+	}
 	srv := &http.Server{
-		Addr:              cfg.HTTP.Addr,
+		Addr:              addr,
 		Handler:           gw.Handler(),
 		ReadHeaderTimeout: cfg.HTTP.ReadHeaderTimeout,
 		ReadTimeout:       cfg.HTTP.ReadTimeout,

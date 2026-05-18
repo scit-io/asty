@@ -1,4 +1,4 @@
-package rest
+package dashboard
 
 import (
 	"asty/asty/internal/api/stream"

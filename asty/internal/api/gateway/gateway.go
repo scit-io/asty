@@ -103,11 +103,21 @@ func (gw *Gateway) Shutdown() { gw.cancel() }
 // Handler returns the root http.Handler of the gateway.
 //
 // Routes:
-//   - /health — health check (no rate limit, no Origin check, no NATS proxy)
-//   - /v1/    — API: Origin → RateLimit → HTTP RPC or WebSocket
+//   - /health             — health check (no rate limit, no Origin check, no NATS proxy)
+//   - cfg.Prefix + "/"    — API: Origin → RateLimit → HTTP RPC or WebSocket
+//
+// cfg.Prefix defaults to /api/v1 and is configurable via
+// A_GATEWAY_PREFIX. The router strips the prefix before handing the
+// trimmed path to gw.route, which preserves the existing path-validation
+// rules (only segments AFTER the prefix become NATS subject tokens).
 func (gw *Gateway) Handler() http.Handler {
+	prefix := gw.cfg.Prefix
+	if prefix == "" {
+		prefix = "/api/v1"
+	}
+
 	api := http.NewServeMux()
-	api.HandleFunc("/v1/", gw.route)
+	api.Handle(prefix+"/", http.StripPrefix(prefix, http.HandlerFunc(gw.route)))
 
 	root := http.NewServeMux()
 	root.HandleFunc("/health", gw.handleHealth)

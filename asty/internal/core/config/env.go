@@ -46,7 +46,14 @@ func applyEnvOverrides(c *Config) {
 	envInt("A_RESERVED_CPU", &c.Resources.ReservedCPU)
 	envInt("A_RESERVED_MEMORY", &c.Resources.ReservedMemory)
 
-	envStr("A_HTTP_ADDR", &c.HTTP.Addr)
+	envStr("A_DASHBOARD_HOST", &c.Dashboard.Host)
+	envInt("A_DASHBOARD_PORT", &c.Dashboard.Port)
+	envStr("A_DASHBOARD_PREFIX", &c.Dashboard.Prefix)
+
+	envStr("A_PROMETHEUS_HOST", &c.Prometheus.Host)
+	envInt("A_PROMETHEUS_PORT", &c.Prometheus.Port)
+	envStr("A_PROMETHEUS_PREFIX", &c.Prometheus.Prefix)
+
 	envStr("A_WORK_DIR", &c.Agent.WorkDir)
 	envStr("A_SERVICE_DIR", &c.Agent.ServiceDir)
 
@@ -66,6 +73,10 @@ func applyEnvOverrides(c *Config) {
 
 func applyGatewayEnv(g *GatewayConfig) {
 	envBool("A_GATEWAY_ENABLED", &g.Enabled)
+
+	envStr("A_GATEWAY_HOST", &g.Host)
+	envInt("A_GATEWAY_PORT", &g.Port)
+	envStr("A_GATEWAY_PREFIX", &g.Prefix)
 
 	envStr("A_GATEWAY_ADDR", &g.HTTP.Addr)
 	envDur("A_GATEWAY_READ_HEADER_TIMEOUT", &g.HTTP.ReadHeaderTimeout)

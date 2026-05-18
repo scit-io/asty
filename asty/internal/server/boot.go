@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"time"
 
 	"asty/asty/internal/core/netutil"
@@ -20,7 +21,7 @@ import (
 	"asty/asty/internal/ops/scheduler"
 	"asty/asty/internal/domain/proximity"
 
-	apiPkg "asty/asty/internal/api/rest"
+	apiPkg "asty/asty/internal/api/dashboard"
 
 	"github.com/rs/zerolog/log"
 )
@@ -128,16 +129,42 @@ func (s *Server) initFeatures(ctx context.Context) {
 	go s.streamHub.Run(ctx)
 }
 
-// startAPI launches the HTTP API in a goroutine and returns immediately.
-// The API runs until ctx is cancelled and logs its own shutdown errors.
+// startAPI launches the dashboard HTTP API in a goroutine and (when
+// the dashboard and prometheus ports differ) a second listener for
+// the Prometheus exposition. Both run until ctx is cancelled and log
+// their own shutdown errors.
 func (s *Server) startAPI(ctx context.Context) error {
-	s.httpAPI = apiPkg.New(s, s.cfg.HTTP.Addr)
+	s.httpAPI = apiPkg.New(s)
 	go func() {
 		if err := s.httpAPI.Start(ctx); err != nil {
-			log.Error().Err(err).Msg("API server failed")
+			log.Error().Err(err).Msg("dashboard API server failed")
 		}
 	}()
+	if s.cfg.Dashboard.Port != s.cfg.Prometheus.Port {
+		go s.runStandalonePrometheus(ctx)
+	}
 	return nil
+}
+
+// runStandalonePrometheus spawns a second http.Server for the
+// Prometheus exposition when cfg.Prometheus.Port differs from
+// cfg.Dashboard.Port. The shared-listener path is the default; this
+// branch only kicks in when an operator deliberately separates them.
+func (s *Server) runStandalonePrometheus(ctx context.Context) {
+	addr := s.cfg.Prometheus.Addr()
+	mux := http.NewServeMux()
+	mux.Handle("GET "+s.cfg.Prometheus.Prefix, s.httpAPI.PrometheusHandler())
+	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	log.Info().Str("addr", addr).Str("prefix", s.cfg.Prometheus.Prefix).Msg("standalone Prometheus listener")
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Error().Err(err).Msg("standalone Prometheus listener failed")
+	}
 }
 
 // runLeaderElection starts the campaign goroutine and blocks until any

@@ -8,14 +8,38 @@ import (
 // GatewayConfig governs the embedded HTTP entry point that runs inside
 // the asty agent process. When Enabled is false, the agent skips the
 // gateway entirely — useful for control-plane-only nodes.
+//
+// Host/Port/Prefix replace the older HTTP.Addr field: Host+Port build
+// the bind address, Prefix is the path namespace user traffic enters
+// through (default /api/v1). The path-validation regex inside the
+// router only cares about segments AFTER the prefix, so changing it
+// is a one-line config update.
 type GatewayConfig struct {
 	Enabled      bool                   `yaml:"enabled"`
+	Host         string                 `yaml:"host"`   // bind host (default 0.0.0.0)
+	Port         int                    `yaml:"port"`   // default 80
+	Prefix       string                 `yaml:"prefix"` // default /api/v1
 	HTTP         GatewayHTTPConfig      `yaml:"http"`
 	AllowedHosts []string               `yaml:"allowed_hosts"`
 	RateLimit    GatewayRateLimitConfig `yaml:"rate_limit"`
 }
 
+// Addr returns "<host>:<port>" — http.Server.Addr form. Empty host
+// becomes 0.0.0.0 because the gateway is user-facing by design,
+// unlike the dashboard and Prometheus endpoints which default to
+// 127.0.0.1.
+func (g GatewayConfig) Addr() string {
+	host := g.Host
+	if host == "" {
+		host = "0.0.0.0"
+	}
+	return fmt.Sprintf("%s:%d", host, g.Port)
+}
+
 // GatewayHTTPConfig — incoming HTTP-server parameters for the gateway.
+// Addr stays here for now as a fallback for old configs that still
+// set gateway.http.addr; new deployments should use Host/Port on
+// GatewayConfig instead.
 type GatewayHTTPConfig struct {
 	Addr               string        `yaml:"addr"`
 	ReadHeaderTimeout  time.Duration `yaml:"read_header_timeout"`
@@ -65,6 +89,9 @@ func (g GatewayConfig) Validate() error {
 func gatewayDefaults() GatewayConfig {
 	return GatewayConfig{
 		Enabled: true,
+		Host:    "0.0.0.0",
+		Port:    80,
+		Prefix:  "/api/v1",
 		HTTP: GatewayHTTPConfig{
 			Addr:               ":80",
 			ReadHeaderTimeout:  5 * time.Second,

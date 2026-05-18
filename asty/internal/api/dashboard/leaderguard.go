@@ -1,9 +1,8 @@
-package rest
+package dashboard
 
 import (
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 // leaderOnly is the middleware applied to every write (POST) handler.
@@ -35,27 +34,20 @@ func (api *API) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
 			api.writeError(w, http.StatusServiceUnavailable, "no leader currently known", nil)
 			return
 		}
-		// Redirect target: same path on leader's API listener. We assume
-		// every server in the cluster shares cfg.HTTP.Addr's port (the
-		// usual deployment pattern); cross-port topologies would need to
-		// publish the API port into LeaderInfo. Path is preserved
-		// verbatim — apiPrefix is already part of r.URL.Path here, so
-		// the redirect points at the same data route.
-		port := apiPortFromAddr(api.addr)
-		target := fmt.Sprintf("http://%s:%s%s", info.IP, port, r.URL.RequestURI())
+		// Redirect target: same path on the leader's dashboard
+		// listener. We assume every server in the cluster shares
+		// cfg.Dashboard.Port (the usual deployment pattern); cross-port
+		// topologies would need to publish the port into LeaderInfo.
+		// Path is preserved verbatim — cfg.Dashboard.Prefix is already
+		// part of r.URL.Path here, so the redirect points at the same
+		// data route.
+		port := api.cfg.Dashboard.Port
+		target := fmt.Sprintf("http://%s:%d%s", info.IP, port, r.URL.RequestURI())
 		w.Header().Set("Location", target)
 		w.Header().Set("X-Asty-Leader", info.ID)
 		http.Error(w, fmt.Sprintf("not leader, redirect to %s", info.ID), http.StatusTemporaryRedirect)
 	}
 }
 
-// apiPortFromAddr extracts the port from a listen address like
-// ":8080" or "127.0.0.1:8080". Returns "8080" as a safe default if
-// the input doesn't parse — the redirect Location will still be
-// valid against the standard deployment.
-func apiPortFromAddr(addr string) string {
-	if i := strings.LastIndex(addr, ":"); i >= 0 && i+1 < len(addr) {
-		return addr[i+1:]
-	}
-	return "8080"
-}
+// (apiPortFromAddr removed — the redirect now reads cfg.Dashboard.Port
+// directly, no string parsing needed.)

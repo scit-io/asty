@@ -47,28 +47,30 @@ func (gw *Gateway) middlewareOrigin(next http.Handler) http.Handler {
 	})
 }
 
-// route dispatches /v1/{service}/{method...} or /v1/{service}/ws.
+// route dispatches {service}/{method...} or {service}/ws. The mux in
+// Handler() has already stripped the configured cfg.Prefix (default
+// /api/v1), so r.URL.Path starts with the service segment.
 func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
 	parts := strings.Split(path, "/")
 
-	if len(parts) < 2 || parts[0] != "v1" {
-		http.Error(w, "invalid path", http.StatusBadRequest)
+	if len(parts) < 1 || parts[0] == "" {
+		http.Error(w, "service required", http.StatusBadRequest)
 		return
 	}
 
-	// All segments after /v1/ go into the NATS subject — validate uniformly.
+	// Every segment goes into the NATS subject — validate uniformly.
 	// Covers both service and methodParts; in the WS branch the trailing
 	// "ws" token also matches the regex.
-	for _, p := range parts[1:] {
+	for _, p := range parts {
 		if !validSubjectToken.MatchString(p) {
 			http.Error(w, "invalid path segment", http.StatusBadRequest)
 			return
 		}
 	}
-	service := parts[1]
+	service := parts[0]
 
-	// Every /v1/* request that reaches this point passed Origin check,
+	// Every request that reaches this point passed Origin check,
 	// rate limit, and path validation — that is the "valid traffic"
 	// signal the autoscaler reads via reportRPSLoop. WS handshakes
 	// count as one; subsequent frames are not re-counted (under-count
@@ -90,13 +92,13 @@ func (gw *Gateway) route(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// /v1/{service} without a method segment → subject "api.v1.service."
+	// {service} without a method segment → subject "api.v1.service."
 	// (trailing dot). NATS returns ErrNoResponders and operators see a
 	// confusing subject in logs. Reject 400 — clearer than 503.
-	if len(parts) < 3 {
+	if len(parts) < 2 {
 		http.Error(w, "method required", http.StatusBadRequest)
 		return
 	}
 
-	gw.handleHTTP(w, r, service, parts[2:])
+	gw.handleHTTP(w, r, service, parts[1:])
 }

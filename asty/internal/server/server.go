@@ -20,7 +20,7 @@ import (
 	"asty/asty/internal/ops/scheduler"
 	"asty/asty/internal/domain/proximity"
 
-	apiPkg "asty/asty/internal/api/rest"
+	apiPkg "asty/asty/internal/api/dashboard"
 
 	"github.com/nats-io/nats.go"
 )

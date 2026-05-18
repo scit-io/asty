@@ -11,7 +11,7 @@ import (
 	"asty/asty/internal/infra/logs"
 	"asty/asty/internal/ops/scheduler"
 
-	apiPkg "asty/asty/internal/api/rest"
+	apiPkg "asty/asty/internal/api/dashboard"
 
 	"github.com/nats-io/nats.go"
 )

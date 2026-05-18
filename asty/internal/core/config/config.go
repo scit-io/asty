@@ -24,13 +24,24 @@ type Config struct {
 	DevMode   bool `yaml:"dev_mode"`
 	MockNodes int  `yaml:"mock_nodes"`
 
-	NATS      NATSConfig      `yaml:"nats"`
-	Autoscale AutoscaleConfig `yaml:"autoscale"`
-	Resources ResourcesConfig `yaml:"resources"`
-	HTTP      HTTPConfig      `yaml:"http"`
-	Agent     AgentConfig     `yaml:"agent"`
-	Gateway   GatewayConfig   `yaml:"gateway"`
-	Artifact  ArtifactConfig  `yaml:"artifact"`
+	NATS       NATSConfig       `yaml:"nats"`
+	Autoscale  AutoscaleConfig  `yaml:"autoscale"`
+	Resources  ResourcesConfig  `yaml:"resources"`
+	Dashboard  DashboardConfig  `yaml:"dashboard"`
+	Prometheus PrometheusConfig `yaml:"prometheus"`
+	Agent      AgentConfig      `yaml:"agent"`
+	Gateway    GatewayConfig    `yaml:"gateway"`
+	Artifact   ArtifactConfig   `yaml:"artifact"`
+}
+
+// joinHostPort returns "<host>:<port>". If host is empty it defaults
+// to 127.0.0.1 — control-plane surfaces shouldn't bind 0.0.0.0 by
+// accident, operators front them with a reverse proxy.
+func joinHostPort(host string, port int) string {
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return fmt.Sprintf("%s:%d", host, port)
 }
 
 // AutoscaleConfig — controller and scaling thresholds. MaxCopies and
@@ -60,12 +71,34 @@ type ResourcesConfig struct {
 	ReservedMemory int `yaml:"reserved_memory"`
 }
 
-// HTTPConfig — where the orchestrator's HTTP surface listens on each
-// node. Serves SSE streams, polling endpoints (incl. Prometheus
-// /metrics via content-negotiation), and command POSTs.
-type HTTPConfig struct {
-	Addr string `yaml:"addr"`
+// DashboardConfig — admin/operator surface (REST + SSE) the SPA and
+// CLI tooling talk to. When DashboardConfig.Port equals
+// PrometheusConfig.Port the server runs ONE http listener with both
+// the dashboard router and the /metrics handler mounted side-by-side;
+// when they differ, two listeners are spawned. The default is shared
+// (:7060) so the typical operator scrape configuration only needs one
+// firewall rule.
+type DashboardConfig struct {
+	Host   string `yaml:"host"`   // bind host (default 127.0.0.1 to keep it behind a reverse proxy)
+	Port   int    `yaml:"port"`   // default 7060
+	Prefix string `yaml:"prefix"` // default /dashboard/v1
 }
+
+// Addr returns "<host>:<port>" — the form http.Server.Addr expects.
+func (d DashboardConfig) Addr() string { return joinHostPort(d.Host, d.Port) }
+
+// PrometheusConfig — Prometheus exposition listener. Same as
+// DashboardConfig: when Port matches DashboardConfig.Port a single
+// listener serves both surfaces, and Prefix is the path the handler
+// is mounted at (default /metrics, exact-match).
+type PrometheusConfig struct {
+	Host   string `yaml:"host"`
+	Port   int    `yaml:"port"`   // default 7060 (shared with dashboard)
+	Prefix string `yaml:"prefix"` // default /metrics
+}
+
+// Addr returns "<host>:<port>".
+func (p PrometheusConfig) Addr() string { return joinHostPort(p.Host, p.Port) }
 
 // AgentConfig — agent-specific paths and capacity overrides. Capacity
 // overrides used to be read with os.Getenv at the point of use; they
@@ -144,7 +177,16 @@ func defaults() *Config {
 			ReservedCPU:    100,
 			ReservedMemory: 250,
 		},
-		HTTP: HTTPConfig{Addr: "127.0.0.1:8080"},
+		Dashboard: DashboardConfig{
+			Host:   "127.0.0.1",
+			Port:   7060,
+			Prefix: "/dashboard/v1",
+		},
+		Prometheus: PrometheusConfig{
+			Host:   "127.0.0.1",
+			Port:   7060, // shared with dashboard by default
+			Prefix: "/metrics",
+		},
 		Agent: AgentConfig{
 			WorkDir:    "/var/lib/asty",
 			ServiceDir: "/etc/asty/services",
