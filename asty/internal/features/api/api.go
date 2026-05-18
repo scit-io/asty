@@ -48,27 +48,28 @@ func (api *API) Start(ctx context.Context) error {
 	data.HandleFunc("GET /{$}", api.handleCluster)
 	data.HandleFunc("GET /logs", api.handleClusterLogs)
 
-	// Nodes.
+	// Nodes. Writes go through leaderOnly middleware; followers reply
+	// 307 to the leader so the operator's client follows transparently.
 	data.HandleFunc("GET /nodes", api.handleNodes)
 	data.HandleFunc("GET /nodes/{id}", api.handleNode)
 	data.HandleFunc("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
-	data.HandleFunc("POST /nodes/{id}/drain", api.handleNodeDrain)
-	data.HandleFunc("POST /nodes/{id}/pause", api.handleNodePause)
+	data.HandleFunc("POST /nodes/{id}/drain", api.leaderOnly(api.handleNodeDrain))
+	data.HandleFunc("POST /nodes/{id}/pause", api.leaderOnly(api.handleNodePause))
 	data.HandleFunc("GET /nodes/{id}/logs", api.handleNodeLogs)
 	data.HandleFunc("GET /nodes/{id}/allocations", api.handleNodeAllocations)
 	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
 	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
-	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", api.handleAllocationRestart)
-	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", api.handleAllocationStop)
+	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", api.leaderOnly(api.handleAllocationRestart))
+	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", api.leaderOnly(api.handleAllocationStop))
 
 	// Services.
 	data.HandleFunc("GET /services", api.handleServices)
 	data.HandleFunc("GET /services/{name}", api.handleService)
-	data.HandleFunc("POST /services/{name}/scale", api.handleServiceScale)
+	data.HandleFunc("POST /services/{name}/scale", api.leaderOnly(api.handleServiceScale))
 	data.HandleFunc("GET /services/{name}/allocations", api.handleServiceAllocations)
 	data.HandleFunc("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
 	data.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
-	data.HandleFunc("POST /services/{name}/deploy", api.handleServiceDeploy)
+	data.HandleFunc("POST /services/{name}/deploy", api.leaderOnly(api.handleServiceDeploy))
 
 	// Outer mux: infra endpoints at the root, data namespace nested.
 	// /health and /metrics stay at the root because the probes and

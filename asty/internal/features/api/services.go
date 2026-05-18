@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sort"
 
@@ -74,19 +73,14 @@ func (api *API) findService(name string) *types.ServiceDefinition {
 }
 
 // handleServiceScale serves POST /services/{name}/scale. Leader-only
-// because it serialises against autoscaler decisions. Scale-up is
-// reflected on next reconcile (triggered immediately via
-// ReconcileService); scale-down is applied here: stops and deletes
-// excess allocations in a stable order (sorted by node ID for
-// determinism — operator can drain a specific node later if they
+// is enforced by the leaderOnly middleware applied at route registration,
+// not inline here. Scale-up is reflected on next reconcile (triggered
+// immediately via ReconcileService); scale-down is applied here: stops
+// and deletes excess allocations in a stable order (sorted by node ID
+// for determinism — operator can drain a specific node later if they
 // need finer placement control).
 func (api *API) handleServiceScale(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.PathValue("name")
-	if !api.ctx.LeaderElection().IsLeader() {
-		leaderInfo, _ := api.ctx.LeaderElection().GetLeader()
-		api.writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("not leader, current leader: %s", leaderInfo.ID), nil)
-		return
-	}
 	var req struct {
 		Count int `json:"count"`
 	}
@@ -150,7 +144,8 @@ func pickScaleDownVictims(live []*types.ServiceAllocation, n int) []*types.Servi
 
 // handleServiceDeploy serves POST /services/{name}/deploy. Body
 // `{"version": "..."}` — the service name comes from the URL.
-// Leader-only.
+// Leader-only is enforced by the leaderOnly middleware applied at
+// route registration, not inline here.
 func (api *API) handleServiceDeploy(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.PathValue("name")
 	var req struct {
@@ -162,11 +157,6 @@ func (api *API) handleServiceDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Version == "" {
 		api.writeError(w, http.StatusBadRequest, "version required", nil)
-		return
-	}
-	if !api.ctx.LeaderElection().IsLeader() {
-		leaderInfo, _ := api.ctx.LeaderElection().GetLeader()
-		api.writeError(w, http.StatusServiceUnavailable, fmt.Sprintf("not leader, current leader: %s", leaderInfo.ID), nil)
 		return
 	}
 	status, err := api.ctx.DeployService(r.Context(), serviceName, req.Version)
