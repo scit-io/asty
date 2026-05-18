@@ -170,32 +170,5 @@ func (d *Deployer) handleFailure(ctx context.Context, plan *DeploymentPlan, stat
 	return d.failDeployment(status, cause)
 }
 
-// recordTouched appends an allocation that has been dispatched at the
-// target version, so a subsequent rollback knows the exact set to
-// walk back. Concurrent-safe because rolling dispatchBatch and canary
-// dispatch may both run from the deployer's goroutine sequentially —
-// the lock is cheap insurance against future parallelism.
-func (d *Deployer) recordTouched(alloc *types.ServiceAllocation) {
-	d.touchedMu.Lock()
-	defer d.touchedMu.Unlock()
-	for _, a := range d.touched {
-		if a.ServiceName == alloc.ServiceName && a.NodeID == alloc.NodeID {
-			return
-		}
-	}
-	d.touched = append(d.touched, alloc)
-}
-
-func (d *Deployer) resetTouched() {
-	d.touchedMu.Lock()
-	defer d.touchedMu.Unlock()
-	d.touched = d.touched[:0]
-}
-
-func (d *Deployer) touchedSnapshot() []*types.ServiceAllocation {
-	d.touchedMu.Lock()
-	defer d.touchedMu.Unlock()
-	out := make([]*types.ServiceAllocation, len(d.touched))
-	copy(out, d.touched)
-	return out
-}
+// Touched-set helpers (recordTouched, resetTouched, touchedSnapshot)
+// live in touched.go alongside their shared concept.

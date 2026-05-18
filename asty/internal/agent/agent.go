@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,11 +14,9 @@ import (
 	"asty/asty/internal/features/deployment/artifacts"
 	"asty/asty/internal/features/execution/health"
 	"asty/asty/internal/features/execution/process"
-	"asty/asty/internal/features/observability/logs"
 	"asty/asty/internal/features/observability/metrics"
 
 	"github.com/nats-io/nats.go"
-	"github.com/rs/zerolog/log"
 )
 
 // defaultWorkRoot is where the agent stores per-node working directories
@@ -124,92 +120,6 @@ func (a *Agent) exportConfigEnv() {
 	setIfNonEmpty("A_LOG_LEVEL", a.cfg.LogLevel)
 }
 
-// Start brings up the agent: NATS connection, cluster state, log
-// forwarding, health/metrics collectors, command subscriptions, and the
-// background goroutines for heartbeats, metrics publishing, and process
-// monitoring. Blocks until ctx is cancelled, then stops all processes.
-func (a *Agent) Start(ctx context.Context) error {
-	log.Info().
-		Str("node_id", a.nodeID).
-		Str("datacenter", a.cfg.Datacenter).
-		Msg("agent starting")
-
-	a.exportConfigEnv()
-
-	if err := a.bootstrapNATS(ctx); err != nil {
-		return fmt.Errorf("failed to bootstrap NATS: %w", err)
-	}
-	go a.superviseNATS(ctx)
-	go a.watchNATSPeers(ctx)
-
-	host := a.cfg.NodeIP
-	if host == "" {
-		host = netutil.LocalIPv4("")
-	}
-	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
-		Host: host, Port: a.cfg.NATS.Server.Port,
-		User: a.cfg.NATS.User, Password: a.cfg.NATS.Password,
-	}, "asty-agent-"+a.nodeID)
-	if err != nil {
-		return fmt.Errorf("failed to connect to NATS: %w", err)
-	}
-	a.nc = nc
-	defer a.nc.Close()
-
-	// Separate connection in the SYS account, used exclusively by
-	// natsstats.go for $SYS.REQ.SERVER.*.STATSZ/JSZ. Optional: if no
-	// observer credentials are configured the agent still comes up and
-	// the asty_node_nats_* metrics simply stay at zero.
-	if a.cfg.NATS.ObserverUser != "" {
-		ncSys, err := netutil.ConnectNATS(netutil.NATSCreds{
-			Host: host, Port: a.cfg.NATS.Server.Port,
-			User: a.cfg.NATS.ObserverUser, Password: a.cfg.NATS.ObserverPassword,
-		}, "asty-observer-"+a.nodeID)
-		if err != nil {
-			return fmt.Errorf("failed to connect to NATS as observer: %w", err)
-		}
-		a.ncSys = ncSys
-		defer a.ncSys.Close()
-	}
-
-	clusterState, err := state.New(a.nc)
-	if err != nil {
-		return fmt.Errorf("failed to initialize cluster state: %w", err)
-	}
-	a.clusterState = clusterState
-
-	a.healthChecker = health.NewChecker(a.nc)
-
-	agentSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID)
-	natsWriter := logs.NewNATSWriter(a.nc, agentSubject)
-	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
-
-	go a.healthChecker.Start(ctx)
-	go a.metricsCollector.Start(ctx)
-	a.metricsCollector.Register(os.Getpid(), "asty-agent")
-
-	if err := a.subscribeCommands(); err != nil {
-		return fmt.Errorf("failed to subscribe to commands: %w", err)
-	}
-	if err := a.subscribePing(); err != nil {
-		return fmt.Errorf("failed to subscribe to ping: %w", err)
-	}
-
-	go a.publishHeartbeat(ctx)
-	go a.publishProcessMetrics(ctx)
-	go a.monitorProcesses(ctx)
-	go a.collectNATSStatsLoop(ctx)
-
-	if err := a.runGateway(ctx); err != nil {
-		return fmt.Errorf("failed to start gateway: %w", err)
-	}
-
-	log.Info().
-		Str("node_id", a.nodeID).
-		Str("datacenter", a.cfg.Datacenter).
-		Msg("agent ready")
-
-	<-ctx.Done()
-	a.stopAllProcesses()
-	return nil
-}
+// Start is defined in start.go alongside the NATS-wiring helper it
+// delegates to; keeping it out of this file keeps agent.go focused on
+// the Agent struct, its construction, and the env-export helper.
