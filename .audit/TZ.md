@@ -109,12 +109,21 @@ JetStream. Назначение:
 9. **Конфиг — один путь.** YAML → env override → defaults →
    `Validate()`. `os.Getenv` вне пакета `core/config` запрещён.
    Любая фича-переключалка — поле в конфиге, не сырой `os.Getenv`.
-10. **API split.** Три разных HTTP-неймспейса с разной семантикой:
-    - `/api/v1/...` — data plane control API (REST, SSE),
-    - `/metrics` — Prometheus exposition (text),
-    - `/health` — liveness/readiness probe для инфраструктуры.
-    Смешивать (как «`/metrics/nodes`») запрещено: каждый namespace
-    имеет своё назначение, своих потребителей, своё time-budget.
+10. **API split.** Три разных HTTP-поверхности, у каждой свой
+    префикс и (в общем случае) свой порт. Префиксы по умолчанию:
+    - `/dashboard/v1` — admin control plane: REST + SSE, что
+      потребляет SPA `asty/web/` и CLI. Дефолт `:7060`.
+    - `/metrics` — Prometheus exposition (text). По дефолту шарит
+      listener с дашбордом на `:7060`; разводится по портам
+      деплоем — оба настраиваются.
+    - `/api/v1` — gateway пользовательского трафика. Дефолт `:80`.
+    - `/health` — liveness/readiness probe (на корне каждого
+      листенера, без префикса).
+    Смешивать неймспейсы запрещено: каждый имеет своё назначение,
+    своих потребителей, свой time-budget. Префиксы и порты
+    конфигурируемы через `A_DASHBOARD_*`/`A_PROMETHEUS_*`/
+    `A_GATEWAY_*` (см. §8.3); если dashboard и prometheus сидят на
+    одном порту — один `http.Server` обслуживает оба.
 11. **Состояние — формальные FSM.** Allocation, Node, Deployment,
     Drain — все переходы перечислены, переходы вне диаграммы
     отвергаются на уровне типов (typed enums) или CAS-функций
@@ -228,8 +237,8 @@ flowchart TB
 
     subgraph Node["Узел"]
         direction TB
-        SRV["asty -mode server<br/>L3 ops (leader-only effects):<br/>• leader election (KV TTL)<br/>• reconciler<br/>• scheduler<br/>• autoscaler<br/>• deployer<br/>• drainer<br/>L4:<br/>• REST/SSE /api/v1<br/>• Prometheus /metrics<br/>• /health"]
-        AGT["asty -mode agent<br/>L1 infra (data plane):<br/>• process supervisor<br/>• NATS supervisor<br/>• artifact fetch<br/>• health prober<br/>• log/metrics shipper<br/>L4:<br/>• gateway /v1 + WS<br/>• /health"]
+        SRV["asty -mode server<br/>L3 ops (leader-only effects):<br/>• leader election (KV TTL)<br/>• reconciler<br/>• scheduler<br/>• autoscaler<br/>• deployer<br/>• drainer<br/>L4 on :7060 (default):<br/>• REST/SSE /dashboard/v1<br/>• Prometheus /metrics<br/>• /health"]
+        AGT["asty -mode agent<br/>L1 infra (data plane):<br/>• process supervisor<br/>• NATS supervisor<br/>• artifact fetch<br/>• health prober<br/>• log/metrics shipper<br/>L4 on :80 (default):<br/>• gateway /api/v1 + WS<br/>• /health"]
         NATS[("nats-server (child of agent)<br/>:4222 client, :6222 cluster<br/>JetStream store on disk")]
         SVCS["user services<br/>spawned by agent<br/>connect to NATS as 'app'"]
 
@@ -250,7 +259,8 @@ flowchart TB
   от локального NATS (без него data plane не работает). Server тоже
   подключается к нему как клиент.
 - Server-процесс на не-лидере **продолжает** обслуживать `/metrics`,
-  `/api/v1` (GET), `/health`. Эффекты — нет.
+  `/dashboard/v1` (GET, SSE), `/health`. На POST follower'ы шлют
+  307 на лидера через `leaderOnly` middleware. Эффекты — нет.
 
 ---
 
@@ -643,57 +653,63 @@ system_account: SYS
 
 ## 7. HTTP-поверхность
 
-### 7.1 Три порта, три неймспейса
+### 7.1 Три поверхности, два листенера
 
-| Порт | Назначение | Чем закрыт |
-|---|---|---|
-| `:8080` | control API (REST/SSE) + Prometheus + health | TLS на front-proxy, mTLS опционально |
-| `:80` (или `:443` через прокси) | gateway: user traffic | TLS на front-proxy, rate-limit per-IP |
-| (нет) | NATS HTTP-listener отключён намеренно | — |
+| Поверхность | Default host:port | Default prefix | ENV |
+|---|---|---|---|
+| Dashboard (admin REST + SSE) | `127.0.0.1:7060` | `/dashboard/v1` | `A_DASHBOARD_{HOST,PORT,PREFIX}` |
+| Prometheus exposition | `127.0.0.1:7060` (shared) | `/metrics` (exact match) | `A_PROMETHEUS_{HOST,PORT,PREFIX}` |
+| Gateway (user traffic) | `0.0.0.0:80` | `/api/v1` | `A_GATEWAY_{HOST,PORT,PREFIX}` |
 
-Stats nats-server тянутся через `$SYS.REQ.SERVER.<id>.STATSZ/JSZ`, не через
-HTTP-`:8222`. Это снимает целый класс атак на сеть NATS.
+Когда `A_DASHBOARD_PORT == A_PROMETHEUS_PORT` (по умолчанию так и
+есть) — один `http.Server` обслуживает обе поверхности. Когда
+порты разные — поднимается второй listener
+(`server.runStandalonePrometheus`).
 
-### 7.2 :8080 layout
+`/health` живёт на корне dashboard-листенера (без префикса) для
+kube-probe / curl-проверок инфраструктуры.
+
+NATS HTTP-listener отключён намеренно: stats тянутся через
+`$SYS.REQ.SERVER.<id>.STATSZ/JSZ` поверх существующего NATS-соединения.
+Никакого `:8222`. Это снимает целый класс атак на сеть NATS.
+
+### 7.2 Dashboard listener layout (`:7060` по умолчанию)
 
 ```mermaid
 flowchart LR
-    Req[":8080"]
+    Req[":7060"]
     Req --> Mux[outer mux]
     Mux -->|GET /health| H["liveness:<br/>200 если nats reachable<br/>и leader известен"]
-    Mux -->|GET /metrics| P["Prometheus exposition<br/>(private Registry,<br/>работает на всех серверах)"]
-    Mux -->|/api/v1/*| A[data plane API]
-    
-    A --> Cluster[/api/v1/cluster]
-    A --> Nodes[/api/v1/nodes/.../...]
-    A --> Services[/api/v1/services/.../...]
-    A --> Allocations[/api/v1/allocations/...]
-    A --> Deployments[/api/v1/deployments/...]
-    A --> Drains[/api/v1/drains/...]
-    A --> Stream[/api/v1/stream/cluster<br/>/api/v1/stream/nodes/{id}<br/>...]
-    A --> Logs[/api/v1/logs/cluster<br/>/api/v1/logs/nodes/{id}<br/>...]
+    Mux -->|GET /metrics (exact)| P["Prometheus exposition<br/>(private Registry,<br/>работает на всех серверах)"]
+    Mux -->|/dashboard/v1/*| A[data plane API]
+
+    A --> Cluster[/dashboard/v1/]
+    A --> Nodes[/dashboard/v1/nodes/...]
+    A --> Services[/dashboard/v1/services/...]
+    A --> Allocations[/dashboard/v1/nodes/.../allocations/...]
+    A --> Logs[/dashboard/v1/logs<br/>/dashboard/v1/nodes/{id}/logs<br/>...]
 ```
 
 **Правила:**
 
-- `GET /api/v1/...` — JSON snapshot.
-- `GET /api/v1/stream/...` — Server-Sent Events (`text/event-stream`).
-  Разделение по path, а не по `Accept`, чтобы кэш и прокси понимали
-  что это long-lived.
-- `POST /api/v1/...` — write-операции. Доступны **только на лидере**;
-  follower отвечает `307 Temporary Redirect` на `Location` с IP
-  лидера. UI или CLI сам пере-следует.
-- `GET /metrics` (точный путь) — Prometheus. На всех серверах, метрика
-  `asty_leader` пишется одинаково (читается из снапшота).
+- `GET /dashboard/v1/...` — content-negotiation по `Accept`:
+  `application/json` → JSON snapshot, `text/event-stream` → SSE.
+- `POST /dashboard/v1/...` — write-операции. Проходят через цепочку
+  middleware `tokenAuth → leaderOnly → auditLog → handler`:
+  - `tokenAuth` — constant-time-сравнение токена из
+    `Authorization: Bearer` или `X-Asty-Token` с `cfg.Token`.
+  - `leaderOnly` — `307 Temporary Redirect` на `Location` с
+    `http://<leader-IP>:<dashboard.port><path>`. UI/CLI следует
+    автоматически (307 сохраняет метод и body).
+  - `auditLog` — публикует `types.AuditEvent` (CBOR через
+    `codec.Wire`) на `asty.v1.audit.<resource>.<action>` после
+    того, как handler вернётся, с захваченным HTTP-статусом.
+- `GET /metrics` (точный путь, не префикс) — Prometheus.
+  Отдаётся на каждом сервере; метрика `asty_leader` пишется
+  одинаково (читается из снапшота), `node_id`-label — это id
+  текущего лидера.
 
-**Что изменилось** по сравнению с текущим:
-- Сегодня `apiPrefix = "/metrics"`, под этим префиксом и Prom, и JSON.
-  Это семантическое наложение неоднозначно для скрейпера. В ТЗ —
-  чистое разделение.
-- `POST` идёт через redirect на лидера, а не через `307` из обработчика
-  read-only. Это снимает у follower'ов любое право писать.
-
-### 7.3 :80 (gateway) layout
+### 7.3 Gateway listener layout (`:80` по умолчанию)
 
 ```mermaid
 flowchart LR
@@ -702,13 +718,15 @@ flowchart LR
     O --> RL[middlewareRateLimit<br/>per-IP token bucket]
     RL --> Mux[gateway mux]
     Mux -->|GET /health| GH["health: 200 если NATS connected"]
-    Mux -->|/v1/<svc>/<method...>| Route["route → NATS request-reply<br/>subject: api.v1.<svc>.<method>"]
-    Mux -->|/v1/<svc>/ws| WS["WS bridge<br/>subscribe-side: api.v1.<svc>.events.<sessionID><br/>publish-side: api.v1.<svc>.commands"]
+    Mux -->|/api/v1/<svc>/<method...>| Route["route → NATS request-reply<br/>subject: api.v1.<svc>.<method>"]
+    Mux -->|/api/v1/<svc>/ws| WS["WS bridge<br/>subscribe-side: api.v1.<svc>.events.<sessionID><br/>publish-side: api.v1.<svc>.commands"]
 ```
 
-- Сабжект NATS строится исключительно из path-сегментов после валидации
-  `^[A-Za-z0-9_-]+$`. Никаких пользовательских строк в сабжект без
-  валидации.
+- Префикс `/api/v1` стрипается mux'ом перед попаданием в `route()` —
+  поэтому путь-валидация `^[A-Za-z0-9_-]+$` применяется только к
+  сегментам после префикса (это и есть имя сервиса + метод).
+- Сабжект NATS строится исключительно из этих провалидированных
+  сегментов. Никаких пользовательских строк в сабжект без валидации.
 - WS pings — 30 с, read deadline 60 с, read limit 64 КБ. Цифры в коде,
   не в конфиге, потому что инвариант протокола.
 
@@ -772,16 +790,32 @@ resources:
   reserved_cpu: 100             # MHz
   reserved_memory: 250          # MB
 
-http:
-  addr: ":8080"
+dashboard:
+  host: 127.0.0.1               # default
+  port: 7060                    # default — shared with prometheus when ports match
+  prefix: /dashboard/v1         # default
+
+prometheus:
+  host: 127.0.0.1
+  port: 7060                    # default = same as dashboard → shared listener
+  prefix: /metrics              # exact-match path
 
 agent:
   work_dir: /var/lib/asty
   service_dir: /etc/asty/services
+  capacity: { cpu_total, memory_total, disk_total, swap_total,
+              disk_os_baseline, nats_disk_baseline, disk_type }
+
+artifact:
+  arch: amd64                   # fallback runtime.GOARCH if empty
+  github_repo: ""               # for ${GITHUB_REPO} substitution
 
 gateway:
   enabled: true
-  http: { addr: ":80", read_*, write_*, idle_*, nats_*, ws_* }
+  host: 0.0.0.0                 # user-facing surface, binds publicly
+  port: 80
+  prefix: /api/v1
+  http: { read_*, write_*, idle_*, nats_*, ws_* }
   allowed_hosts: ["..."]
   rate_limit: { rate, burst, max_ws_conns, trusted_proxy, max_ips }
 ```
@@ -791,10 +825,12 @@ gateway:
 | Prefix | Назначение |
 |---|---|
 | `A_*` (без подпрефикса) | top-level + autoscale + resources |
-| `A_NATS_*` | nats.* поля |
-| `A_GATEWAY_*` | gateway.* поля |
-| `A_HTTP_*` | http.* (только `A_HTTP_ADDR`) |
-| `A_AGENT_*` | agent.* |
+| `A_NATS_*` | nats.* поля + peers (PeersFile, Peers) |
+| `A_DASHBOARD_*` | dashboard.{host,port,prefix} |
+| `A_PROMETHEUS_*` | prometheus.{host,port,prefix} |
+| `A_GATEWAY_*` | gateway.* (включая host/port/prefix, HTTP timeouts, rate limit, ALLOWED_HOSTS) |
+| `A_AGENT_*` (косвенно) | agent.work_dir, service_dir |
+| `A_ARTIFACT_*` (косвенно: `A_ARCH`, `A_GITHUB_REPO`) | artifact template substitution |
 
 **Подстановка в YAML.** При `Load()` строки `${VAR}` в YAML
 расширяются из env (`os.Expand` с whitelist `A_*` и пользовательскими
@@ -889,23 +925,76 @@ ring-buffer `EventBuffer` на сервере и стримятся через S
 
 ### 10.3 Процесс изоляция
 
-- `user:` в `.asty` указывает, под каким системным пользователем
-  стартует процесс. Default — отдельный непривилегированный
-  пользователь `asty-svc`, **не root**.
-- `agent` запускается под root для возможности `setuid()` и
-  `mkdir`-а в `/var/lib/asty`. После старта дочерних процессов
-  привилегии не нужны — но drop-root в текущем дизайне отсутствует
-  (приемлемо для prod-узлов, выделенных под Asty).
+- **Drop-root агента.** Агент стартует под root (через systemd
+  `User=` unset либо явное `User=root`), чтобы:
+  - забиндить `:80` для gateway,
+  - exec'нуть дочерний `nats-server` с `Credential={uid,gid}`-ом
+    выделенного пользователя,
+  - chown'ить `work_dir` и `nats.store_dir` под целевого юзера.
+
+  После этого агент сам вызывает `setgid` → `setuid` на uid
+  **выделенной системной учётки `asty`** (создаётся при установке:
+  `useradd --system asty`). С этого момента и до конца жизни
+  процесса агент работает как `asty`. Пользовательские сервисы,
+  запускаемые позже через `fork+exec`, наследуют uid `asty`
+  автоматически — `Credential` им явно не задаётся.
+
+  **Почему именно `asty`, а не `nobody`:** `nobody` — это шарящаяся
+  учётка. Любой другой демон на хосте, тоже работающий под
+  `nobody`, может `ptrace`-нуть наш процесс и читать
+  `/proc/<pid>/mem`, выдернуть оттуда NATS-кред и взять кластер.
+  Выделенная `asty` закрывает same-uid вектор.
+
+  Если `asty` отсутствует на хосте, агент остаётся root'ом и пишет
+  громкий warning в журнал — fail-loud, чтобы misconfiguration не
+  превратился в тихий security-debt.
+
+  Альтернатива на Linux: `User=asty` + `AmbientCapabilities=
+  CAP_NET_BIND_SERVICE` в systemd unit. Тогда агент с самого начала
+  под `asty`, drop становится no-op (определяется в
+  `resolveDropTarget` по `os.Geteuid() != 0`).
+
+- `user:` в `.asty` сейчас НЕ применяется в `Credential` дочернего
+  процесса — все user-services наследуют uid агента (`asty`). Поле
+  оставлено в схеме на случай возвращения per-service Credential,
+  но в коде на момент TZ — игнорируется.
 
 ### 10.4 API
 
-- `/api/v1/*` write-операции — только лидер; CSRF не релевантен
+- `/dashboard/v1/*` write-операции — только лидер; CSRF не релевантен
   (control API за внутренней сетью), но `token`-auth обязателен.
 - Token проверяется в middleware на каждом write-запросе; constant-time
-  сравнение.
+  сравнение (`crypto/subtle`).
 - `/metrics`, `/health` — без auth (scrape, probe).
-- Gateway `/v1/*` — auth на стороне сервиса, не gateway'я. Сам gateway
-  обеспечивает только CORS и rate-limit.
+- Gateway `/api/v1/*` — auth на стороне сервиса, не gateway'я. Сам
+  gateway обеспечивает только CORS и rate-limit.
+
+### 10.5 Audit log
+
+Каждая write-операция на dashboard'е публикует `types.AuditEvent` в
+NATS subject `asty.v1.audit.<resource>.<action>` (payload — CBOR
+через `codec.Wire`). Состав события:
+
+```
+{
+  timestamp:  unix seconds at handler exit,
+  method:     HTTP method,
+  path:       prefix-stripped path,
+  resource:   "nodes" | "services" | "allocations" | "unknown",
+  action:     "drain" | "pause" | "deploy" | "scale" | "restart" | "stop" | ...,
+  status:     captured HTTP response code,
+  node_id, service, alloc_id:  per-target fields when applicable,
+  actor_ip:   r.RemoteAddr (X-Forwarded-For honoured только при
+              явно сконфигурированном trusted-proxy),
+  request_id: эхо X-Request-Id,
+  at:         RFC3339 form of timestamp,
+}
+```
+
+Asty сам долговременно не хранит audit-историю — внешний шиппер
+(Vector / Datadog / Loki / BigQuery) подписан на `asty.v1.audit.>`.
+Failure публикации логируется на warn — audit не должен gating'ить
+запись (это observation, а не authorization).
 
 ---
 
@@ -1258,9 +1347,16 @@ backward-compat — ничего не ломается: старые `.asty` ф�
 - **Identity bootstrap**: как получить `A_TOKEN` и `A_NATS_*_PASSWORD`
   на узел при первом запуске. Это задача внешнего provisioning
   (Terraform/Ansible/cloud-init).
-- **TLS termination** для `:8080` и `:80`. Делается front-proxy
-  (Caddy/Traefik/nginx). Сам Asty слушает HTTP plain.
-- **Audit log** для write-операций. Все write API должны писать в
-  отдельный stream (`asty.v1.audit.*`), но детали — отдельный документ.
+- **TLS termination** для dashboard и gateway-листенеров. Делается
+  front-proxy (Caddy / Traefik / nginx). Сам Asty слушает HTTP plain
+  — это сознательное архитектурное решение, см. §10.
+- **Per-operator accounts / RBAC.** Audit-event сейчас фиксирует
+  только `actor_ip` без user-identity. Multi-user dashboard с
+  ролями — отдельный ТЗ.
 
 Эти участки могут стать темами для отдельных ТЗ.
+
+В **scope** ТЗ и **реализовано** на ветке `migration/tz`:
+- drop-root агента после bootstrap в выделенного `asty` (§10.3);
+- audit log на `asty.v1.audit.*` (§10.5);
+- token-auth + leader-only middleware на write-эндпоинтах (§10.4).
