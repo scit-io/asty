@@ -11,6 +11,8 @@ const (
 	defaultHealthTimeout  = 3 * time.Second
 	defaultRestartDelay   = 5 * time.Second
 	defaultRestartTries   = 3
+	defaultMaxParallel    = 1
+	defaultCanary         = 1
 )
 
 // ServiceType defines how the service is scheduled.
@@ -89,12 +91,37 @@ type Logs struct {
 	MaxFileSize int `yaml:"max_file_size"` // MB
 }
 
+// Update governs rolling-update behaviour. MaxParallel and Canary
+// default to 1 in Resolve() — a zero MaxParallel would deadlock the
+// rolling loop, and a zero Canary disables the canary phase.
 type Update struct {
 	MaxParallel      int    `yaml:"max_parallel"`
+	Canary           int    `yaml:"canary"`
 	MinHealthyTime   string `yaml:"min_healthy_time"`
 	HealthyDeadline  string `yaml:"healthy_deadline"`
 	ProgressDeadline string `yaml:"progress_deadline"`
 	AutoRevert       bool   `yaml:"auto_revert"`
+}
+
+// GetMaxParallel returns the per-batch parallelism for rolling updates,
+// substituting the default when the .asty leaves it ≤ 0. The deployer's
+// rolling loop divides by this value, so 0 is a deadlock — Resolve()
+// also normalises the field, this method is the safety net.
+func (u Update) GetMaxParallel() int {
+	if u.MaxParallel > 0 {
+		return u.MaxParallel
+	}
+	return defaultMaxParallel
+}
+
+// GetCanary returns the canary copy count, substituting the default
+// when the .asty leaves it ≤ 0. A negative value would be parsed back
+// to 0 by clamping in deployment.deployCanary.
+func (u Update) GetCanary() int {
+	if u.Canary > 0 {
+		return u.Canary
+	}
+	return defaultCanary
 }
 
 // Restart describes the per-service restart policy plus the
@@ -121,11 +148,20 @@ type KVBucket struct {
 // result. Callers (notably the loader) must invoke it after unmarshal;
 // the Get* methods fall back to default values if Resolve was skipped,
 // so behaviour is correct either way — just less efficient.
+//
+// Also normalises Update.MaxParallel and Update.Canary in place to
+// avoid the deadlock-on-zero-MaxParallel trap in the rolling deployer.
 func (s *ServiceDefinition) Resolve() {
 	s.parsedKillTimeout = ParseDurationOr(s.KillTimeout, defaultKillTimeout)
 	s.Health.parsedInterval = ParseDurationOr(s.Health.Interval, defaultHealthInterval)
 	s.Health.parsedTimeout = ParseDurationOr(s.Health.Timeout, defaultHealthTimeout)
 	s.Restart.parsedDelay = ParseDurationOr(s.Restart.Delay, defaultRestartDelay)
+	if s.Update.MaxParallel <= 0 {
+		s.Update.MaxParallel = defaultMaxParallel
+	}
+	if s.Update.Canary < 0 {
+		s.Update.Canary = 0
+	}
 }
 
 // ParseDurationOr parses a duration string and returns fallback for

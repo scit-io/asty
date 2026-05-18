@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -68,21 +69,80 @@ func (d *Deployer) GetHistory() []DeploymentRecord {
 	return out
 }
 
-// revertDeployment marks a deployment as reverted in both history and
-// the live status. The actual rollback (downgrading allocations back
-// to the previous version) is not implemented — see refactoring-audit.md.
-func (d *Deployer) revertDeployment(status *DeploymentStatus, reason string) (*DeploymentStatus, error) {
+// revertDeployment performs an actual rollback: for every allocation
+// dispatched at TargetVersion during this run, re-dispatch it at
+// plan.CurrentVersion and wait for the batch to come back to healthy
+// state. On success the deployment is recorded as Reverted; on failure
+// the deployment is recorded as RollbackFailed and an error is
+// returned — operator intervention is required in that case, and the
+// service is in mixed-version limbo.
+//
+// Empty plan.CurrentVersion is treated as a fatal: there is no version
+// to roll back to. This happens only when the caller pointed Deploy at
+// an empty cluster (no prior version), which means there is nothing
+// to undo anyway — Failed is the correct terminal state.
+func (d *Deployer) revertDeployment(ctx context.Context, plan *DeploymentPlan, status *DeploymentStatus, reason string) (*DeploymentStatus, error) {
+	touched := d.touchedSnapshot()
+
 	log.Warn().
 		Str("service", status.ServiceName).
 		Str("reason", reason).
+		Str("from", plan.TargetVersion).
+		Str("to", plan.CurrentVersion).
+		Int("allocs", len(touched)).
 		Msg("reverting deployment")
 
-	status.Status = StateReverted
 	status.Phase = PhaseRevert
 	status.Error = reason
+
+	if plan.CurrentVersion == "" || plan.CurrentVersion == "unknown" {
+		log.Error().
+			Str("service", status.ServiceName).
+			Msg("revert requested but no previous version is known — failing instead")
+		return d.failDeployment(status, fmt.Errorf("revert requested but plan.CurrentVersion is empty: %s", reason))
+	}
+
+	if len(touched) == 0 {
+		log.Info().Str("service", status.ServiceName).Msg("nothing was dispatched yet, marking as reverted without action")
+		status.Status = StateReverted
+		status.EndTime = time.Now()
+		d.updateLastRecord(StateReverted, 0)
+		return status, fmt.Errorf("deployment reverted: %s", reason)
+	}
+
+	for _, alloc := range touched {
+		if err := d.markPending(plan, alloc, plan.CurrentVersion); err != nil {
+			return d.markRollbackFailed(status, fmt.Errorf("rollback markPending failed for %s/%s: %w", alloc.ServiceName, alloc.NodeID, err))
+		}
+		if err := d.sendUpdateCommand(alloc.NodeID, plan, plan.CurrentVersion); err != nil {
+			return d.markRollbackFailed(status, fmt.Errorf("rollback sendUpdate failed for %s/%s: %w", alloc.ServiceName, alloc.NodeID, err))
+		}
+	}
+
+	if !d.waitForBatchHealth(ctx, touched, plan) {
+		return d.markRollbackFailed(status, fmt.Errorf("rollback batch did not become healthy within HealthyDeadline"))
+	}
+
+	status.Status = StateReverted
 	status.EndTime = time.Now()
 	d.updateLastRecord(StateReverted, 0)
+	log.Info().Str("service", status.ServiceName).Msg("deployment rolled back successfully")
 	return status, fmt.Errorf("deployment reverted: %s", reason)
+}
+
+// markRollbackFailed finalises the deployment in RollbackFailed state.
+// The service is left in mixed-version limbo and the orchestrator
+// should refuse to autoscale it until operator clears the flag.
+func (d *Deployer) markRollbackFailed(status *DeploymentStatus, err error) (*DeploymentStatus, error) {
+	log.Error().
+		Err(err).
+		Str("service", status.ServiceName).
+		Msg("rollback failed — service in mixed-version state, operator intervention required")
+	status.Status = StateRollbackFailed
+	status.Error = err.Error()
+	status.EndTime = time.Now()
+	d.updateLastRecord(StateRollbackFailed, 0)
+	return status, err
 }
 
 // failDeployment finalises a failed deployment. The progress field is

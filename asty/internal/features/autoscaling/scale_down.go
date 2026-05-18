@@ -39,8 +39,17 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	avgCPU, avgMem := averageUsage(running)
 	cpuFloor := as.cfg.Autoscale.TargetCPU / idleFloorDivisor
 	memFloor := as.cfg.Autoscale.TargetMemory / idleFloorDivisor
-	if avgCPU > cpuFloor || avgMem > memFloor {
+	if avgCPU > cpuFloor {
 		return nil
+	}
+	// Memory check is in percent of svc.Resources.Memory; skip when the
+	// service didn't declare a per-copy memory limit (memFloor would have
+	// no reference point).
+	if svc.Resources.Memory > 0 {
+		avgMemPct := avgMem * 100 / svc.Resources.Memory
+		if avgMemPct > memFloor {
+			return nil
+		}
 	}
 
 	nodes, err := as.clusterState.ListNodes()
@@ -51,12 +60,16 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	if victim == nil {
 		return nil
 	}
+	avgMemPctStr := "n/a"
+	if svc.Resources.Memory > 0 {
+		avgMemPctStr = fmt.Sprintf("%d%%", avgMem*100/svc.Resources.Memory)
+	}
 	return &ScalingDecision{
 		ServiceName: svc.Name,
 		Action:      types.ScaleDown,
 		Reason: fmt.Sprintf(
-			"avg cpu=%d%% mem=%dMB across %d copies, floor cpu=%d mem=%d",
-			avgCPU, avgMem, len(running), cpuFloor, memFloor),
+			"avg cpu=%d%% mem=%s across %d copies, floor cpu=%d mem=%d (percent of svc.Resources.Memory=%dMB)",
+			avgCPU, avgMemPctStr, len(running), cpuFloor, memFloor, svc.Resources.Memory),
 		RemoveNode: victim.NodeID,
 	}
 }

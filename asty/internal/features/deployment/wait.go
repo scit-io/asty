@@ -142,16 +142,17 @@ func (d *Deployer) checkAllocationsHealth(allocs []*types.ServiceAllocation) boo
 }
 
 // sendUpdateCommand asks the agent at nodeID to restart the service at
-// the new version. Delegates to the server-provided dispatcher, which
+// the given version. Delegates to the server-provided dispatcher, which
 // resolves ${VERSION}/${ARCH}/${GITHUB_REPO} placeholders in the
 // artifact URL before sending — the agent receives a fully-resolved
-// svc def.
-func (d *Deployer) sendUpdateCommand(nodeID string, plan *DeploymentPlan) error {
+// svc def. The version is explicit (not always plan.TargetVersion) so
+// rollback can dispatch CurrentVersion through the same path.
+func (d *Deployer) sendUpdateCommand(nodeID string, plan *DeploymentPlan, version string) error {
 	if d.restart == nil {
 		return fmt.Errorf("deployer: no restart dispatcher configured")
 	}
 	if plan.Service == nil {
 		return fmt.Errorf("deployer: plan.Service is nil (server must populate it)")
 	}
-	return d.restart(nodeID, plan.Service, plan.TargetVersion)
+	return d.restart(nodeID, plan.Service, version)
 }

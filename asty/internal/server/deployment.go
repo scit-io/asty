@@ -55,12 +55,12 @@ func (s *Server) DeployService(ctx context.Context, serviceName, version string)
 		Allocations:    allocs,
 		Service:        svc,
 		UpdateStrategy: deployment.UpdateStrategy{
-			MaxParallel:      svc.Update.MaxParallel,
+			MaxParallel:      svc.Update.GetMaxParallel(),
 			MinHealthyTime:   minHealthy,
 			HealthyDeadline:  healthyDeadline,
 			ProgressDeadline: progressDeadline,
 			AutoRevert:       svc.Update.AutoRevert,
-			Canary:           1,
+			Canary:           svc.Update.Canary,
 		},
 	}
 

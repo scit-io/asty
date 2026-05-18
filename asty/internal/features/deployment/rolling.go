@@ -53,12 +53,13 @@ func (d *Deployer) rollingUpdate(ctx context.Context, plan *DeploymentPlan, stat
 
 func (d *Deployer) dispatchBatch(plan *DeploymentPlan, batch []*types.ServiceAllocation) error {
 	for _, alloc := range batch {
-		if err := d.markPending(plan, alloc); err != nil {
+		if err := d.markPending(plan, alloc, plan.TargetVersion); err != nil {
 			return fmt.Errorf("failed to update allocation: %w", err)
 		}
-		if err := d.sendUpdateCommand(alloc.NodeID, plan); err != nil {
+		if err := d.sendUpdateCommand(alloc.NodeID, plan, plan.TargetVersion); err != nil {
 			return fmt.Errorf("failed to send update command: %w", err)
 		}
+		d.recordTouched(alloc)
 	}
 	return nil
 }

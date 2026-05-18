@@ -32,17 +32,21 @@ func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*type
 			TargetNode:  node.ID,
 		}
 	}
-	if hot := as.findOverloadedAlloc(live); hot != nil {
+	if hot := as.findOverloadedAlloc(svc, live); hot != nil {
 		target := as.pickFreeNode(svc, live, nodes)
 		if target == nil {
 			return nil
+		}
+		memPct := 0
+		if svc.Resources.Memory > 0 {
+			memPct = hot.MemoryUsage * 100 / svc.Resources.Memory
 		}
 		return &ScalingDecision{
 			ServiceName: svc.Name,
 			Action:      types.ScaleUp,
 			Reason: fmt.Sprintf(
-				"copy on %s exceeded targets (cpu=%d%%, mem=%dMB) — adding copy on %s",
-				hot.NodeID, hot.CPUUsage, hot.MemoryUsage, target.ID),
+				"copy on %s exceeded targets (cpu=%d%%, mem=%d%% of %dMB) — adding copy on %s",
+				hot.NodeID, hot.CPUUsage, memPct, svc.Resources.Memory, target.ID),
 			TargetNode: target.ID,
 		}
 	}
@@ -89,14 +93,25 @@ func (as *Autoscaler) hasGatewayTraffic(node *types.NodeInfo) bool {
 }
 
 // findOverloadedAlloc returns the first running allocation whose
-// CPUUsage or MemoryUsage exceeds the configured target.
-func (as *Autoscaler) findOverloadedAlloc(live []*types.ServiceAllocation) *types.ServiceAllocation {
+// CPUUsage or memory utilisation exceeds the configured target. Both
+// targets are interpreted as percentages; memory utilisation is
+// computed against svc.Resources.Memory (the declared per-copy limit
+// in MB). When Resources.Memory is 0 (undeclared limit) the memory
+// check is skipped — without a reference capacity there's no
+// percentage to compute.
+func (as *Autoscaler) findOverloadedAlloc(svc *types.ServiceDefinition, live []*types.ServiceAllocation) *types.ServiceAllocation {
 	for _, alloc := range live {
 		if alloc.Status != types.AllocRunning || alloc.PID == 0 {
 			continue
 		}
-		if alloc.CPUUsage > as.cfg.Autoscale.TargetCPU || alloc.MemoryUsage > as.cfg.Autoscale.TargetMemory {
+		if alloc.CPUUsage > as.cfg.Autoscale.TargetCPU {
 			return alloc
+		}
+		if svc.Resources.Memory > 0 {
+			memPct := alloc.MemoryUsage * 100 / svc.Resources.Memory
+			if memPct > as.cfg.Autoscale.TargetMemory {
+				return alloc
+			}
 		}
 	}
 	return nil

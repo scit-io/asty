@@ -87,6 +87,13 @@ type Deployer struct {
 
 	mu      sync.Mutex
 	history []DeploymentRecord
+
+	// touchedMu protects the touched slice for the active deployment.
+	// Deploy() resets it at the start of each run; recordTouched
+	// appends from canary and rolling dispatch loops. revertDeployment
+	// reads it to know which allocs to walk back.
+	touchedMu sync.Mutex
+	touched   []*types.ServiceAllocation
 }
 
 // NewDeployer creates a new deployer. restart is the per-dispatch
@@ -114,6 +121,7 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		StartTime:   time.Now(),
 	}
 
+	d.resetTouched()
 	d.beginRecord(plan)
 	log.Info().
 		Str("service", plan.ServiceName).
@@ -125,14 +133,10 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 	if plan.UpdateStrategy.Canary > 0 {
 		ok, err := d.deployCanary(ctx, plan, status)
 		if err != nil {
-			return d.failDeployment(status, fmt.Errorf("canary failed: %w", err))
+			return d.handleFailure(ctx, plan, status, fmt.Errorf("canary failed: %w", err))
 		}
 		if !ok {
-			if plan.UpdateStrategy.AutoRevert {
-				log.Warn().Str("service", plan.ServiceName).Msg("canary unhealthy, reverting")
-				return d.revertDeployment(status, "canary unhealthy")
-			}
-			return d.failDeployment(status, fmt.Errorf("canary unhealthy"))
+			return d.handleFailure(ctx, plan, status, fmt.Errorf("canary unhealthy"))
 		}
 		status.CanaryHealthy = true
 		log.Info().Str("service", plan.ServiceName).Msg("canary healthy, proceeding to rolling update")
@@ -140,11 +144,7 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 
 	status.Phase = PhaseRolling
 	if err := d.rollingUpdate(ctx, plan, status); err != nil {
-		if plan.UpdateStrategy.AutoRevert {
-			log.Warn().Str("service", plan.ServiceName).Err(err).Msg("rolling update failed, reverting")
-			return d.revertDeployment(status, err.Error())
-		}
-		return d.failDeployment(status, err)
+		return d.handleFailure(ctx, plan, status, err)
 	}
 
 	status.Phase = PhaseComplete
@@ -157,4 +157,45 @@ func (d *Deployer) Deploy(ctx context.Context, plan *DeploymentPlan) (*Deploymen
 		Dur("duration", status.EndTime.Sub(status.StartTime)).
 		Msg("deployment successful")
 	return status, nil
+}
+
+// handleFailure decides between rollback and outright failure based on
+// AutoRevert, then delegates. Centralised so both canary and rolling
+// failure paths take the same branch.
+func (d *Deployer) handleFailure(ctx context.Context, plan *DeploymentPlan, status *DeploymentStatus, cause error) (*DeploymentStatus, error) {
+	if plan.UpdateStrategy.AutoRevert {
+		log.Warn().Str("service", plan.ServiceName).Err(cause).Msg("deploy failure, reverting")
+		return d.revertDeployment(ctx, plan, status, cause.Error())
+	}
+	return d.failDeployment(status, cause)
+}
+
+// recordTouched appends an allocation that has been dispatched at the
+// target version, so a subsequent rollback knows the exact set to
+// walk back. Concurrent-safe because rolling dispatchBatch and canary
+// dispatch may both run from the deployer's goroutine sequentially —
+// the lock is cheap insurance against future parallelism.
+func (d *Deployer) recordTouched(alloc *types.ServiceAllocation) {
+	d.touchedMu.Lock()
+	defer d.touchedMu.Unlock()
+	for _, a := range d.touched {
+		if a.ServiceName == alloc.ServiceName && a.NodeID == alloc.NodeID {
+			return
+		}
+	}
+	d.touched = append(d.touched, alloc)
+}
+
+func (d *Deployer) resetTouched() {
+	d.touchedMu.Lock()
+	defer d.touchedMu.Unlock()
+	d.touched = d.touched[:0]
+}
+
+func (d *Deployer) touchedSnapshot() []*types.ServiceAllocation {
+	d.touchedMu.Lock()
+	defer d.touchedMu.Unlock()
+	out := make([]*types.ServiceAllocation, len(d.touched))
+	copy(out, d.touched)
+	return out
 }
