@@ -18,8 +18,25 @@ import type {
 // cycle with a Deprecation header.
 export const API_PREFIX = '/api/v1'
 
+// authToken returns the Bearer token the client attaches to write
+// requests. We pull it from VITE_ASTY_TOKEN at build time and from
+// window.__ASTY_TOKEN__ at runtime (set by an inline script in
+// index.html before the bundle loads). Reads happen per request so a
+// future rotate-without-reload becomes a one-liner.
+function authToken(): string {
+  if (typeof window !== 'undefined' && (window as { __ASTY_TOKEN__?: string }).__ASTY_TOKEN__) {
+    return (window as { __ASTY_TOKEN__?: string }).__ASTY_TOKEN__ as string
+  }
+  return (import.meta.env?.VITE_ASTY_TOKEN as string) ?? ''
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(url, options)
+  const headers = new Headers(options?.headers)
+  const token = authToken()
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`)
+  }
+  const response = await fetch(url, { ...options, headers })
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`)
   }
