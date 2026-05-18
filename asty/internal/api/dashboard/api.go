@@ -90,12 +90,14 @@ func (api *API) Start(ctx context.Context) error {
 	data.HandleFunc("GET /{$}", api.handleCluster)
 	data.HandleFunc("GET /logs", api.handleClusterLogs)
 
-	// Writes chain tokenAuth → leaderOnly → handler:
+	// Writes chain tokenAuth → leaderOnly → auditLog → handler:
 	//   tokenAuth refuses without a valid Authorization/X-Asty-Token,
 	//   leaderOnly redirects followers to the leader (307),
+	//   auditLog publishes an asty.v1.audit.* event after the
+	//     handler returns (status captured from a recorder wrapper),
 	//   and only then does the real handler run.
 	write := func(h http.HandlerFunc) http.HandlerFunc {
-		return api.tokenAuth(api.leaderOnly(h))
+		return api.tokenAuth(api.leaderOnly(api.auditLog(h)))
 	}
 
 	data.HandleFunc("GET /nodes", api.handleNodes)
