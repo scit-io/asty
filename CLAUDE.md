@@ -10,11 +10,11 @@ Conventions established in the Phase-6 refactor of the asty package live in `.cl
 - `.claude/coding-rules/file-layout.md` — ≤200-line cap, within-package vs sub-package splits.
 - `.claude/coding-rules/code-idioms.md` — stdlib over handwritten, named constants, typed enums.
 - `.claude/coding-rules/concurrency.md` — event-driven defaults, acceptable polling list.
-- `.claude/coding-rules/architecture.md` — core/features/server/agent split, interfaces at boundaries.
+- `.claude/coding-rules/architecture.md` — L0..L4 onion (core / infra / domain / ops / api) + composition roots, interfaces at boundaries.
 - `.claude/coding-rules/testing.md` — race tests, `testutil/` fixtures.
 - `.claude/coding-rules/clarity.md` — write so non-developers can follow.
 
-Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *may shift* between refactors — never hard-code it. Look for the directory containing `core/`, `features/`, `server/`, `agent/`.
+Only the folder name `asty/` is stable (pattern: `**/asty/`); its parent path *may shift* between refactors — never hard-code it. Look for the directory containing `core/`, `infra/`, `domain/`, `ops/`, `api/`, `server/`, `agent/`.
 
 ## Project Overview
 
@@ -24,7 +24,7 @@ The project consists of two main parts:
 1. **Asty orchestrator** (`asty/`) — manages cluster state, schedules services, handles autoscaling. Provides HTTP JSON API. Web UI in `asty/web/` (React + Vite + shadcn/ui). **The orchestrator must remain agnostic of any specific managed service** — no `xauth`/`xhttp`/`xws` names, no demo-shaped paths or NATS subjects, no service-specific assumptions inside this package. Any leakage is a Critical defect.
 2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite). **These services, together with `deploy/{dev,prod}/`, `Makefile`'s `build-demo` target, and the coding-rule examples that reference them, are intentional customer-facing boilerplate.** The buyer of the platform removes them when shipping their own services. Mentions of demo names outside `asty/` are by design, not findings.
 
-**Monitoring:** Asty exposes its HTTP surface at `:8080` (SSE streams, polling endpoints incl. Prometheus, command POSTs). Web UI (`asty/web/`) connects to it for cluster monitoring.
+**Monitoring:** Asty's admin surface lives at `:7060` by default — dashboard REST + SSE at `/dashboard/v1/`, Prometheus exposition at `/metrics` (same listener), liveness at `/health`. Web UI (`asty/web/`) connects to it for cluster monitoring. Both port and prefix are configurable per surface (see Observability §).
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
 ## Toolchain & dependencies
@@ -112,12 +112,12 @@ make run-server   # Run in server mode
 go test ./...
 
 # Run specific package tests
-go test ./asty/internal/features/gateway -v
-go test ./asty/internal/features/scheduling -v
+go test ./asty/internal/api/gateway -v
+go test ./asty/internal/ops/scheduler -v
 
 # Run single test
-go test ./asty/internal/features/scheduling -v -run TestScheduler
-go test ./asty/internal/features/scheduling/proximity -v -run TestProximity
+go test ./asty/internal/ops/scheduler -v -run TestScheduler
+go test ./asty/internal/domain/proximity -v -run TestProximity
 
 # With race detector
 go test -race ./...
@@ -129,7 +129,7 @@ go test -race ./...
 
 **Each node runs two Asty processes:**
 - `asty -mode server` — participates in leader election, active leader handles scheduling and autoscaling
-- `asty -mode agent` — supervises a local `nats-server` child process (see "NATS supervision" below), manages user-service processes, executes commands from server. The HTTP gateway runs inside this process (`features/gateway/`), reusing the agent's NATS connection; `gateway.enabled: false` in config.asty disables it on a given node.
+- `asty -mode agent` — supervises a local `nats-server` child process (see "NATS supervision" below), manages user-service processes, executes commands from server. The HTTP gateway runs inside this process (`api/gateway/`), reusing the agent's NATS connection; `gateway.enabled: false` in config.asty disables it on a given node.
 
 **Leader election:** All servers participate in election via NATS KV. Only one server is active (leader) at any time. When leader fails, remaining servers automatically elect a new leader. This provides high availability with no single point of failure.
 
@@ -226,7 +226,7 @@ Asty deploys services as **raw binaries** (not containers):
 
 Traffic is routed by geographic load balancer to the nearest node. The gateway on that node validates requests and serves them **locally** (same-node NATS at `127.0.0.1:4222`). This is Asty's main differentiator from generic orchestrators.
 
-Autoscaler monitors (`features/autoscaling/scale_up.go`):
+Autoscaler monitors (`ops/autoscaler/scale_up.go`):
 1. Gateway valid-RPS per node — sustained average ≥ `TrafficRPSThreshold`
    (default 5) over a 60s window (`trafficWindow`) → scale up onto the
    ready node that has traffic but no local copy.
@@ -246,7 +246,7 @@ is chosen from the most-crowded DC to preserve geo-diversity.
 
 ### Reconciliation controller
 
-The `features/clustering/controller/` package owns the active control
+The `ops/reconciler/` package owns the active control
 loop and **runs only on the elected leader** (`server/leadership.go`
 starts it via `startLeaderWork`, `watchLeadership` flips it on/off when
 leadership changes). Followers run no reconciler; their server process
@@ -281,7 +281,7 @@ Inside the controller (`controller.go`):
 
 ### Drain
 
-`features/draining/DrainManager` (always allocated in
+`ops/drainer/DrainManager` (always allocated in
 `server/boot.go`, effective only when invoked from leader-side API
 routes) coordinates a node drain via the small `DrainDeps` interface
 (no `server → drain → server` import cycle).
@@ -319,7 +319,7 @@ HTTP Client → Gateway (:80) → NATS (127.0.0.1:4222) → [xhttp | xauth | xws
                                                     NATS KV (xhttp cache, xauth tokens)
 ```
 
-- **Gateway** (`asty/internal/features/gateway/`) — sole HTTP entry point, embedded in the asty agent process; proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
+- **Gateway** (`asty/internal/api/gateway/`) — sole HTTP entry point, embedded in the asty agent process; proxies HTTP → NATS Request-Reply, upgrades WebSocket connections
 - **xauth** (`demo/internal/xauth/`) — JWT authentication (HMAC-SHA256), refresh token revocation in NATS KV. Uses `nats.go/micro` directly.
 - **xhttp** (`demo/internal/xhttp/`) — demo CRUD with PostgreSQL + NATS KV cache. Uses `nats.go/micro` directly.
 - **xws** (`demo/internal/xws/`) — WebSocket session manager. Uses raw `nats.go` (pub/sub, not request-reply).
@@ -346,53 +346,71 @@ content-based alerting.
 
 ### HTTP surfaces
 
-Per node, two HTTP listeners contribute to observability:
+Per node, three HTTP surfaces — each with its own port and prefix,
+all configurable via env. Defaults align so a typical deployment
+only needs one firewall rule for the dashboard/scrape pair:
 
-| Listener | Port | Path | Served by | Purpose |
-|---|---|---|---|---|
-| Orchestrator | `:8080` | `GET /metrics` (exact) | `api.handleMetrics` → `promhttp.HandlerFor` over a private `prometheus.Registry` | Cluster + orchestrator-self instruments |
-| Orchestrator | `:8080` | `GET /metrics/…` (every data resource) | `api/*.go` handlers | Same data as `/metrics` but as JSON / SSE — content-negotiated via `Accept` |
+| Surface | Default listen | Default prefix | Env knobs |
+|---|---|---|---|
+| Dashboard (admin REST + SSE) | `127.0.0.1:7060` | `/dashboard/v1` | `A_DASHBOARD_{HOST,PORT,PREFIX}` |
+| Prometheus exposition | `127.0.0.1:7060` (shared) | `/metrics` (exact match) | `A_PROMETHEUS_{HOST,PORT,PREFIX}` |
+| Gateway (user traffic) | `0.0.0.0:80` | `/api/v1` | `A_GATEWAY_{HOST,PORT,PREFIX}` |
 
-**The gateway is intentionally observability-silent.** It does not expose
-its own `/metrics` listener — Asty must not serve metrics about user-
-deployed services. The only data the gateway publishes back is the
-`GatewayMetricsReport` over NATS (`asty.v1.metrics.gateway.<nodeID>`,
-`codec.Wire`), which feeds the autoscaler's locality-aware scale-up
-trigger via `server.subscribeGatewayMetrics`.
+When `A_DASHBOARD_PORT` and `A_PROMETHEUS_PORT` are equal (the
+default) the same `http.Server` mounts both routes. When they differ,
+`server.runStandalonePrometheus` spawns a second listener.
+
+**The gateway is intentionally observability-silent.** It does not
+expose its own `/metrics` listener — Asty must not serve metrics
+about user-deployed services. The only data the gateway publishes
+back is the `GatewayMetricsReport` over NATS
+(`asty.v1.metrics.gateway.<nodeID>`, `codec.Wire`), which feeds the
+autoscaler's locality-aware scale-up trigger via
+`server.subscribeGatewayMetrics`.
 
 **NATS exposes no HTTP listener.** The agent supervises a local
-`nats-server` per node (see "NATS supervision" below) and pulls server
-stats over the existing NATS connection via `$SYS.REQ.SERVER.<id>.STATSZ`
-+ `$SYS.REQ.SERVER.<id>.JSZ`, then surfaces them as
-`asty_node_nats_*` / `asty_cluster_nats_*` on the orchestrator's
-`/metrics`. No `http_port` directive is rendered into `nats.conf`, and
-no `:8222` listener exists on the node.
+`nats-server` per node (see "NATS supervision" below) and pulls
+server stats over the existing NATS connection via
+`$SYS.REQ.SERVER.<id>.STATSZ` + `$SYS.REQ.SERVER.<id>.JSZ`, then
+surfaces them as `asty_node_nats_*` / `asty_cluster_nats_*` on the
+Prometheus exposition. No `http_port` directive is rendered into
+`nats.conf`.
 
-The orchestrator's `:8080` is the only HTTP surface for cluster data.
-Web UI subscribes to its SSE flavour, Prometheus polls the bare
-`/metrics` path, CLI tooling fetches JSON over the same routes. The
-data namespace is `/metrics/*` — the prefix doubles as the Prometheus
-exposition path (exact `GET /metrics`) and as the JSON/SSE namespace
-when called with a subpath. URLs match the navigation hierarchy 1:1:
+The dashboard surface is the only HTTP entry for cluster data. Web
+UI subscribes to its SSE flavour, CLI tooling fetches JSON over the
+same routes. URLs match the navigation hierarchy 1:1:
 
-- `/metrics/` — cluster snapshot (`GET /` under the prefix).
-- `/metrics/nodes`, `/metrics/nodes/{id}`,
-  `/metrics/nodes/{id}/allocations/{allocId}/logs`.
-- `/metrics/services`, `/metrics/services/{name}/allocations`,
-  `/metrics/services/{name}/autoscaler`,
-  `/metrics/services/{name}/deploy`.
+- `/dashboard/v1/` — cluster snapshot (`GET /` under the prefix).
+- `/dashboard/v1/nodes`, `/dashboard/v1/nodes/{id}`,
+  `/dashboard/v1/nodes/{id}/allocations/{allocId}/logs`.
+- `/dashboard/v1/services`, `/dashboard/v1/services/{name}/allocations`,
+  `/dashboard/v1/services/{name}/autoscaler`,
+  `/dashboard/v1/services/{name}/deploy`.
 
-`/health` stays at the root for kube-probes. The single source of
-truth for this prefix is `apiPrefix` in `features/api/api.go`; the SPA
-mirrors it as `API_PREFIX` in `asty/web/src/api/client.ts` — change
-both in lockstep.
+`/health` stays at the root for kube-probes. The dashboard prefix
+comes from `cfg.Dashboard.Prefix`; the SPA reads the matching
+`API_PREFIX` from `asty/web/src/api/client.ts` — change both in
+lockstep when re-configuring.
 
-`/metrics` is served by every server in the cluster, not just the
-leader (`handleMetrics` in `features/api/status.go` has no leader
-guard, and `boot.go` starts the API regardless of election state).
-Each server scrapes its own `:8080` independently; the `asty_leader`
-metric is built from the cluster snapshot's `Cluster.Leader`, so all
-servers report the same row with the same `node_id` label.
+The dashboard listener (and therefore `/metrics` when shared) is
+served by **every** server in the cluster, not just the leader.
+`POST` handlers are gated by the `leaderOnly` middleware that
+returns 307 to the leader's address. Followers serve GETs and SSE
+streams unchanged. The `asty_leader` metric is built from the
+cluster snapshot's `Cluster.Leader`, so every server's exposition
+reports the same row with the same `node_id` label.
+
+Write endpoints under `/dashboard/v1/*` carry three middleware
+layers in order:
+
+  `tokenAuth → leaderOnly → auditLog → handler`
+
+  - `tokenAuth` constant-time-compares the request token (Authorization:
+    Bearer / X-Asty-Token) against `cfg.Token`.
+  - `leaderOnly` 307-redirects followers to the leader.
+  - `auditLog` publishes a `types.AuditEvent` to
+    `asty.v1.audit.<resource>.<action>` on NATS (CBOR via `codec.Wire`),
+    capturing status, target, actor IP, and X-Request-Id.
 
 ### Metric naming convention
 
@@ -429,7 +447,7 @@ asty -mode server -config /etc/asty/config.asty
 asty -mode agent  -config /etc/asty/config.asty
 ```
 
-Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `http:`, `agent:`, `gateway:`). Sample: `deploy/dev/config.asty`.
+Without `-config`, the default `./config.asty` is consulted and a missing file is tolerated (env-only deployment). Sections mirror the runtime layout (`nats:`, `autoscale:`, `resources:`, `dashboard:`, `prometheus:`, `agent:`, `gateway:`, `artifact:`). Sample: `deploy/dev/config.asty`.
 
 **Env-var overrides** apply on top of YAML defaults. Two paths exist:
 fields routed through `Config` via `core/config/env.go:applyEnvOverrides`,
@@ -454,44 +472,39 @@ Routed through `Config` (`core/config/env.go`):
   `nats.accounts.*.users[].password` in `config.asty` at load time via
   `${VAR}` expansion (bare `$NAME` is left alone so NATS subjects like
   `$SYS.REQ.*` survive).
-- Autoscaler: `A_MIN_COPIES`, `A_TARGET_CPU`, `A_TARGET_MEMORY`,
-  `A_TRAFFIC_RPS_THRESHOLD`, `A_TRAFFIC_WINDOW`, `A_EVAL_INTERVAL`,
-  `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`, `A_DC_LATENCY`,
-  `A_CONTROLLER_WORKERS`.
+- Autoscaler: `A_MIN_COPIES`, `A_MAX_COPIES`, `A_TARGET_CPU`,
+  `A_TARGET_MEMORY`, `A_TRAFFIC_RPS_THRESHOLD`, `A_TRAFFIC_WINDOW`,
+  `A_IDLE_HOLD`, `A_EVAL_INTERVAL`, `A_COOLDOWN_UP`, `A_COOLDOWN_DOWN`,
+  `A_DC_LATENCY`, `A_CONTROLLER_WORKERS`.
 - Reserved capacity (subtracted before offering to workloads):
   `A_RESERVED_CPU`, `A_RESERVED_MEMORY`.
-- HTTP API listener: `A_HTTP_ADDR` (default `127.0.0.1:8080`). The
-  `A_UI_ADDR` name does not exist.
+- Dashboard listener (admin REST + SSE): `A_DASHBOARD_HOST`,
+  `A_DASHBOARD_PORT` (default 7060), `A_DASHBOARD_PREFIX` (default
+  `/dashboard/v1`).
+- Prometheus exposition: `A_PROMETHEUS_HOST`, `A_PROMETHEUS_PORT`
+  (default 7060 — shared with dashboard when equal), `A_PROMETHEUS_PREFIX`
+  (default `/metrics`).
+- Agent capacity overrides: `A_CPU_TOTAL`, `A_MEMORY_TOTAL`,
+  `A_DISK_TOTAL`, `A_SWAP_TOTAL`, `A_DISK_OS_BASELINE`,
+  `A_NATS_DISK_BASELINE`, `A_DISK_TYPE`.
+- Artifact URL templating (server-side): `A_ARCH` (fallback
+  `runtime.GOARCH`), `A_GITHUB_REPO`.
+- NATS peer discovery: `A_NATS_PEERS_FILE`, `A_NATS_PEERS`.
 - Agent paths: `A_WORK_DIR` (default `/var/lib/asty`), `A_SERVICE_DIR`
   (default `/etc/asty/services`).
 
-Read directly by their consumers (not through `Config`):
+Every `A_*` env Asty consumes is read through `core/config`. CI's
+`make layer-check` fails the build if any `os.Getenv` / `os.LookupEnv`
+appears outside `core/config` (`Makefile:layer-check` target).
 
-- `A_NATS_PEERS_FILE` — path to a file with one peer IP per line (or
-  comma-separated). Highest-priority peer source — used in dev where
-  `start.sh` maintains the file and agents re-read on every watcher
-  tick (`add` appends a line to grow the cluster live).
-- `A_NATS_PEERS` — comma-separated peer IPs. Static, doesn't change
-  during process lifetime; fallback when `A_NATS_PEERS_FILE` is unset.
-  In prod neither is set and the agent falls back to DNS lookup of
-  `cfg.Domain`.
-- `A_CPU_TOTAL` / `A_MEMORY_TOTAL` / `A_DISK_TOTAL` / `A_SWAP_TOTAL` —
-  override auto-detected node capacity (read in `agent/sysinfo_*.go`
-  and `agent/nodeinfo.go`). With these set, the agent synthesizes
-  "used" from components Asty observes (managed processes + agent +
-  NATS); without them it reads system-wide counters.
-- `A_DISK_OS_BASELINE` — override the synthetic OS-footprint baseline
-  on the fake dev disk (MB). Defaults to 20% of `A_DISK_TOTAL`. Only
-  meaningful when `A_DISK_TOTAL` is set.
-- `A_DISK_TYPE` — override auto-detected disk class (`ssd` | `hdd`;
-  anything else collapses to `unknown`).
-
-**Gateway-specific env vars** (override fields under `gateway:`; all
-use the `A_GATEWAY_*` namespace so `A_HTTP_*` unambiguously belongs to
-the orchestrator):
+**Gateway-specific env vars** (override fields under `gateway:`):
 
 - `A_GATEWAY_ENABLED` — toggle the embedded gateway on the local node.
-- HTTP server: `A_GATEWAY_ADDR`, `A_GATEWAY_READ_HEADER_TIMEOUT`,
+- Listener: `A_GATEWAY_HOST` (default `0.0.0.0`),
+  `A_GATEWAY_PORT` (default `80`), `A_GATEWAY_PREFIX` (default `/api/v1`).
+- Legacy combined-form: `A_GATEWAY_ADDR` (kept as fallback for
+  un-migrated configs; new deployments use HOST/PORT).
+- HTTP server timeouts: `A_GATEWAY_READ_HEADER_TIMEOUT`,
   `A_GATEWAY_READ_TIMEOUT`, `A_GATEWAY_WRITE_TIMEOUT`,
   `A_GATEWAY_IDLE_TIMEOUT`.
 - NATS round-trip: `A_GATEWAY_NATS_REQUEST_TIMEOUT`,
@@ -502,9 +515,10 @@ the orchestrator):
   `A_GATEWAY_TRUSTED_PROXY`, `A_GATEWAY_RATE_LIMIT_MAX_IPS`.
 
 **Local development with multiple nodes**: `start.sh` exports per-node
-`A_NODE_ID`, `A_NODE_IP`, `A_HTTP_ADDR`, `A_GATEWAY_ADDR`, `A_WORK_DIR`,
-`A_DISK_TYPE` on top of the shared `config.asty`, and points all agents
-at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
+`A_NODE_ID`, `A_NODE_IP`, `A_DASHBOARD_PORT`, `A_GATEWAY_PORT`,
+`A_WORK_DIR`, `A_DISK_TYPE` on top of the shared `config.asty`, and
+points all agents at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for
+live peer discovery.
 
 ```
 deploy/dev/start.sh        # 1 node
@@ -594,7 +608,7 @@ update:                      # rolling-update parameters consumed by the deploye
 - Failed allocations are removed and rescheduled to different nodes by the server
 - Restart counter resets to 0 on successful start
 
-**Deployment Caveats** (verified against `features/deployment/` and
+**Deployment Caveats** (verified against `ops/deployer/` and
 `server/deployment.go`):
 
 - **Canary count is hard-coded to `1`** in `server.DeployService`
@@ -607,13 +621,15 @@ update:                      # rolling-update parameters consumed by the deploye
   and `rolling.go:29` does `for i := 0; i < len(remaining); i += MaxParallel`
   — a zero or negative value here is an infinite loop. The `.asty`
   loader does not enforce a minimum.
-- **`auto_revert: true` only flips status**. `revertDeployment`
-  (`features/deployment/history.go:74`) sets the deployment record to
-  `StateReverted` and returns an error to the caller. It does **not**
-  re-deploy the previous version onto the allocations — they remain on
-  the (failed) target version. Whether to actually roll allocations
-  back is left to the operator. The comment at `history.go:73` flags
-  this explicitly: "The actual rollback ... is not implemented".
+- **`auto_revert: true` now performs a real rollback** (TZ §4.4).
+  `revertDeployment` (`ops/deployer/history.go`) re-dispatches every
+  touched allocation at `CurrentVersion` and waits for the batch to be
+  healthy. On failure the deployment ends in the new `StateRollbackFailed`
+  terminal state and the service-level `ServiceCooldown.RollbackFailed`
+  flag is set in KV; the autoscaler reads this flag and refuses to act
+  on the service until the operator clears it via the API.
+- `update.canary_retries` (default 1) governs how many times an
+  unhealthy canary is re-dispatched before the deploy fails (TZ §4.4).
 - `current_version` displayed in deployment records is read from
   `allocs[0].Version` (`server/deployment.go:42`) — fine for a uniform
   cluster, but during a half-finished previous deploy it just shows
@@ -623,17 +639,24 @@ Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from o
 
 ## Key Implementation Files
 
-### Feature-Based Architecture (`asty/internal/`)
+### Layered architecture (`asty/internal/`)
+
+Per TZ §3.1 / §12 the tree follows an onion model — L0 core, L1
+infra, L2 domain, L3 ops, L4 api — enforced by `make layer-check`
+plus depguard rules in `.golangci.yml`. No `features/` directory.
 
 ```
 asty/internal/
-├── core/                          # Shared primitives
+├── core/                          # L0 — no internal/* deps
 │   ├── codec/                     # codec.Wire (CBOR) / codec.State —
 │   │                              #   single switch point for internal
 │   │                              #   serialization (JSON in dev_mode)
 │   ├── config/                    # config.go, env.go, gateway.go,
 │   │                              #   load.go, nats.go — YAML schema +
-│   │                              #   env overrides + Load/Validate
+│   │                              #   env overrides + Load/Validate.
+│   │                              #   The only package permitted to
+│   │                              #   call os.Getenv (layer-check
+│   │                              #   enforces it).
 │   ├── errors/                    # Typed errors (ErrNotLeader, …)
 │   ├── natsconf/                  # render.go — builds nats.conf from
 │   │                              #   NATSConfig + node identity + peers
@@ -642,67 +665,54 @@ asty/internal/
 │   ├── types/                     # NodeInfo, ServiceDefinition,
 │   │                              #   Allocation, Events, Commands,
 │   │                              #   Snapshot, Health, Metrics,
-│   │                              #   Scaling, typed status enums, MustJSON
+│   │                              #   Scaling, AuditEvent, MustJSON
 │   └── util/ringbuf/              # generic ring buffer (logs/events)
-├── features/                      # Vertical feature slices
-│   ├── api/                       # HTTP API. apiPrefix = "/metrics".
-│   │   ├── api.go, context.go     # router + ServerContext interface
-│   │   ├── accept.go              # content negotiation (Accept header)
-│   │   ├── lookup.go              # url-param helpers
-│   │   ├── nodes.go, services.go  # node & service handlers
-│   │   ├── allocations.go, status.go, autoscaler.go
-│   │   ├── logs.go + logs_{cluster,node,allocation}.go
-│   │   ├── stream.go + stream_{cluster,node,service,allocation}.go
-│   │   └── prom.go + prom_{cluster,nodes,services,allocs,deploy,nats}.go
-│   │                              #   private prometheus.Registry, the
-│   │                              #   six per-resource collectors that
-│   │                              #   emit asty_* gauges and counters
-│   ├── clustering/
-│   │   ├── controller/            # controller.go, reconcile.go,
-│   │   │                          #   watch.go, autoscale.go, workqueue.go
-│   │   ├── discovery/             # DNS node discovery
-│   │   ├── leader/                # campaign.go, election.go, watch.go
-│   │   └── state/                 # state.go, nodes.go, allocations.go,
-│   │                              #   cooldowns.go, scale.go, snapshot.go,
-│   │                              #   watch.go (generic watchKV)
-│   ├── scheduling/
-│   │   ├── proximity/             # matrix.go, sort.go, validate.go
-│   │   ├── scheduler.go, reconcile.go, candidates.go
-│   │   └── helpers.go             # LiveAllocations, OccupiedNodes, …
-│   ├── autoscaling/
-│   │   ├── metrics/               # MetricsStore (RPS timeseries, scaling events)
-│   │   ├── autoscaler.go          # EvaluateService + ExecuteScalingDecision
-│   │   ├── cooldown.go, scale_up.go, scale_down.go, execute.go
-│   ├── deployment/
-│   │   ├── artifacts/             # tar.gz download + SHA256 verification
-│   │   ├── deployer.go            # struct + Deploy
-│   │   ├── canary.go, rolling.go, wait.go, history.go
-│   │   ├── states.go, tracker.go  # deployment state machine + progress
-│   │   └── loader.go              # .asty file loading
-│   ├── draining/                  # DrainManager with DrainDeps interface
-│   │   └── manager.go, run.go, system.go, migrate.go, wait.go
-│   ├── execution/
-│   │   ├── process/               # process.go, monitor.go, logs.go,
-│   │   │                          #   rotation.go, stop.go, tail.go
-│   │   │                          #   (Process.OnExit, Process.Done())
-│   │   └── health/                # checker.go, probe.go
-│   ├── gateway/                   # embedded HTTP/WS entry point (runs
-│   │                              #   inside the agent process)
-│   │   ├── gateway.go             # Gateway struct + New + Handler
-│   │   ├── routing.go             # /v1/{service}/{method...} router
-│   │   ├── http.go                # HTTP → NATS Request-Reply
-│   │   ├── websocket.go           # WS bridge to NATS Pub/Sub
-│   │   ├── wssession.go           # ws coordination primitives
-│   │   ├── ratelimit.go           # per-IP token-bucket + LRU
-│   │   ├── middleware.go          # rate-limit middleware + realIP
-│   │   ├── hosts.go               # allowed-Origin / CORS parsing
-│   │   ├── rpsreporter.go         # publishes GatewayMetricsReport
-│   │   └── errors.go              # NATS error → HTTP status mapping
-│   └── observability/
-│       ├── metrics/               # CPU/Memory collector (platform-specific)
-│       ├── logs/                  # LogBuffer + NATSWriter + entry.go
-│       └── events/                # EventBuffer (ring buffer)
-├── server/                        # Server sub-package
+├── infra/                         # L1 — adapters wrapping external systems
+│   ├── kv/                        # JetStream KV (state.go, nodes.go,
+│   │                              #   allocations.go, cooldowns.go,
+│   │                              #   scale.go, snapshot.go, watch.go)
+│   ├── process/                   # exec + monitor + rotation + tail
+│   ├── probe/                     # HTTP/NATS health checks (checker.go,
+│   │                              #   probe.go) — package is `probe`
+│   │                              #   (was `health`)
+│   ├── artifact/                  # tar.gz download + sha256 + extract
+│   ├── events/                    # EventBuffer ring
+│   ├── logs/                      # LogBuffer + NATSWriter + entry.go
+│   └── metrics/                   # platform-specific CPU/Memory collector
+├── domain/                        # L2 — pure types + FSMs (no I/O)
+│   └── proximity/                 # Matrix + sort + validate
+├── ops/                           # L3 — use cases (orchestration)
+│   ├── reconciler/                # workqueue + reconcile pipeline
+│   ├── scheduler/                 # placement + DC diversity
+│   ├── autoscaler/                # EvaluateService + Execute +
+│   │                              #   metrics/store.go (RPS timeseries)
+│   ├── deployer/                  # canary + rolling + REAL rollback
+│   ├── drainer/                   # parallel migration
+│   ├── leader/                    # election + watch
+│   └── discovery/                 # DNS node discovery
+├── api/                           # L4 — HTTP edges
+│   ├── dashboard/                 # admin REST + SSE router under
+│   │                              #   cfg.Dashboard.Prefix (default
+│   │                              #   /dashboard/v1). Includes
+│   │                              #   leaderguard.go, tokenauth.go,
+│   │                              #   audit.go middleware.
+│   ├── prometheus/                # /metrics exposition, six collectors
+│   │                              #   (cluster, nodes, services, allocs,
+│   │                              #   deploy, nats). Imports
+│   │                              #   `prometheus/client_golang` aliased
+│   │                              #   to `prometheusclient` to avoid the
+│   │                              #   self-name collision.
+│   ├── stream/                    # SSE plumbing + per-resource handlers
+│   │                              #   (Cluster, Node, Service, Allocation,
+│   │                              #   Nodes, Services). dashboard imports
+│   │                              #   them through a narrowed Context.
+│   ├── health/                    # GET /health handler
+│   └── gateway/                   # /api/v1 (default) embedded gateway —
+│                                  #   gateway.go, routing.go, http.go,
+│                                  #   websocket.go, wssession.go,
+│                                  #   ratelimit.go, middleware.go,
+│                                  #   hosts.go, rpsreporter.go, errors.go
+├── server/                        # composition root for -mode server
 │   ├── server.go                  # Server struct + New
 │   ├── boot.go                    # Start (boot sequence)
 │   ├── tunables.go                # metricsRetention, streamHubInterval, …
@@ -748,24 +758,19 @@ source of truth for what the supervised nats-server runs with; the
 `asty -mode nats-conf` subcommand prints the same output to stdout
 for offline inspection.
 
-**File-size rule**: every Go file is under 200 lines. Three files
-currently exceed the cap and should be split before further growth:
-
-| File | Lines |
-|---|---|
-| `asty/internal/agent/agent.go` | 215 |
-| `asty/internal/features/clustering/controller/workqueue.go` | 214 |
-| `asty/internal/features/deployment/artifacts/downloader.go` | 207 |
-
-The `workqueue.go` overage is a cohesive k8s-style data structure that
-doesn't benefit from splitting; the other two are accidents of growth
-and should be split when next touched.
+**File-size rule**: every Go file is under 200 lines. Only one
+documented exception: `ops/reconciler/workqueue.go` (214 — a cohesive
+k8s-style data structure that doesn't benefit from splitting). CI
+fails the build on any new file over the cap.
 
 **Status enums**: allocation lifecycle (`AllocPending`, `AllocStarting`,
-`AllocRunning`, `AllocStopped`, `AllocFailed`, `AllocDeleted`) and node
-lifecycle (`NodeReady`, `NodeDraining`, `NodeDrained`, `NodeDown`,
-`NodeDeleted`) live in `core/types` as typed strings — the compiler
-catches stray literals while the JSON wire format stays unchanged.
+`AllocRunning`, `AllocRestarting`, `AllocStopping`, `AllocStopped`,
+`AllocFailed`, `AllocDeleted`) and node lifecycle (`NodeJoining`,
+`NodeReady`, `NodeStale`, `NodeDraining`, `NodeDrained`, `NodePaused`,
+`NodeDown`, `NodeDeleted`) live in `core/types` as typed strings.
+`NodeInfo.EffectiveStatus(now)` folds heartbeat age into the persisted
+Status so scheduler/UI code only needs to compare against `NodeReady`
+to get the freshness-aware view.
 
 **Polling vs event-driven**: reactive paths use NATS `KV.Watch` and
 process callbacks (`Process.OnExit`, `Process.Done()`). Polling is
@@ -775,11 +780,11 @@ HTTP health probes (1 s), TailLogs file polling (100 ms), proximity
 validation (1 h). Each is documented at its definition.
 
 ### Orchestrator Entrypoints
-- `asty/cmd/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package)
-- `asty/internal/server/` — leader election, controller wiring, NATS subscriptions, implements `api.ServerContext`
-- `asty/internal/agent/` — process management, NATS commands, heartbeat, metrics
-- `asty/internal/features/api/` — HTTP API handlers, decoupled from server via `ServerContext` interface
-- `asty/internal/core/netutil/` — shared NATS connect / hostname / KV bucket helpers (agent and server both use them)
+- `asty/cmd/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package).
+- `asty/internal/server/` — composition root for `-mode server`: wires L1+L2+L3+L4, runs leader election, mounts the dashboard API.
+- `asty/internal/agent/` — composition root for `-mode agent`: supervises NATS + processes, embeds the gateway.
+- `asty/internal/api/dashboard/` — REST + SSE router; depends on `ops/*` and `infra/*` only through the `ServerContext` interface declared in `context.go`.
+- `asty/internal/core/netutil/` — shared NATS connect / hostname / KV bucket helpers (agent and server both use them).
 
 ### Demo Services (`demo/`)
 Demo services use `nats.go/micro` directly — no platform SDK, no shared middleware.
