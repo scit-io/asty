@@ -1,4 +1,4 @@
-package rest
+package stream
 
 import (
 	"net/http"
@@ -7,43 +7,48 @@ import (
 	autometrics "asty/asty/internal/ops/autoscaler/metrics"
 )
 
-// streamNode is the SSE companion to GET /nodes/{id}. Emits the
-// node's allocations + per-node CPU/Memory/RPS on every snapshot tick.
-func (api *API) streamNode(w http.ResponseWriter, r *http.Request, nodeID string) {
+// Node is the SSE companion to GET /dashboard/v1/nodes/{id}. Emits
+// the node's allocations + per-node CPU/Memory/RPS on every snapshot
+// tick.
+func Node(ctx Context, w http.ResponseWriter, r *http.Request, nodeID string) {
 	if nodeID == "" {
 		http.Error(w, "node ID required", http.StatusBadRequest)
 		return
 	}
-	api.runSnapshotStream(w, r, func(snap *types.ClusterSnapshot) {
-		emitNodeView(w, snap, nodeID, api.ctx.MetricsStore().GetLatestRPS(nodeID))
+	RunSnapshotStream(ctx, w, r, func(snap *types.ClusterSnapshot) {
+		var rps float64
+		if ms := ctx.MetricsStore(); ms != nil {
+			rps = ms.GetLatestRPS(nodeID)
+		}
+		emitNodeView(w, snap, nodeID, rps)
 	})
 }
 
 func emitNodeView(w http.ResponseWriter, snap *types.ClusterSnapshot, nodeID string, rps float64) {
-	emitStatus(w, snap)
+	EmitStatus(w, snap)
 
 	// Find the node and emit it as its own event so the page doesn't
 	// need a parallel global subscription to read its NodeInfo.
 	for _, n := range snap.Nodes {
 		if n.ID == nodeID {
-			sseEvent(w, "node", mustJSON(map[string]any{"node": n}))
+			Event(w, "node", types.MustJSON(map[string]any{"node": n}))
 			break
 		}
 	}
 
 	// Services list — needed for resource-limit lookups on the per-
 	// node allocations table.
-	sseEvent(w, "services", mustJSON(map[string]any{"services": snap.Services}))
+	Event(w, "services", types.MustJSON(map[string]any{"services": snap.Services}))
 
 	allocs := snap.AllocsByNode[nodeID]
 	if allocs == nil {
 		allocs = []*types.ServiceAllocation{}
 	}
-	sseEvent(w, "allocations", mustJSON(map[string]any{"allocations": allocs}))
+	Event(w, "allocations", types.MustJSON(map[string]any{"allocations": allocs}))
 
 	cpuPct, memPct := nodeUsagePercents(snap, nodeID)
 	now := snap.Timestamp
-	sseEvent(w, "metrics", mustJSON(map[string]any{
+	Event(w, "metrics", types.MustJSON(map[string]any{
 		"cpu":    []autometrics.MetricPoint{{Timestamp: now, Value: cpuPct}},
 		"memory": []autometrics.MetricPoint{{Timestamp: now, Value: memPct}},
 		"rps":    []autometrics.MetricPoint{{Timestamp: now, Value: rps}},

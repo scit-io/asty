@@ -1,75 +1,75 @@
-package rest
+package prometheus
 
 import (
 	"asty/asty/internal/core/types"
 
-	"github.com/prometheus/client_golang/prometheus"
+	prometheusclient "github.com/prometheus/client_golang/prometheus"
 )
 
-// nodeCollector is a prometheus.Collector that emits per-node gauges
+// nodeCollector is a prometheusclient.Collector that emits per-node gauges
 // (`asty_node_*`) on every scrape. It pulls a fresh ClusterSnapshot
 // from the stream hub each Collect call so the labels self-prune when
 // nodes go away — no manual cleanup of stale label combinations.
 type nodeCollector struct {
-	api *API
+	ctx Context
 
-	cpuTotal       *prometheus.Desc
-	cpuAvailable   *prometheus.Desc
-	memoryTotal    *prometheus.Desc
-	memoryAvail    *prometheus.Desc
-	diskTotal      *prometheus.Desc
-	diskAvail      *prometheus.Desc
-	diskType       *prometheus.Desc
-	swapTotal      *prometheus.Desc
-	swapAvail      *prometheus.Desc
-	allocsRunning  *prometheus.Desc
-	allocsPlanned  *prometheus.Desc
-	status         *prometheus.Desc
-	selfCPUPercent *prometheus.Desc
-	selfMemoryMB   *prometheus.Desc
-	selfDiskMB     *prometheus.Desc
+	cpuTotal       *prometheusclient.Desc
+	cpuAvailable   *prometheusclient.Desc
+	memoryTotal    *prometheusclient.Desc
+	memoryAvail    *prometheusclient.Desc
+	diskTotal      *prometheusclient.Desc
+	diskAvail      *prometheusclient.Desc
+	diskType       *prometheusclient.Desc
+	swapTotal      *prometheusclient.Desc
+	swapAvail      *prometheusclient.Desc
+	allocsRunning  *prometheusclient.Desc
+	allocsPlanned  *prometheusclient.Desc
+	status         *prometheusclient.Desc
+	selfCPUPercent *prometheusclient.Desc
+	selfMemoryMB   *prometheusclient.Desc
+	selfDiskMB     *prometheusclient.Desc
 }
 
-func newNodeCollector(api *API) *nodeCollector {
+func newNodeCollector(ctx Context) *nodeCollector {
 	common := []string{"node_id", "datacenter"}
 	statusLabels := []string{"node_id", "datacenter", "status"}
 	diskTypeLabels := []string{"node_id", "datacenter", "disk_type"}
 	return &nodeCollector{
-		api: api,
-		cpuTotal: prometheus.NewDesc("asty_node_cpu_total_mhz",
+		ctx:           ctx,
+		cpuTotal: prometheusclient.NewDesc("asty_node_cpu_total_mhz",
 			"Total CPU capacity reported by the node, in MHz.", common, nil),
-		cpuAvailable: prometheus.NewDesc("asty_node_cpu_available_mhz",
+		cpuAvailable: prometheusclient.NewDesc("asty_node_cpu_available_mhz",
 			"CPU capacity not yet consumed by allocations, in MHz.", common, nil),
-		memoryTotal: prometheus.NewDesc("asty_node_memory_total_mb",
+		memoryTotal: prometheusclient.NewDesc("asty_node_memory_total_mb",
 			"Total RAM reported by the node, in MB.", common, nil),
-		memoryAvail: prometheus.NewDesc("asty_node_memory_available_mb",
+		memoryAvail: prometheusclient.NewDesc("asty_node_memory_available_mb",
 			"RAM not yet consumed by allocations, in MB.", common, nil),
-		diskTotal: prometheus.NewDesc("asty_node_disk_total_mb",
+		diskTotal: prometheusclient.NewDesc("asty_node_disk_total_mb",
 			"Total capacity of the filesystem hosting the agent work_dir, in MB.", common, nil),
-		diskAvail: prometheus.NewDesc("asty_node_disk_available_mb",
+		diskAvail: prometheusclient.NewDesc("asty_node_disk_available_mb",
 			"Available space on the filesystem hosting the agent work_dir, in MB.", common, nil),
-		diskType: prometheus.NewDesc("asty_node_disk_type",
+		diskType: prometheusclient.NewDesc("asty_node_disk_type",
 			"Physical disk class of the node; value is always 1 — the meaning lives on the `disk_type` label (ssd|hdd|unknown).", diskTypeLabels, nil),
-		swapTotal: prometheus.NewDesc("asty_node_swap_total_mb",
+		swapTotal: prometheusclient.NewDesc("asty_node_swap_total_mb",
 			"Total swap configured on the node, in MB.", common, nil),
-		swapAvail: prometheus.NewDesc("asty_node_swap_available_mb",
+		swapAvail: prometheusclient.NewDesc("asty_node_swap_available_mb",
 			"Swap currently free on the node, in MB.", common, nil),
-		allocsRunning: prometheus.NewDesc("asty_node_allocations_running",
+		allocsRunning: prometheusclient.NewDesc("asty_node_allocations_running",
 			"Allocations currently in the running state on the node.", common, nil),
-		allocsPlanned: prometheus.NewDesc("asty_node_allocations_planned",
+		allocsPlanned: prometheusclient.NewDesc("asty_node_allocations_planned",
 			"Allocations placed on the node (any live state, including pending/starting).", common, nil),
-		status: prometheus.NewDesc("asty_node_status",
+		status: prometheusclient.NewDesc("asty_node_status",
 			"Current node lifecycle status; value is always 1 — the meaning lives on the `status` label.", statusLabels, nil),
-		selfCPUPercent: prometheus.NewDesc("asty_node_self_cpu_percent",
+		selfCPUPercent: prometheusclient.NewDesc("asty_node_self_cpu_percent",
 			"CPU% consumed by the asty agent process itself on this node.", common, nil),
-		selfMemoryMB: prometheus.NewDesc("asty_node_self_memory_mb",
+		selfMemoryMB: prometheusclient.NewDesc("asty_node_self_memory_mb",
 			"RSS of the asty agent process itself on this node, in MB.", common, nil),
-		selfDiskMB: prometheus.NewDesc("asty_node_self_disk_mb",
+		selfDiskMB: prometheusclient.NewDesc("asty_node_self_disk_mb",
 			"On-disk footprint of the agent work_dir (binaries + logs), in MB.", common, nil),
 	}
 }
 
-func (c *nodeCollector) Describe(ch chan<- *prometheus.Desc) {
+func (c *nodeCollector) Describe(ch chan<- *prometheusclient.Desc) {
 	ch <- c.cpuTotal
 	ch <- c.cpuAvailable
 	ch <- c.memoryTotal
@@ -87,8 +87,8 @@ func (c *nodeCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.selfDiskMB
 }
 
-func (c *nodeCollector) Collect(ch chan<- prometheus.Metric) {
-	snap := c.api.ctx.StreamHub().Snapshot()
+func (c *nodeCollector) Collect(ch chan<- prometheusclient.Metric) {
+	snap := c.ctx.StreamHub().Snapshot()
 	if snap == nil {
 		return
 	}
@@ -97,9 +97,9 @@ func (c *nodeCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *nodeCollector) emit(ch chan<- prometheus.Metric, n *types.NodeInfo) {
-	g := func(d *prometheus.Desc, v float64) {
-		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, n.ID, n.Datacenter)
+func (c *nodeCollector) emit(ch chan<- prometheusclient.Metric, n *types.NodeInfo) {
+	g := func(d *prometheusclient.Desc, v float64) {
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, n.ID, n.Datacenter)
 	}
 	g(c.cpuTotal, float64(n.CPUTotal))
 	g(c.cpuAvailable, float64(n.CPUAvailable))
@@ -115,13 +115,13 @@ func (c *nodeCollector) emit(ch chan<- prometheus.Metric, n *types.NodeInfo) {
 	g(c.selfMemoryMB, float64(n.SelfMemoryMB))
 	g(c.selfDiskMB, float64(n.SelfDiskMB))
 
-	ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 1,
+	ch <- prometheusclient.MustNewConstMetric(c.status, prometheusclient.GaugeValue, 1,
 		n.ID, n.Datacenter, string(n.Status))
 
 	dt := n.DiskType
 	if dt == "" {
 		dt = types.DiskUnknown
 	}
-	ch <- prometheus.MustNewConstMetric(c.diskType, prometheus.GaugeValue, 1,
+	ch <- prometheusclient.MustNewConstMetric(c.diskType, prometheusclient.GaugeValue, 1,
 		n.ID, n.Datacenter, string(dt))
 }

@@ -5,12 +5,12 @@ import (
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
-	autometrics "asty/asty/internal/ops/autoscaler/metrics"
-	"asty/asty/internal/ops/leader"
 	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/infra/logs"
+	autometrics "asty/asty/internal/ops/autoscaler/metrics"
 	"asty/asty/internal/ops/deployer"
 	"asty/asty/internal/ops/drainer"
-	"asty/asty/internal/infra/logs"
+	"asty/asty/internal/ops/leader"
 
 	"github.com/nats-io/nats.go"
 )

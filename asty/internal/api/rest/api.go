@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"time"
 
+	"asty/asty/internal/api/health"
+	"asty/asty/internal/api/prometheus"
+	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/types"
+	"asty/asty/internal/infra/kv"
 
 	"github.com/rs/zerolog/log"
 )
@@ -23,23 +27,55 @@ import (
 // after the UI release that ships /api/v1 — see TZ §14.2 sunset note.
 const apiPrefix = "/api/v1"
 
-// API provides the orchestrator's HTTP surface: SSE streams, polling
-// endpoints, and command POSTs — all on a single port. Content-
-// negotiation per route picks the response form (JSON snapshot vs.
-// SSE stream vs. Prometheus text) based on the Accept header.
+// API provides the orchestrator's dashboard HTTP surface (REST + SSE)
+// plus the Prometheus exposition mounted at /metrics. Content
+// negotiation per route picks JSON or SSE for the dashboard paths;
+// the prometheus handler is built once and reused.
 type API struct {
-	ctx         ServerContext
-	httpServer  *http.Server
-	addr        string
-	promHandler http.Handler // serves /metrics via promhttp.HandlerFor(privateRegistry).
+	ctx               ServerContext
+	httpServer        *http.Server
+	addr              string
+	prometheusHandler http.Handler   // built by api/prometheus.Handler.
+	streamCtx         stream.Context // narrowed view for api/stream handlers.
 }
 
-// New creates a new API server.
+// New creates a new API server. The prometheus handler is built once
+// at construction so the same private registry is reused across
+// scrapes (per-instance registry — never the global default — avoids
+// the double-register panic during tests). The package-local adapters
+// (prometheusAdapter, streamAdapter) narrow ServerContext's concrete
+// return types to the smaller interfaces each sub-package declares.
 func New(ctx ServerContext, addr string) *API {
-	api := &API{ctx: ctx, addr: addr}
-	api.initProm()
-	return api
+	return &API{
+		ctx:               ctx,
+		addr:              addr,
+		prometheusHandler: prometheus.Handler(prometheusAdapter{ctx: ctx}),
+		streamCtx:         streamAdapter{ctx: ctx},
+	}
 }
+
+// prometheusAdapter bridges rest.ServerContext (concrete return types,
+// useful elsewhere in api/rest) to prometheus.Context (narrower
+// interfaces). Each method body just re-returns the corresponding
+// ServerContext call; the implicit interface conversion at the
+// return statement does all the type narrowing.
+type prometheusAdapter struct{ ctx ServerContext }
+
+func (a prometheusAdapter) ClusterState() *kv.ClusterState       { return a.ctx.ClusterState() }
+func (a prometheusAdapter) Services() []*types.ServiceDefinition { return a.ctx.Services() }
+func (a prometheusAdapter) StreamHub() prometheus.SnapshotSource { return a.ctx.StreamHub() }
+func (a prometheusAdapter) MetricsStore() prometheus.RPSSource   { return a.ctx.MetricsStore() }
+func (a prometheusAdapter) Deployer() prometheus.DeployHistorySource {
+	return a.ctx.Deployer()
+}
+
+// streamAdapter is the equivalent narrowing for api/stream handlers.
+// rest.StreamHub is a structural superset of stream.Hub, so the
+// implicit interface conversion at the return statement is enough.
+type streamAdapter struct{ ctx ServerContext }
+
+func (a streamAdapter) StreamHub() stream.Hub          { return a.ctx.StreamHub() }
+func (a streamAdapter) MetricsStore() stream.RPSSource { return a.ctx.MetricsStore() }
 
 // Start starts the API server. Data routes register on a sub-mux
 // with bare paths; the namespace lives in apiPrefix and is added once
@@ -86,8 +122,8 @@ func (api *API) Start(ctx context.Context) error {
 	// /health and /metrics stay at the root because the probes and
 	// Prometheus scrape don't know about our prefix.
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", api.handleHealth)
-	mux.HandleFunc("GET /metrics", api.handleMetrics)
+	mux.Handle("GET /health", health.Handler())
+	mux.Handle("GET /metrics", api.prometheusHandler)
 	mux.Handle(apiPrefix+"/", http.StripPrefix(apiPrefix, data))
 
 	api.httpServer = &http.Server{

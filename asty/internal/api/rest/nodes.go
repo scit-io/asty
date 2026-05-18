@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/ops/drainer"
 )
@@ -20,7 +21,7 @@ func applyAllocCounts(node *types.NodeInfo, counts map[string]allocCounts) {
 // counts attached. SSE flavour streams the same shape on each tick.
 func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 	if transportSSE(r) {
-		api.streamNodes(w, r)
+		stream.Nodes(api.streamCtx, w, r)
 		return
 	}
 	nodes, err := api.ctx.ClusterState().ListNodes()
@@ -43,7 +44,7 @@ func (api *API) handleNodes(w http.ResponseWriter, r *http.Request) {
 func (api *API) handleNode(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.PathValue("id")
 	if transportSSE(r) {
-		api.streamNode(w, r, nodeID)
+		stream.Node(api.streamCtx, w, r, nodeID)
 		return
 	}
 	node, err := api.ctx.ClusterState().GetNode(nodeID)

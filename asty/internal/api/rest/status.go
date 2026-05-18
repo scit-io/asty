@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"asty/asty/internal/api/stream"
 	"net/http"
 	"time"
 )
@@ -10,7 +11,7 @@ import (
 // snapshots (Accept: text/event-stream).
 func (api *API) handleCluster(w http.ResponseWriter, r *http.Request) {
 	if transportSSE(r) {
-		api.streamCluster(w, r)
+		stream.Cluster(api.streamCtx, w, r)
 		return
 	}
 	api.fetchClusterJSON(w, r)
@@ -53,18 +54,5 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// handleHealth serves GET /health — liveness probe.
-func (api *API) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	api.writeJSON(w, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"timestamp": time.Now().Unix(),
-	})
-}
-
-// handleMetrics delegates to promhttp.HandlerFor over the private
-// Registry initialised in initProm. The Go runtime collector, process
-// collector, and asty_* gauges (mirroring the UI's cluster/services
-// counters) all live on that registry.
-func (api *API) handleMetrics(w http.ResponseWriter, r *http.Request) {
-	api.promHandler.ServeHTTP(w, r)
-}
+// /health and /metrics live in their own packages (api/health,
+// api/prometheus); this file holds only the cluster overview handlers.

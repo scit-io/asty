@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
@@ -28,7 +29,7 @@ func (api *API) handleAllocationLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher := sseSetup(w)
+	flusher := stream.Setup(w)
 	if flusher == nil {
 		return
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 
+	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/types"
 )
 
@@ -12,7 +13,7 @@ import (
 // definition. SSE flavour streams the same list on each tick.
 func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 	if transportSSE(r) {
-		api.streamServices(w, r)
+		stream.Services(api.streamCtx, w, r)
 		return
 	}
 	api.writeJSON(w, http.StatusOK, map[string]any{
@@ -27,7 +28,7 @@ func (api *API) handleServices(w http.ResponseWriter, r *http.Request) {
 func (api *API) handleService(w http.ResponseWriter, r *http.Request) {
 	serviceName := r.PathValue("name")
 	if transportSSE(r) {
-		api.streamService(w, r, serviceName)
+		stream.Service(api.streamCtx, w, r, serviceName)
 		return
 	}
 	service := api.findService(serviceName)

@@ -1,6 +1,7 @@
 package rest
 
 import (
+	"asty/asty/internal/api/stream"
 	"net/http"
 )
 
@@ -24,7 +25,7 @@ func (api *API) handleClusterLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	flusher := sseSetup(w)
+	flusher := stream.Setup(w)
 	if flusher == nil {
 		return
 	}

@@ -1,52 +1,52 @@
-package rest
+package prometheus
 
 import (
 	"time"
 
 	"asty/asty/internal/core/types"
 
-	"github.com/prometheus/client_golang/prometheus"
+	prometheusclient "github.com/prometheus/client_golang/prometheus"
 )
 
 // allocCollector emits per-allocation gauges (`asty_alloc_*`). Like
 // nodeCollector it pulls a fresh snapshot per scrape so allocations
 // that disappear stop being reported automatically.
 type allocCollector struct {
-	api *API
+	ctx Context
 
-	cpuPercent    *prometheus.Desc
-	memoryMB      *prometheus.Desc
-	diskMB        *prometheus.Desc
-	restartsTotal *prometheus.Desc
-	uptimeSeconds *prometheus.Desc
-	health        *prometheus.Desc
-	status        *prometheus.Desc
+	cpuPercent    *prometheusclient.Desc
+	memoryMB      *prometheusclient.Desc
+	diskMB        *prometheusclient.Desc
+	restartsTotal *prometheusclient.Desc
+	uptimeSeconds *prometheusclient.Desc
+	health        *prometheusclient.Desc
+	status        *prometheusclient.Desc
 }
 
-func newAllocCollector(api *API) *allocCollector {
+func newAllocCollector(ctx Context) *allocCollector {
 	common := []string{"service", "node_id", "alloc_id"}
 	healthLabels := []string{"service", "node_id", "alloc_id", "state"}
 	statusLabels := []string{"service", "node_id", "alloc_id", "status"}
 	return &allocCollector{
-		api: api,
-		cpuPercent: prometheus.NewDesc("asty_alloc_cpu_percent",
+		ctx:           ctx,
+		cpuPercent: prometheusclient.NewDesc("asty_alloc_cpu_percent",
 			"CPU% consumed by the allocation's process.", common, nil),
-		memoryMB: prometheus.NewDesc("asty_alloc_memory_mb",
+		memoryMB: prometheusclient.NewDesc("asty_alloc_memory_mb",
 			"RSS of the allocation's process, in MB.", common, nil),
-		diskMB: prometheus.NewDesc("asty_alloc_disk_mb",
+		diskMB: prometheusclient.NewDesc("asty_alloc_disk_mb",
 			"On-disk size of the service's subtree under work_dir, in MB.", common, nil),
-		restartsTotal: prometheus.NewDesc("asty_alloc_restarts_total",
+		restartsTotal: prometheusclient.NewDesc("asty_alloc_restarts_total",
 			"Number of times the agent has restarted the allocation since it was placed.", common, nil),
-		uptimeSeconds: prometheus.NewDesc("asty_alloc_uptime_seconds",
+		uptimeSeconds: prometheusclient.NewDesc("asty_alloc_uptime_seconds",
 			"Seconds since the allocation entered the running state. Zero when not yet started.", common, nil),
-		health: prometheus.NewDesc("asty_alloc_health",
+		health: prometheusclient.NewDesc("asty_alloc_health",
 			"Latest health-probe result; value is always 1 — meaning lives on the `state` label (healthy/unhealthy/unknown).", healthLabels, nil),
-		status: prometheus.NewDesc("asty_alloc_status",
+		status: prometheusclient.NewDesc("asty_alloc_status",
 			"Current allocation lifecycle status; value is always 1 — meaning lives on the `status` label.", statusLabels, nil),
 	}
 }
 
-func (c *allocCollector) Describe(ch chan<- *prometheus.Desc) {
+func (c *allocCollector) Describe(ch chan<- *prometheusclient.Desc) {
 	ch <- c.cpuPercent
 	ch <- c.memoryMB
 	ch <- c.diskMB
@@ -56,8 +56,8 @@ func (c *allocCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.status
 }
 
-func (c *allocCollector) Collect(ch chan<- prometheus.Metric) {
-	snap := c.api.ctx.StreamHub().Snapshot()
+func (c *allocCollector) Collect(ch chan<- prometheusclient.Metric) {
+	snap := c.ctx.StreamHub().Snapshot()
 	if snap == nil {
 		return
 	}
@@ -69,9 +69,9 @@ func (c *allocCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (c *allocCollector) emit(ch chan<- prometheus.Metric, a *types.ServiceAllocation, now time.Time) {
-	g := func(d *prometheus.Desc, v float64) {
-		ch <- prometheus.MustNewConstMetric(d, prometheus.GaugeValue, v, a.ServiceName, a.NodeID, a.ID)
+func (c *allocCollector) emit(ch chan<- prometheusclient.Metric, a *types.ServiceAllocation, now time.Time) {
+	g := func(d *prometheusclient.Desc, v float64) {
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, a.ServiceName, a.NodeID, a.ID)
 	}
 	g(c.cpuPercent, float64(a.CPUUsage))
 	g(c.memoryMB, float64(a.MemoryUsage))
@@ -88,9 +88,9 @@ func (c *allocCollector) emit(ch chan<- prometheus.Metric, a *types.ServiceAlloc
 	if healthState == "" {
 		healthState = "unknown"
 	}
-	ch <- prometheus.MustNewConstMetric(c.health, prometheus.GaugeValue, 1,
+	ch <- prometheusclient.MustNewConstMetric(c.health, prometheusclient.GaugeValue, 1,
 		a.ServiceName, a.NodeID, a.ID, healthState)
 
-	ch <- prometheus.MustNewConstMetric(c.status, prometheus.GaugeValue, 1,
+	ch <- prometheusclient.MustNewConstMetric(c.status, prometheusclient.GaugeValue, 1,
 		a.ServiceName, a.NodeID, a.ID, string(a.Status))
 }

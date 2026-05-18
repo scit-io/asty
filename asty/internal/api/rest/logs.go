@@ -23,21 +23,7 @@ const defaultLogLines = 100
 // file; if it hangs longer, something is wrong with NATS or the agent.
 const agentLogsRequestTimeout = 5 * time.Second
 
-// sseSetup writes SSE headers and returns a flusher. On unsupported
-// writers it sends an error response and returns nil.
-func sseSetup(w http.ResponseWriter) http.Flusher {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
-		return nil
-	}
-	return flusher
-}
+// sseSetup moved to api/stream.Setup; logs handlers import it.
 
 // formatLogEntry turns a decoded zerolog entry into a readable display
 // string. If the entry is actually a logstream-wrapped raw stdout

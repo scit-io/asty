@@ -3,6 +3,7 @@ package rest
 import (
 	"net/http"
 
+	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/types"
 )
 
@@ -27,7 +28,7 @@ func (api *API) handleNodeAllocations(w http.ResponseWriter, r *http.Request) {
 func (api *API) handleAllocation(w http.ResponseWriter, r *http.Request) {
 	allocID := r.PathValue("allocId")
 	if transportSSE(r) {
-		api.streamAllocation(w, r, allocID)
+		stream.Allocation(api.streamCtx, w, r, allocID)
 		return
 	}
 	alloc := api.allocByID(allocID)
