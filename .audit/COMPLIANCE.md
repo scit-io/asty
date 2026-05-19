@@ -1,8 +1,13 @@
 # Compliance — `migration/tz` HEAD vs обновлённый `.audit/TZ.md`
 
-Аудит на HEAD `migration/tz` (после `5a8613b` и обновлений TZ под
-endpoint-редизайн + drop-root). Каждая строка верифицирована грепом
+Аудит после второго compliance-прохода (HEAD `ad9c53d` плюс
+изменения по дев-развёртыванию). Каждая строка верифицирована грепом
 или чтением кода; «по доке» ничего не принято.
+
+**Состояние:** все поведенческие, валидационные и security-расхождения
+из первого прохода закрыты. Структурные опциональные (отсутствие
+`core/identity/`, `infra/natsd/`, плоский `core/types/` вместо
+`domain/<entity>/`) намеренно оставлены прагматичными.
 
 Шкала:
 - ✓ соответствует TZ
@@ -269,46 +274,65 @@ endpoint-редизайн + drop-root). Каждая строка верифиц
 
 ---
 
-## Сводка расхождений (то, что осталось доделать)
+## Сводка расхождений после второго прохода (HEAD ad9c53d)
 
-### Поведенческие
+### Поведенческие — закрыты ✓
 
-1. **NATS subject schema** не совпадает с TZ §6.2 в 6/9 пунктов
-   (cmd/event/log/drain.progress/deploy.progress/ping). Либо
-   мигрировать subjects (breaking change для потребителей), либо
-   обновить TZ §6.2 под фактическую конвенцию
-   `asty.v1.<role>.<nodeID>.<topic>`.
-2. **`asty.v1.deploy.progress.<service>`** не публикуется. Состояние
-   deploy лежит только в RAM-ring и в `asty_deploy_*` метриках.
-3. **`DeploymentRecord.RollbackSteps[]`** — упомянут в TZ §4.4,
-   в коде НЕТ.
-4. **Drain `Stuck`-состояние** — TZ §4.5 объявляет, в коде только
-   `op.status.Errors[]`.
-5. **deployments / drains в KV** — TZ §6.1 хочет хранить, реально
-   RAM-ring buffers.
+1. ~~NATS subject schema~~ — обновлён TZ §6.2 под фактическую конвенцию
+   `asty.v1.<role>.<nodeID>.<topic>` (коммит bd323dd).
+2. ~~`asty.v1.deploy.progress.<service>`~~ — публикуется в
+   `deployer.persistLast` (коммит ad9c53d). JSON-payload.
+3. ~~`DeploymentRecord.RollbackSteps[]`~~ — добавлено;
+   `recordRollbackStep` пишет step на каждом действии rollback'а.
+4. ~~Drain `Stuck`-состояние~~ — `completeNodeDrain` выставляет
+   `DrainStatusStuck` если в `op.status.Errors` что-то накопилось.
+5. ~~deployments / drains в KV~~ — `infra/kv/{deployments,drains}.go`
+   + best-effort persist в `deployer.persistLast` /
+   `drainer.publishDrainEvent`.
 
-### Validation
+### Validation — закрыты ✓
 
-6. `Validate()` не отвергает:
-   - `autoscale.min_copies < 1`,
-   - `autoscale.max_copies > 0 && < min_copies`,
-   - `autoscale.target_cpu / target_memory` вне `(0, 100)`,
-   - `autoscale.idle_hold < 0`.
+6. ~~Validate()~~ — `AutoscaleConfig.Validate()` отвергает все
+   четыре правила TZ §8.4 (коммит bd323dd).
 
-### Security / artifact
+### Security / artifact — закрыты ✓
 
-7. **HTTPS не форсится** в `infra/artifact/downloader.go` —
-   TZ §10.2 «только HTTPS».
-8. **Permissions 0700/0400** на артефактах — TZ §10.2,
-   реально `MkdirAll(0755)` и default umask.
+7. ~~HTTPS-only~~ — `Download()` теперь принимает только
+   `https://`, `file://`, или строку `local`; всё остальное
+   отдаёт ошибку (коммит bd323dd).
+8. ~~Permissions 0700/0400~~ — `artifactDirMode`/`artifactBinMode`
+   константы в `infra/artifact/extract.go`; agent делает `chmod 0500`
+   на бинаре прямо перед `exec` (коммит bd323dd).
 
-### Style / structure
+### Style — закрыты ✓
 
-9. Три файла > 200 строк (`boot.go`, `natssup.go`, `config.go`).
+9. ~~3 файла > 200~~ — split:
+   - `server/prometheus_listener.go` отделён от `boot.go`;
+   - `agent/natspeers.go` отделён от `natssup.go`;
+   - `core/config/agent.go` отделён от `config.go`.
+   - Также `services.go` пересжат с 201 до 200.
+   Остался единственный кап-нарушитель — `ops/reconciler/workqueue.go`
+   (214, документированное исключение).
+
+### Опциональные / структурные
+
 10. `core/identity/`, `infra/natsd/`, `domain/{allocation,service,
     node,deployment,drain}` отсутствуют как самостоятельные пакеты
-    (TZ §12). Это **намеренно прагматичный отход** — split удвоил бы
+    (TZ §12). **Намеренно прагматичный отход** — split удвоил бы
     число пакетов без улучшения когезии. Опционально к выполнению.
+
+### Дев-развёртывание (новый блок)
+
+`deploy/dev/config.asty` обновлён под новую схему: `dashboard:`,
+`prometheus:`, `gateway: {host,port,prefix}`; убрана `http:` секция.
+`deploy/dev/start.sh` экспортирует `A_DASHBOARD_HOST`/`A_PROMETHEUS_HOST`/
+`A_GATEWAY_HOST` вместо `A_HTTP_ADDR`/`A_GATEWAY_ADDR`. Status-line
+печатает все три URL'а.
+
+Сервер в dev запускается БЕЗ sudo (нет привилегированных портов;
+drop-root становится no-op потому что `os.Geteuid() != 0`). Агент
+по-прежнему под `sudo -E` для `:80`; в dev на macOS пользователя
+`asty` обычно нет, drop пропускается с warning'ом — приемлемо.
 
 ### Что было концептуально расходится с TZ и **сейчас починено**
 

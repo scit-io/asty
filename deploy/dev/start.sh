@@ -184,9 +184,12 @@ start_node() {
     ensure_loopback_alias "$i"
   fi
 
-  # Per-node loopback binds for gateway + orchestrator HTTP.
-  local gw_addr="$addr:80"
-  local http_addr="$addr:8080"
+  # Per-node loopback binds. Dashboard + Prometheus share :7060
+  # (default), gateway lives on :80. Each node uses its own loopback
+  # alias 127.0.0.$i so multiple agents can coexist on the same dev
+  # box without port collisions.
+  local dashboard_host="$addr"
+  local gateway_host="$addr"
 
   # Random disk type per node so the cluster aggregates exercise
   # both ssd and hdd branches. Server inherits no disk-type env —
@@ -194,15 +197,25 @@ start_node() {
   local disk_type
   if (( RANDOM % 2 == 0 )); then disk_type="ssd"; else disk_type="hdd"; fi
 
+  # Server runs WITHOUT sudo — no privileged ports, drop-root is a
+  # no-op (resolveDropTarget sees euid != 0). Dashboard listens on
+  # the per-node loopback alias so multiple servers don't race for
+  # the same socket.
   A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
-    A_HTTP_ADDR="$http_addr" A_WORK_DIR="$DATA_BASE/work" \
+    A_DASHBOARD_HOST="$dashboard_host" A_PROMETHEUS_HOST="$dashboard_host" \
+    A_WORK_DIR="$DATA_BASE/work" \
     "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
   local server_pid=$!
 
+  # Agent runs under sudo so it can bind :80 for the gateway and then
+  # drop to `asty` (if the user exists on this dev box). On macOS dev
+  # boxes without an `asty` user the drop is a no-op and the agent
+  # stays as root for the session — start.sh-only convenience, see
+  # asty/internal/agent/privileges.go.
   sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
     A_NATS_PEERS_FILE="$PEERS_FILE" \
     A_WORK_DIR="$DATA_BASE/work" \
-    A_GATEWAY_ADDR="$gw_addr" \
+    A_GATEWAY_HOST="$gateway_host" \
     A_DISK_TYPE="$disk_type" \
     "$BIN_DIR/asty" -mode agent -config "$config_file" >> "$agent_log" 2>&1 &
   local agent_pid=$!
@@ -288,8 +301,10 @@ print_status() {
   echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Asty UI:    http://127.0.0.1:8080 (node 1)"
-  info "Gateway:    http://127.0.0.1:80 (node 1)"
+  info "Dashboard:  http://127.0.0.1:7060/dashboard/v1  (node 1; SPA proxy point)"
+  info "Prometheus: http://127.0.0.1:7060/metrics       (shared listener)"
+  info "Health:     http://127.0.0.1:7060/health"
+  info "Gateway:    http://127.0.0.1:80/api/v1          (node 1; user traffic)"
   info "PostgreSQL: localhost:5432"
   info ""
   info "server-1 log: tail -f /tmp/asty-dev-server-1.log"

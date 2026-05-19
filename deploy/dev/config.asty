@@ -72,12 +72,14 @@ nats:
 # whether to scale up/down based on CPU, memory, and traffic RPS.
 autoscale:
   min_copies: 3                  # Floor for scale-down (should match number of DCs)
+  max_copies: 0                  # Upper cap on copies (0 = unlimited; only healthy-node count caps it)
   target_cpu: 75                 # CPU usage % above which scale-up is triggered
-  target_memory: 75              # Memory usage % above which scale-up is triggered
+  target_memory: 75              # Memory usage % above which scale-up is triggered (interpreted as % of svc.Resources.Memory)
   traffic_rps_threshold: 5       # Validated RPS per node above which scale-up is triggered
   traffic_window: 1m             # RPS averaging window
   cooldown_up: 30s               # Min interval between consecutive scale-up actions
   cooldown_down: 5m              # Min interval between consecutive scale-down actions (prevents flapping)
+  idle_hold: 5m                  # Must stay below idle floor this long before scale-down fires (anti-flap)
   eval_interval: 10s             # Autoscaler tick rate
   controller_workers: 2          # Parallel reconciliation goroutines
 
@@ -88,11 +90,22 @@ resources:
   reserved_cpu: 100              # Agent + OS overhead in MHz (subtracted before placement)
   reserved_memory: 250           # Agent + OS overhead in MB (subtracted before placement)
 
-# Orchestrator HTTP surface — SSE streams, polling endpoints (incl.
-# Prometheus /metrics via content-negotiation), and command POSTs.
-# Each node exposes the same surface; the Web UI at asty/web/ connects here.
-http:
-  addr: 127.0.0.1:8080  # HTTP listen address (loopback only — Web UI/CLI/Prometheus access)
+# Dashboard listener — admin REST + SSE. Default port 7060.
+# Web UI (asty/web/) talks here; CLI tooling polls JSON here.
+# In dev each node binds its own loopback alias (127.0.0.$i:7060) —
+# start.sh overrides A_DASHBOARD_HOST per node.
+dashboard:
+  host: 127.0.0.1                  # Bind host (loopback in dev; 0.0.0.0 only behind a reverse proxy)
+  port: 7060                       # Listener port — shared with prometheus when ports match
+  prefix: /dashboard/v1            # URL prefix the SPA's API_PREFIX matches
+
+# Prometheus exposition. When prometheus.port == dashboard.port (the
+# default) the same http.Server mounts both; differing ports spawn a
+# second listener via server.runStandalonePrometheus.
+prometheus:
+  host: 127.0.0.1
+  port: 7060                       # Default: same as dashboard.port → one listener
+  prefix: /metrics                 # Exact-match path
 
 # Agent-specific paths.
 agent:
@@ -106,11 +119,13 @@ agent:
 gateway:
   enabled: true                  # Whether this node serves HTTP/WS traffic (false — control-plane-only node)
   # In dev each agent binds its own loopback alias (127.0.0.$i:80) —
-  # start.sh overrides A_GATEWAY_ADDR per node. Without that override
+  # start.sh overrides A_GATEWAY_HOST per node. Without that override
   # every agent would race for the same :80 and all but the first would
   # fail with "address already in use".
+  host: 0.0.0.0                  # Bind host (start.sh overrides per node in dev)
+  port: 80                       # User-traffic port
+  prefix: /api/v1                # Gateway URL prefix — what user services live under
   http:
-    addr: ":80"                  # HTTP listen address (start.sh overrides per node in dev)
     read_header_timeout: 5s      # Max wait between TCP accept and complete headers
     read_timeout: 15s            # Max wait for full request body
     write_timeout: 15s           # Max wait for response to be written
