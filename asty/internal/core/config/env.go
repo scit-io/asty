@@ -78,7 +78,6 @@ func applyGatewayEnv(g *GatewayConfig) {
 	envInt("A_GATEWAY_PORT", &g.Port)
 	envStr("A_GATEWAY_PREFIX", &g.Prefix)
 
-	envStr("A_GATEWAY_ADDR", &g.HTTP.Addr)
 	envDur("A_GATEWAY_READ_HEADER_TIMEOUT", &g.HTTP.ReadHeaderTimeout)
 	envDur("A_GATEWAY_READ_TIMEOUT", &g.HTTP.ReadTimeout)
 	envDur("A_GATEWAY_WRITE_TIMEOUT", &g.HTTP.WriteTimeout)

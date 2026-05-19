@@ -56,6 +56,15 @@ type Agent struct {
 	// freshest peer list.
 	natsRestartCh chan struct{}
 
+	// natsStopCh tells superviseNATS to SIGTERM the nats-server child
+	// and exit. Closed by Start *after* the graceful deregister so the
+	// KV.Delete round-trip still has a live broker on the same loopback;
+	// closing on ctx.Done() directly would race the deregister and the
+	// write would time out. A sync.Once guards the close so an early-
+	// error return path doesn't double-close.
+	natsStopCh   chan struct{}
+	natsStopOnce sync.Once
+
 	workDir string
 
 	// failed receives service names whose process exited unexpectedly.
@@ -96,7 +105,15 @@ func New(cfg *config.Config) (*Agent, error) {
 		workDir:            workDir,
 		failed:             make(chan string, failedServicesBufferSize),
 		natsRestartCh:      make(chan struct{}, 1),
+		natsStopCh:         make(chan struct{}),
 	}, nil
+}
+
+// stopNATSSupervisor signals superviseNATS to terminate the nats-server
+// child and exit. Idempotent — Start may call it from the orderly
+// shutdown path, but a deferred call from an error return is safe too.
+func (a *Agent) stopNATSSupervisor() {
+	a.natsStopOnce.Do(func() { close(a.natsStopCh) })
 }
 
 // exportConfigEnv ensures the agent's resolved NATS and logging settings

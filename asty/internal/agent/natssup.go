@@ -29,6 +29,14 @@ const natsReadyProbeInterval = 100 * time.Millisecond
 // accepting connections on the configured listen port. After return,
 // agent.natsServerCmd holds the child; superviseNATS owns it from
 // there. Called once at startup and again on every cold restart.
+//
+// We use exec.Command (NOT exec.CommandContext) deliberately:
+// CommandContext sends SIGKILL the instant ctx is cancelled, which
+// races the orderly-shutdown path in Start (KV.Delete against a
+// still-live broker, then close natsStopCh so the supervisor SIGTERMs
+// the child cleanly). Killing nats-server out from under the
+// deregister would make it time out and the leader's snapshot would
+// keep the dead node listed.
 func (a *Agent) bootstrapNATS(ctx context.Context) error {
 	binary, err := findNATSServerBinary()
 	if err != nil {
@@ -44,7 +52,7 @@ func (a *Agent) bootstrapNATS(ctx context.Context) error {
 		return err
 	}
 
-	cmd := exec.CommandContext(ctx, binary, "-c", a.natsConfPath())
+	cmd := exec.Command(binary, "-c", a.natsConfPath())
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	// When drop-root is configured, the nats-server child must start

@@ -502,8 +502,6 @@ appears outside `core/config` (`Makefile:layer-check` target).
 - `A_GATEWAY_ENABLED` — toggle the embedded gateway on the local node.
 - Listener: `A_GATEWAY_HOST` (default `0.0.0.0`),
   `A_GATEWAY_PORT` (default `80`), `A_GATEWAY_PREFIX` (default `/api/v1`).
-- Legacy combined-form: `A_GATEWAY_ADDR` (kept as fallback for
-  un-migrated configs; new deployments use HOST/PORT).
 - HTTP server timeouts: `A_GATEWAY_READ_HEADER_TIMEOUT`,
   `A_GATEWAY_READ_TIMEOUT`, `A_GATEWAY_WRITE_TIMEOUT`,
   `A_GATEWAY_IDLE_TIMEOUT`.

@@ -51,6 +51,11 @@ func (a *Agent) Start(ctx context.Context) error {
 	if err := a.bootstrapNATS(ctx); err != nil {
 		return fmt.Errorf("failed to bootstrap NATS: %w", err)
 	}
+	// Belt-and-suspenders: any early-error return below leaves the
+	// supervisor goroutine alive otherwise. The orderly-shutdown path
+	// at the bottom of Start calls stopNATSSupervisor again — sync.Once
+	// makes the second close a no-op.
+	defer a.stopNATSSupervisor()
 	go a.superviseNATS(ctx)
 	go a.watchNATSPeers(ctx)
 
@@ -96,6 +101,19 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent ready")
 
 	<-ctx.Done()
+	// Best-effort deregister: drop our node entry from the cluster KV
+	// so the leader's snapshot (and the asty_node_* metrics it feeds)
+	// stops reporting us on the next watcher tick. The supervisor is
+	// still holding nats-server up (it waits on natsStopCh, not
+	// ctx.Done()), so the KV.Delete round-trip has a live broker on the
+	// same loopback. Only after this returns do we tell the supervisor
+	// to tear NATS down.
+	if a.clusterState != nil {
+		if err := a.clusterState.RemoveNode(a.nodeID); err != nil {
+			log.Warn().Err(err).Msg("graceful shutdown: failed to deregister node from cluster state")
+		}
+	}
+	a.stopNATSSupervisor()
 	a.stopAllProcesses()
 	return nil
 }

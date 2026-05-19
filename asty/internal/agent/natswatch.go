@@ -27,10 +27,14 @@ const natsRestartGrace = 10 * time.Second
 
 // superviseNATS owns the child nats-server lifecycle for the agent.
 // Three things can happen at any time:
-//   - ctx is cancelled → graceful stop, return.
+//   - natsStopCh is closed (by Start, after graceful deregister) →
+//     SIGTERM the child and return. Listening on this channel instead
+//     of ctx.Done() preserves the ordering: deregister hits the local
+//     KV via a still-live broker, *then* the broker dies.
 //   - natsRestartCh fires (watchNATSPeers) → try a hot reload via
 //     SIGHUP; fall back to a cold restart only when the JetStream
-//     mode itself flips (standalone↔clustered).
+//     mode itself flips (standalone↔clustered). The cold-restart
+//     bootstrap still uses ctx so a parent cancellation aborts it.
 //   - the child exits on its own → fatal: running without the local
 //     broker is meaningless, and we already issue restarts ourselves
 //     on config changes.
@@ -48,7 +52,7 @@ func (a *Agent) superviseNATS(ctx context.Context) {
 	wait:
 		for {
 			select {
-			case <-ctx.Done():
+			case <-a.natsStopCh:
 				a.stopNATSChild(cmd, exitCh)
 				return
 			case <-a.natsRestartCh:

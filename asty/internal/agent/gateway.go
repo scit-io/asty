@@ -19,17 +19,6 @@ import (
 // and WebSocket sessions to drain before forcing the server closed.
 const shutdownGracePeriod = 10 * time.Second
 
-// gatewayAddr resolves the gateway's bind address. New deployments
-// use cfg.Gateway.Host/Port; cfg.Gateway.HTTP.Addr is the legacy
-// combined form kept for un-migrated configs (it wins when set).
-func (a *Agent) gatewayAddr() string {
-	cfg := a.cfg.Gateway
-	if cfg.HTTP.Addr != "" {
-		return cfg.HTTP.Addr
-	}
-	return cfg.Addr()
-}
-
 // preBindGateway calls net.Listen on the gateway's address while the
 // agent still holds whatever privileges it started with. Returns the
 // open listener; the dropPrivileges step that follows shrinks the
@@ -42,7 +31,7 @@ func (a *Agent) preBindGateway() (net.Listener, error) {
 	if !a.cfg.Gateway.Enabled {
 		return nil, nil
 	}
-	addr := a.gatewayAddr()
+	addr := a.cfg.Gateway.Addr()
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen %s: %w", addr, err)
