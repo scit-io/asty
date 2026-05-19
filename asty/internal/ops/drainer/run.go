@@ -117,17 +117,31 @@ func (dm *DrainManager) recordError(op *drainOp, name string, err error) {
 	op.status.Errors = append(op.status.Errors, name+": "+err.Error())
 }
 
-// completeNodeDrain runs once every allocation has been handled (either
-// migrated or dismantled). It flips the node status to "drained" and
-// publishes the final progress event.
+// completeNodeDrain runs once every allocation has been handled
+// (either migrated or dismantled). If errors accumulated during the
+// drain the node ends up in the Stuck status — operator gets the
+// option to force-complete (discard stuck allocs, mark Drained) or
+// Resume (put the node back to Ready). Without errors the node
+// progresses cleanly to Drained.
 func (dm *DrainManager) completeNodeDrain(nodeID string, op *drainOp) {
+	dm.mu.Lock()
+	stuck := len(op.status.Errors) > 0
+	dm.mu.Unlock()
+
+	finalNodeStatus := types.NodeDrained
+	finalDrainStatus := DrainStatusDrained
+	if stuck {
+		finalNodeStatus = types.NodeDraining // stay in Draining until operator acts
+		finalDrainStatus = DrainStatusStuck
+	}
+
 	if node, err := dm.deps.GetClusterState().GetNode(nodeID); err == nil && node.Status == types.NodeDraining {
-		node.Status = types.NodeDrained
+		node.Status = finalNodeStatus
 		_ = dm.deps.GetClusterState().UpdateNode(node)
 	}
 
 	dm.mu.Lock()
-	op.status.Status = string(types.NodeDrained)
+	op.status.Status = finalDrainStatus
 	op.status.CurrentAllocation = ""
 	op.status.Remaining = 0
 	finalStatus := op.status

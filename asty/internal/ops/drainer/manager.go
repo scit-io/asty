@@ -14,16 +14,32 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// DrainStatus tracks the progress of a node drain operation.
+// DrainStatus tracks the progress of a node drain operation. Status
+// values:
+//   - "draining" — collection done, migrations in flight.
+//   - "drained" — every alloc was migrated or dismantled cleanly.
+//   - "stuck" — at least one migration failed with an error AND the
+//     drain reached its terminal point (no more in-flight migrations).
+//     Operator decides next: DrainResume to put the node back to Ready,
+//     DrainForceComplete to discard the stuck allocs and mark Drained.
 type DrainStatus struct {
 	NodeID            string   `json:"node_id"`
-	Status            string   `json:"status"` // draining, drained, error
+	Status            string   `json:"status"`
 	TotalAllocations  int      `json:"total_allocations"`
 	Migrated          int      `json:"migrated"`
 	Remaining         int      `json:"remaining"`
 	CurrentAllocation string   `json:"current_allocation"`
 	Errors            []string `json:"errors"`
 }
+
+// DrainStatusDraining, DrainStatusDrained, DrainStatusStuck spell out
+// the values the Status field can take so callsites don't sprinkle
+// string literals.
+const (
+	DrainStatusDraining = "draining"
+	DrainStatusDrained  = "drained"
+	DrainStatusStuck    = "stuck"
+)
 
 // DrainDeps provides access to server resources without importing the
 // server package (which would create a cycle: server → draining → server).
@@ -97,7 +113,7 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 
 	status := DrainStatus{
 		NodeID:           nodeID,
-		Status:           string(types.NodeDraining),
+		Status:           DrainStatusDraining,
 		TotalAllocations: len(allocs),
 		Migrated:         0,
 		Remaining:        len(allocs),
@@ -107,7 +123,7 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 	if len(allocs) == 0 {
 		node.Status = types.NodeDrained
 		_ = dm.deps.GetClusterState().UpdateNode(node)
-		status.Status = string(types.NodeDrained)
+		status.Status = DrainStatusDrained
 		dm.publishDrainEvent(status)
 		return &status, nil
 	}

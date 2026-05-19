@@ -2,11 +2,20 @@ package deployer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"asty/asty/internal/infra/kv"
+
 	"github.com/rs/zerolog/log"
 )
+
+// jsonMarshal aliases encoding/json.Marshal so the persistLast
+// publish path uses the same JSON encoding as drain.progress —
+// TZ §6.2 explicitly carves out deploy.progress and drain.progress
+// as JSON, not CBOR, because SSE clients decode JSON natively.
+var jsonMarshal = json.Marshal
 
 // historyCap — how many past deployments are kept in memory. Old
 // records roll off oldest-first when capacity is reached. Operators
@@ -34,17 +43,18 @@ func (d *Deployer) beginRecord(plan *DeploymentPlan) {
 
 func (d *Deployer) addRecord(record DeploymentRecord) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if len(d.history) >= historyCap {
 		d.history = d.history[1:]
 	}
 	d.history = append(d.history, record)
+	d.mu.Unlock()
+	d.persistLast()
 }
 
 func (d *Deployer) updateLastRecord(status State, progress int) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	if len(d.history) == 0 {
+		d.mu.Unlock()
 		return
 	}
 	last := &d.history[len(d.history)-1]
@@ -52,6 +62,43 @@ func (d *Deployer) updateLastRecord(status State, progress int) {
 	last.Progress = progress
 	if status != StateRunning {
 		last.CompletedAt = time.Now()
+	}
+	d.mu.Unlock()
+	d.persistLast()
+}
+
+// persistLast writes the most recent DeploymentRecord to KV at
+// `service.<name>.deployment` (TZ §6.1) AND publishes a JSON copy
+// on `asty.v1.deploy.progress.<service>` (TZ §6.2) so SSE-subscribed
+// dashboards see live progress without polling KV. Both writes are
+// best-effort — failure is logged at warn, the in-memory ring stays
+// authoritative for the dashboard.
+func (d *Deployer) persistLast() {
+	d.mu.Lock()
+	if len(d.history) == 0 {
+		d.mu.Unlock()
+		return
+	}
+	rec := d.history[len(d.history)-1]
+	d.mu.Unlock()
+
+	if payload, err := kv.MarshalDeploymentRecord(&rec); err != nil {
+		log.Warn().Err(err).Str("service", rec.Service).Msg("deployment: marshal for KV persistence failed")
+	} else if err := d.clusterState.PutDeployment(rec.Service, payload); err != nil {
+		log.Warn().Err(err).Str("service", rec.Service).Msg("deployment: KV persist failed")
+	}
+
+	if d.nc == nil {
+		return
+	}
+	jsonPayload, err := jsonMarshal(&rec)
+	if err != nil {
+		log.Warn().Err(err).Str("service", rec.Service).Msg("deployment: marshal for NATS publish failed")
+		return
+	}
+	subject := "asty.v1.deploy.progress." + rec.Service
+	if err := d.nc.Publish(subject, jsonPayload); err != nil {
+		log.Warn().Err(err).Str("subject", subject).Msg("deployment: NATS publish failed")
 	}
 }
 
@@ -112,22 +159,53 @@ func (d *Deployer) revertDeployment(ctx context.Context, plan *DeploymentPlan, s
 
 	for _, alloc := range touched {
 		if err := d.markPending(plan, alloc, plan.CurrentVersion); err != nil {
+			d.recordRollbackStep(alloc.NodeID, plan, "mark_pending", err)
 			return d.markRollbackFailed(status, fmt.Errorf("rollback markPending failed for %s/%s: %w", alloc.ServiceName, alloc.NodeID, err))
 		}
+		d.recordRollbackStep(alloc.NodeID, plan, "mark_pending", nil)
 		if err := d.sendUpdateCommand(alloc.NodeID, plan, plan.CurrentVersion); err != nil {
+			d.recordRollbackStep(alloc.NodeID, plan, "send_update", err)
 			return d.markRollbackFailed(status, fmt.Errorf("rollback sendUpdate failed for %s/%s: %w", alloc.ServiceName, alloc.NodeID, err))
 		}
+		d.recordRollbackStep(alloc.NodeID, plan, "send_update", nil)
 	}
 
 	if !d.waitForBatchHealth(ctx, touched, plan) {
+		d.recordRollbackStep("", plan, "wait_health", fmt.Errorf("HealthyDeadline expired"))
 		return d.markRollbackFailed(status, fmt.Errorf("rollback batch did not become healthy within HealthyDeadline"))
 	}
+	d.recordRollbackStep("", plan, "wait_health", nil)
 
 	status.Status = StateReverted
 	status.EndTime = time.Now()
 	d.updateLastRecord(StateReverted, 0)
 	log.Info().Str("service", status.ServiceName).Msg("deployment rolled back successfully")
 	return status, fmt.Errorf("deployment reverted: %s", reason)
+}
+
+// recordRollbackStep appends one entry to the active deployment record's
+// RollbackSteps audit trail. NodeID is empty for the final batch-wait
+// verdict (it applies to the whole touched set, not a single alloc).
+func (d *Deployer) recordRollbackStep(nodeID string, plan *DeploymentPlan, action string, err error) {
+	step := RollbackStep{
+		Timestamp: time.Now(),
+		NodeID:    nodeID,
+		FromVer:   plan.TargetVersion,
+		ToVer:     plan.CurrentVersion,
+		Action:    action,
+		Outcome:   "ok",
+	}
+	if err != nil {
+		step.Outcome = "error"
+		step.Error = err.Error()
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if len(d.history) == 0 {
+		return
+	}
+	last := &d.history[len(d.history)-1]
+	last.RollbackSteps = append(last.RollbackSteps, step)
 }
 
 // markRollbackFailed finalises the deployment in RollbackFailed state.

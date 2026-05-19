@@ -12,16 +12,35 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// DeploymentRecord stores deployment history.
+// DeploymentRecord stores deployment history. RollbackSteps is the
+// audit trail of every rollback dispatch performed by revertDeployment
+// — what got rolled back, to which version, and what happened. Empty
+// on deployments that succeeded or failed without auto_revert.
 type DeploymentRecord struct {
-	ID          string    `json:"id"`
-	Service     string    `json:"service"`
-	Version     string    `json:"version"`
-	Strategy    string    `json:"strategy"`
-	Status      State     `json:"status"`
-	StartedAt   time.Time `json:"started_at"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
-	Progress    int       `json:"progress"` // 0-100
+	ID            string         `json:"id"`
+	Service       string         `json:"service"`
+	Version       string         `json:"version"`
+	Strategy      string         `json:"strategy"`
+	Status        State          `json:"status"`
+	StartedAt     time.Time      `json:"started_at"`
+	CompletedAt   time.Time      `json:"completed_at,omitempty"`
+	Progress      int            `json:"progress"` // 0-100
+	RollbackSteps []RollbackStep `json:"rollback_steps,omitempty"`
+}
+
+// RollbackStep records one allocation walked back to the previous
+// version during auto_revert. The deployer appends one entry per
+// dispatch + one for the final batch-health verdict; operators
+// reading the record can reconstruct exactly what happened during
+// the rollback.
+type RollbackStep struct {
+	Timestamp time.Time `json:"timestamp"`
+	NodeID    string    `json:"node_id,omitempty"`     // empty for the batch-wait verdict
+	FromVer   string    `json:"from_version"`
+	ToVer     string    `json:"to_version"`
+	Action    string    `json:"action"`                // "mark_pending", "send_update", "wait_health"
+	Outcome   string    `json:"outcome"`               // "ok" | "error"
+	Error     string    `json:"error,omitempty"`
 }
 
 // DeploymentPlan describes a deployment.
@@ -76,11 +95,15 @@ type DeploymentStatus struct {
 // minimal so tests can inject a stub. SetRollbackFailed lets the
 // deployer flag a service that failed auto_revert so the autoscaler
 // stops touching it; the operator clears the flag via the API once
-// they reconcile the mixed-version state.
+// they reconcile the mixed-version state. PutDeployment persists the
+// latest DeploymentRecord under `service.<name>.deployment` in KV
+// (TZ §6.1); callers ignore its error and log, since persistence is
+// observational, not authorisation.
 type StateAccessor interface {
 	GetAllocation(serviceName, nodeID string) (*types.ServiceAllocation, error)
 	MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error
 	SetRollbackFailed(serviceName string, failed bool) error
+	PutDeployment(service string, payload []byte) error
 }
 
 // SendRestartCommand is the dispatcher the deployer uses to tell an
