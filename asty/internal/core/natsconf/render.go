@@ -19,11 +19,17 @@ import (
 // (server_name, bind addresses) and the list of peer IPs that populate
 // cluster.routes. Peers are IPs of OTHER nodes; the local node is never
 // in its own routes list.
+//
+// KeepClusterBlock forces the cluster{} block into the output even when
+// Peers is empty. Set true ONLY for SIGHUP reloads of an already-
+// clustered process — NATS rejects an empty-routes cluster{} on cold
+// start (see the comment near the emit site).
 type Input struct {
-	Config config.NATSConfig
-	NodeID string
-	NodeIP string
-	Peers  []string
+	Config           config.NATSConfig
+	NodeID           string
+	NodeIP           string
+	Peers            []string
+	KeepClusterBlock bool
 }
 
 // Render builds the nats-server configuration as a single string.
@@ -46,12 +52,13 @@ func Render(in Input) string {
 		b.WriteString("}\n")
 	}
 
-	// Cluster block is rendered only when we have peers. NATS rejects a
-	// cluster{} block with no routes when JetStream + system_account are
-	// configured ("requires configured routes or solicited leafnode"),
-	// so single-node deployments run without the block and rely on
-	// JetStream's standalone mode.
-	if cl := in.Config.Server.Cluster; cl.Port > 0 && len(in.Peers) > 0 {
+	// Emit cluster{} when we have peers OR the caller pinned it on for
+	// a SIGHUP reload. NATS rejects an empty-routes cluster{} on cold
+	// start ("requires configured routes or solicited leafnode"); on
+	// reload it accepts it, which keeps a shrinking cluster in
+	// clustered mode instead of flipping to standalone (the flip
+	// otherwise leaves previously-replicated streams unreachable).
+	if cl := in.Config.Server.Cluster; cl.Port > 0 && (len(in.Peers) > 0 || in.KeepClusterBlock) {
 		b.WriteString("\ncluster {\n")
 		if cl.Name != "" {
 			fmt.Fprintf(&b, "  name: %q\n", cl.Name)

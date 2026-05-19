@@ -53,17 +53,19 @@ nats:
             password: "${A_NATS_APP_PASSWORD}"
       SYS:                                         # System account — observability only, no JS
         users:
-          - user: asty-observer                    # Read-only-ish: STATSZ/JSZ request-reply only
+          - user: asty-observer                    # SYS user: STATSZ/JSZ stats + graceful JS decommission
             password: "${A_NATS_OBSERVER_PASSWORD}"
             permissions:                           # Allowlist; everything else (SHUTDOWN, account ops) is denied
               publish:
                 allow:                             # Subjects this user may publish to
                   - "$SYS.REQ.SERVER.*.STATSZ"     # Server-stats request
                   - "$SYS.REQ.SERVER.*.JSZ"        # JetStream-stats request
+                  - "$JS.API.SERVER.REMOVE"        # Graceful node decommission (shrinks meta-RAFT config + remaps stream groups)
                   - "_INBOX.>"                     # Auto-inbox for the request-reply reply
               subscribe:
                 allow:
                   - "_INBOX.>"                     # Listen for the reply only
+                  - "$JS.EVENT.ADVISORY.SERVER.REMOVED"  # Advisory fired once SERVER.REMOVE commit lands across meta-RAFT
     system_account: SYS                            # Required for $SYS event publication
 
 # Autoscaler thresholds.

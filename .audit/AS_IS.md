@@ -606,7 +606,7 @@ agent). `stop` обходит все `pids-*`.
 
 ### dev vs prod
 
-В `deploy/dev/` есть `config.asty`, `dev.vars`, `docker-compose.yml`,
+В `deploy/dev/` есть `config.asty`, `.env`, `docker-compose.yml`,
 `start.sh`, и три демо-сервиса `xauth.asty`, `xhttp.asty`, `xws.asty`.
 В `deploy/prod/` — те же три демо плюс свой `config.asty`. Структурно
 оба `config.asty` должны быть идентичны (отличаются только значениями),

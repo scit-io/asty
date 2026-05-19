@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"asty/asty/internal/core/natsconf"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -86,7 +88,16 @@ func (a *Agent) tryHotReloadNATS(cmd *exec.Cmd) bool {
 	if nodeIP == "" {
 		return false
 	}
-	newConf := a.renderNATSConf(nodeIP)
+	// KeepClusterBlock=true: keep the process clustered through a
+	// shrink to 1 node. The flip to standalone otherwise refuses to
+	// load R>1 streams (10074). See natsconf.Render for the rule.
+	newConf := natsconf.Render(natsconf.Input{
+		Config:           a.cfg.NATS,
+		NodeID:           a.nodeID,
+		NodeIP:           nodeIP,
+		Peers:            a.resolveNATSPeers(nodeIP),
+		KeepClusterBlock: true,
+	})
 
 	oldRaw, err := os.ReadFile(a.natsConfPath())
 	if err != nil {

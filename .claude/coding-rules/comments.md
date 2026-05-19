@@ -57,7 +57,7 @@ Section header comments (multi-line block above a section) are good in addition 
 
 Lists: items get inline comments on the first scalar of each entry (e.g. `- bucket: name  # ...`).
 
-## Shell env files (`dev.vars` and similar)
+## Shell env files (`.env` and similar)
 
 `KEY = value` style files cannot carry inline comments (the shell parser would swallow `# ...` into the value). Use **block comments above each key**, key-focused, with a **blank line between blocks** for readability.
 

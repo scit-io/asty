@@ -18,7 +18,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 COMPOSE_FILE="$SCRIPT_DIR/docker-compose.yml"
-VARS_FILE="$SCRIPT_DIR/dev.vars"
+ENV_FILE="$SCRIPT_DIR/.env"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
 # Per-node PID file: $DATA_BASE/pids-$i, two lines (server, agent).
@@ -136,15 +136,15 @@ teardown_loopback_aliases() {
 # Asty: N nodes (each runs server + agent)
 # =============================================================================
 load_vars() {
-  # Loads dev.vars and exports every K=V into the shell. Must run
-  # before start_infra so docker-compose's ${A_MEMORY_TOTAL} substitution
+  # Loads .env and exports every K=V into the shell. Must run before
+  # start_infra so docker-compose's ${A_MEMORY_TOTAL} substitution
   # sees the value.
   while IFS='=' read -r key value; do
     [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
     key=$(echo "$key" | xargs)
     value=$(echo "$value" | xargs)
     export "$key=$value"
-  done < <(grep -v '^\s*#' "$VARS_FILE" | grep -v '^\s*$')
+  done < <(grep -v '^\s*#' "$ENV_FILE" | grep -v '^\s*$')
 }
 
 start_asty() {

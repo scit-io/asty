@@ -126,7 +126,12 @@ func (api *API) Start(ctx context.Context) error {
 	// dashboard, and the dashboard router under its own prefix.
 	mux := http.NewServeMux()
 	mux.Handle("GET /health", health.Handler())
-	mux.Handle("GET "+dashboardPrefix+"/", http.StripPrefix(dashboardPrefix, data))
+	// No method on the prefix — delegate ALL methods to the inner
+	// `data` router which is the source of truth for per-route method
+	// gating. Pinning the outer mux to GET (the previous shape) made
+	// every POST under /dashboard/v1/* fail with 405 before it could
+	// reach the inner router.
+	mux.Handle(dashboardPrefix+"/", http.StripPrefix(dashboardPrefix, data))
 	if api.cfg.Dashboard.Port == api.cfg.Prometheus.Port {
 		mux.Handle("GET "+prometheusPrefix, api.prometheusHandler)
 	}

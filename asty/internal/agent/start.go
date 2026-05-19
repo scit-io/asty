@@ -101,6 +101,16 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent ready")
 
 	<-ctx.Done()
+	// Pre-departure JS housekeeping (see natsleave.go for the why of
+	// each step). Order matters: shrink first if going to 1 survivor,
+	// then decommission — SERVER.REMOVE disables our JS, so any
+	// stream update has to land before it.
+	if surviving := len(a.resolveNATSPeers(a.resolveNodeIP())); surviving >= 1 {
+		if surviving == 1 {
+			a.shrinkStreamsToSingle()
+		}
+		a.decommissionSelf()
+	}
 	// Best-effort deregister: drop our node entry from the cluster KV
 	// so the leader's snapshot (and the asty_node_* metrics it feeds)
 	// stops reporting us on the next watcher tick. The supervisor is

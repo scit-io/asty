@@ -37,7 +37,7 @@ func Load(path string) (*Config, error) {
 	switch {
 	case err == nil:
 		// Expand ${VAR} references inside YAML values so secrets can
-		// live in env (dev.vars in dev, real env in prod) instead of
+		// live in env (.env in dev, real env in prod) instead of
 		// being inlined in the checked-in YAML. Bare $NAME is left
 		// alone on purpose — NATS subjects like "$SYS.REQ.SERVER.*"
 		// and "$SRV.PING.*" use $ as a literal namespace prefix.

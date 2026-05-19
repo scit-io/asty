@@ -5,7 +5,7 @@
 # when running multiple agents on loopback with different ports).
 #
 # Secrets (A_NATS_PASSWORD, A_NATS_OBSERVER_PASSWORD, A_NATS_APP_PASSWORD,
-# A_TOKEN) are NOT stored here — they live in dev.vars and are exported
+# A_TOKEN) are NOT stored here — they live in .env and are exported
 # by start.sh into the process env.
 
 # Cluster identity.
@@ -30,11 +30,11 @@ dev_mode: false     # Debug mode (true — skip required-field validation AND us
 #                               agent's JetStream KV access to asty-cluster.
 nats:
   user: asty-agent                                 # Client: agent's main user (ASTY)
-  password: "${A_NATS_PASSWORD}"                   # Substituted from env (see dev.vars)
+  password: "${A_NATS_PASSWORD}"                   # Substituted from env (see .env)
   observer_user: asty-observer                     # Client: agent's STATSZ/JSZ user (SYS)
-  observer_password: "${A_NATS_OBSERVER_PASSWORD}" # Substituted from env (see dev.vars)
+  observer_password: "${A_NATS_OBSERVER_PASSWORD}" # Substituted from env (see .env)
   app_user: asty-app                               # Client: credentials handed to spawned services
-  app_password: "${A_NATS_APP_PASSWORD}"           # Substituted from env (see dev.vars)
+  app_password: "${A_NATS_APP_PASSWORD}"           # Substituted from env (see .env)
   server:
     port: 4222                                     # nats-server client port
     jetstream:
@@ -54,17 +54,19 @@ nats:
             password: "${A_NATS_APP_PASSWORD}"
       SYS:                                         # System account — observability only, no JS
         users:
-          - user: asty-observer                    # Read-only-ish: STATSZ/JSZ request-reply only
+          - user: asty-observer                    # SYS user: STATSZ/JSZ stats + graceful JS decommission
             password: "${A_NATS_OBSERVER_PASSWORD}"
             permissions:                           # Allowlist; everything else (SHUTDOWN, account ops) is denied
               publish:
                 allow:                             # Subjects this user may publish to
                   - "$SYS.REQ.SERVER.*.STATSZ"     # Server-stats request
                   - "$SYS.REQ.SERVER.*.JSZ"        # JetStream-stats request
+                  - "$JS.API.SERVER.REMOVE"        # Graceful node decommission (shrinks meta-RAFT config + remaps stream groups)
                   - "_INBOX.>"                     # Auto-inbox for the request-reply reply
               subscribe:
                 allow:
                   - "_INBOX.>"                     # Listen for the reply only
+                  - "$JS.EVENT.ADVISORY.SERVER.REMOVED"  # Advisory fired once SERVER.REMOVE commit lands across meta-RAFT
     system_account: SYS                            # Required for $SYS event publication
 
 # Autoscaler thresholds.
