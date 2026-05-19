@@ -159,14 +159,20 @@ Each `asty -mode agent` at startup:
    On a peer change the supervisor first tries `tryHotReloadNATS`:
    write the new `nats.conf`, then `kill -HUP` the child. NATS applies
    the routes delta live, no client reconnect, no JS metadata election.
-   The hot path is taken whenever both the old and new conf carry a
-   `cluster{}` block — i.e. the JetStream mode itself does not flip.
 
-   A cold restart (SIGTERM → re-`bootstrapNATS`) only happens for the
-   `standalone ↔ clustered` transition (first peer joining, or the
-   last peer leaving), which structurally requires a fresh JS init.
-   `nats.go`-based clients reconnect automatically across the cold
-   path; JS data survives because the store directory does.
+   The hot-reload renderer pins `cluster{}` on (`KeepClusterBlock=true`
+   in `natsconf.Render`), even when the peer list became empty. NATS
+   rejects an empty-routes `cluster{}` on cold start but accepts it on
+   SIGHUP, so a shrinking cluster stays clustered all the way down to
+   one node. The flip to standalone is what would otherwise refuse to
+   load previously-replicated streams ("replicas > 1 not supported in
+   non-clustered mode", err_code=10074).
+
+   A cold restart (SIGTERM → re-`bootstrapNATS`) is only triggered when
+   the existing `nats.conf` has no `cluster{}` block and a peer just
+   joined — the standalone→clustered direction structurally requires
+   a fresh JS init. `nats.go`-based clients reconnect automatically;
+   JS data survives because the store directory does.
 
 The agent opens **two** NATS client connections and ships a third set of
 credentials to spawned services:
@@ -199,14 +205,41 @@ to itself.
    nodes by editing the A-record; agents pick up changes on the
    watcher's next tick.
 
-A single-node cluster boots with an empty peer list — `render.go`
-omits the `cluster{}` block and NATS runs in standalone JetStream
-mode. KV buckets land with `replicas=1`; when peers appear and the
-broker is restarted in clustered mode, `server/streamreplicas.go`
-(leader-only) upgrades existing streams via `UpdateStream`. The pair
-forms a symmetric loop: `server/kv.go:ensureKVBucket` degrades on
-create when the cluster can't place the requested replicas (10005 or
-10074), and `watchStreamReplicas` raises them back up later.
+Render-time asymmetry: cold bootstrap with an empty peer list (i.e.
+single-node startup) omits the `cluster{}` block and NATS runs in
+standalone JetStream mode. Hot reload of an already-clustered process
+keeps the block on (see `KeepClusterBlock` above), so a shrink to 1
+node does NOT flip back to standalone. KV buckets land with
+`replicas=1` initially; when peers appear and the broker restarts in
+clustered mode, `server/streamreplicas.go` (leader-only) upgrades
+existing streams via `UpdateStream`. The pair forms a symmetric loop:
+`server/kv.go:ensureKVBucket` degrades on create when the cluster
+can't place the requested replicas (10005 or 10074), and
+`watchStreamReplicas` raises them back up later.
+
+#### Graceful node decommission
+
+When the agent receives SIGTERM and its departure leaves the cluster
+non-empty, `agent/natsleave.go` runs before `stopNATSSupervisor`:
+
+- **`decommissionSelf`** publishes on `$JS.API.SERVER.REMOVE`
+  (SYS account) and awaits the `$JS.EVENT.ADVISORY.SERVER.REMOVED`
+  advisory. One meta-RAFT `EntryRemovePeer` proposal both shrinks the
+  meta-cluster config AND remaps every stream we belong to. Skipping
+  it would leave dead peers in the meta config, the quorum target
+  unreachable for any later proposal, and the next dying node's
+  shutdown work hung.
+- When `surviving==1` (the 2→1 step), `shrinkStreamsToSingle` runs
+  FIRST: for every stream with `Replicas>1` it transfers leadership
+  away from this node (`STREAM.LEADER.STEPDOWN` + the
+  `LEADER_ELECTED` advisory) and then `UpdateStream(Replicas=1)`.
+  The order matters — `SERVER.REMOVE` disables our JS, so any stream
+  update has to land before it.
+
+Permissions: the `asty-observer` SYS user is granted publish on
+`$JS.API.SERVER.REMOVE` and subscribe on
+`$JS.EVENT.ADVISORY.SERVER.REMOVED` in both `deploy/dev/config.asty`
+and `deploy/prod/config.asty`.
 
 For offline inspection of what would be written:
 `asty -mode nats-conf -config <path> -peers <ip1,ip2,...>` prints the
@@ -512,17 +545,19 @@ appears outside `core/config` (`Makefile:layer-check` target).
   `A_GATEWAY_RATE_BURST`, `A_GATEWAY_MAX_WS_CONNS`,
   `A_GATEWAY_TRUSTED_PROXY`, `A_GATEWAY_RATE_LIMIT_MAX_IPS`.
 
-**Local development with multiple nodes**: `start.sh` exports per-node
-`A_NODE_ID`, `A_NODE_IP`, `A_DASHBOARD_PORT`, `A_GATEWAY_PORT`,
-`A_WORK_DIR`, `A_DISK_TYPE` on top of the shared `config.asty`, and
-points all agents at `A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for
-live peer discovery.
+**Local development with multiple nodes**: `start.sh` first sources
+`deploy/dev/.env` (secrets + simulated-hardware tunables), then
+exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_DASHBOARD_PORT`,
+`A_GATEWAY_PORT`, `A_WORK_DIR`, `A_DISK_TYPE` on top of the shared
+`config.asty`, and points all agents at
+`A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
 
 ```
-deploy/dev/start.sh        # 1 node
-deploy/dev/start.sh 3      # 3 nodes (server + agent each)
-deploy/dev/start.sh add    # grow the running cluster by one
-deploy/dev/start.sh stop   # tear down everything
+deploy/dev/start.sh             # 1 node
+deploy/dev/start.sh 3           # 3 nodes (server + agent each)
+deploy/dev/start.sh add         # grow the running cluster by one
+deploy/dev/start.sh remove [N]  # shrink (graceful: SERVER.REMOVE on the leaver)
+deploy/dev/start.sh stop        # tear down everything
 ```
 
 `add` appends the new node's IP to `peers.txt`, brings up its
@@ -533,6 +568,22 @@ to apply the routes delta live (no downtime); growing from N=1 takes
 a cold restart on the existing node because JetStream flips from
 standalone to clustered. Either way the leader's `watchStreamReplicas`
 then raises replicas on existing KV buckets so the cluster has grown.
+
+`remove` shrinks the cluster. The SIGTERM'd agent runs the
+graceful-decommission flow in `agent/natsleave.go` before its
+`nats-server` is stopped (see "Graceful node decommission" above).
+Surviving agents see the peer-list change and SIGHUP their broker
+WITH the `cluster{}` block pinned — the surviving cluster stays
+clustered even down to one node.
+
+**Web UI in dev**: `cd asty/web && npm run dev` starts Vite on
+`localhost:5173` and proxies `/dashboard`, `/metrics`, `/health` to
+`localhost:7060`. The SPA reads `VITE_ASTY_TOKEN` at build time;
+`asty/web/.env.development` ships a default that matches
+`deploy/dev/.env` `A_TOKEN` so writes (drain, scale, deploy, …)
+authenticate cleanly. For production builds (`npm run build`),
+inject the token at runtime via an inline
+`window.__ASTY_TOKEN__ = "..."` script before the bundle loads.
 
 PID bookkeeping is per-node (`$DATA_BASE/pids-$i`, two lines:
 server, agent) so each `add` leaves a self-contained record;
@@ -735,6 +786,9 @@ asty/internal/
     ├── natswatch.go               # superviseNATS + watchNATSPeers —
     │                              #   live restart of the nats-server
     │                              #   child on peer-list changes
+    ├── natsleave.go               # graceful shutdown:
+    │                              #   SERVER.REMOVE + shrinkStreamsToSingle
+    │                              #   + transferStreamLeader
     ├── natsstats.go               # STATSZ/JSZ poller → asty_node_nats_*
     ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService

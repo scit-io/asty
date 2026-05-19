@@ -1151,6 +1151,55 @@ sequenceDiagram
     DM->>NATS: publish drain.progress.n1 (final)
 ```
 
+### 11.6 Сжатие кластера на лету
+
+Симметричный к §11.2 сценарий: оператор убирает узел из A-записи
+(или `peers.txt`), узел получает SIGTERM, агент проводит graceful-
+decommission, выживший кластер продолжает работать без cold restart
+в standalone.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant DNS as DNS (или peers.txt)
+    participant NX as Node X (leaving)
+    participant NXNATS as NX nats-server
+    participant NS as Survivors (N-1 nodes)
+    participant NSNATS as Survivors nats-server
+
+    Op->>NX: SIGTERM
+    Note over NX: agent.Start: ctx.Done branch
+    alt surviving == 1
+        NX->>NXNATS: STREAM.LEADER.STEPDOWN (per R>1 stream)
+        NXNATS-->>NX: LEADER_ELECTED advisory
+        NX->>NXNATS: UpdateStream Replicas=1
+    end
+    NX->>NXNATS: $JS.API.SERVER.REMOVE {peer: NX}
+    NXNATS->>NSNATS: meta-RAFT propose EntryRemovePeer
+    NSNATS-->>NSNATS: shrink meta config + remap stream groups
+    NSNATS-->>NX: $JS.EVENT.ADVISORY.SERVER.REMOVED
+    NX->>NXNATS: stop (SIGTERM via supervisor)
+    Op->>DNS: remove NX from A-record (или peers.txt)
+    Note over NS: watchNATSPeers tick (5s)
+    NS->>NS: resolveNATSPeers — set изменился
+    NS->>NS: tryHotReloadNATS<br/>(KeepClusterBlock=true)
+    NS->>NSNATS: write new conf + SIGHUP
+    NSNATS-->>NS: routes delta applied,<br/>process stays clustered
+```
+
+**Ключевые свойства:**
+
+- `SERVER.REMOVE` шринкает meta-RAFT config — кворум остаётся
+  достижимым для последующих proposal'ов.
+- На переходе 2→1 уходящий узел понижает `Replicas` до 1 ДО
+  `SERVER.REMOVE` (после disable JS UpdateStream уже не пройдёт).
+- Выжившие НЕ переходят в standalone-mode: `tryHotReloadNATS`
+  передаёт `KeepClusterBlock=true` в `natsconf.Render`, NATS на
+  SIGHUP принимает `cluster{}` с пустыми routes.
+- Без этого зашли бы в `10074: replicas > 1 not supported in
+  non-clustered mode` при попытке загрузить ранее реплицированные
+  стримы из дискового стора.
+
 ---
 
 ## 12. Идеальная файловая структура
