@@ -100,51 +100,16 @@ type PrometheusConfig struct {
 // Addr returns "<host>:<port>".
 func (p PrometheusConfig) Addr() string { return joinHostPort(p.Host, p.Port) }
 
-// AgentConfig — agent-specific paths and capacity overrides. Capacity
-// overrides used to be read with os.Getenv at the point of use; they
-// now live here as part of the single-config-path discipline
-// (TZ §2.9).
-//
-// The drop-root target is NOT configurable — when the agent starts as
-// root it drops to the conventional `nobody` user after bootstrap.
-// See dropPrivileges in asty/internal/agent for the rationale: no
-// dedicated service account is required, no env wiring, no operator
-// confusion about which name to use across machines.
-type AgentConfig struct {
-	WorkDir    string              `yaml:"work_dir"`
-	ServiceDir string              `yaml:"service_dir"`
-	Capacity   AgentCapacityConfig `yaml:"capacity"`
-}
+// AgentConfig / AgentCapacityConfig / ArtifactConfig live in agent.go.
 
-// AgentCapacityConfig overrides the values detect*() helpers would
-// produce from the host. Used in dev to fake a heterogeneous cluster
-// from a single physical machine. Values that mean "no override":
-//   - CPUTotal, MemoryTotal, DiskTotal, SwapTotal: 0
-//   - DiskOSBaseline, NATSDiskBaseline: negative (sentinel for "use
-//     defaults"); zero is a legitimate explicit value.
-//   - DiskType: empty string.
-type AgentCapacityConfig struct {
-	CPUTotal         int    `yaml:"cpu_total"`           // MHz aggregate
-	MemoryTotal      int64  `yaml:"memory_total"`        // MB
-	DiskTotal        int64  `yaml:"disk_total"`          // MB
-	SwapTotal        int64  `yaml:"swap_total"`          // MB
-	DiskOSBaseline   int64  `yaml:"disk_os_baseline"`    // MB (-1 unset)
-	NATSDiskBaseline int64  `yaml:"nats_disk_baseline"`  // MB (-1 unset)
-	DiskType         string `yaml:"disk_type"`           // ssd|hdd
-}
-
-// ArtifactConfig holds template variables substituted into artifact
-// URLs (server-side). Lives at top-level because both server and dev
-// tooling refer to it; the .asty's per-service "artifact.url" expands
-// these via os.Expand at deploy time.
-type ArtifactConfig struct {
-	Arch       string `yaml:"arch"`
-	GitHubRepo string `yaml:"github_repo"`
-}
-
-// Validate rejects required-field gaps early. Dev-mode opts out so a
-// developer can spin a single-node cluster from defaults.
+// Validate rejects required-field gaps early. Dev-mode opts out of
+// the top-level required-secret checks (domain, token) but the
+// autoscaler-sanity rules below run unconditionally — bad numerical
+// settings would silently break placement decisions even in dev.
 func (c *Config) Validate() error {
+	if err := c.Autoscale.Validate(); err != nil {
+		return err
+	}
 	if c.DevMode {
 		return nil
 	}
@@ -158,6 +123,30 @@ func (c *Config) Validate() error {
 		return err
 	}
 	return c.Gateway.Validate()
+}
+
+// Validate enforces the autoscaler-sanity rules TZ §8.4 lists. These
+// are pure-numerical checks that don't depend on env / secret fields,
+// so they run for dev-mode configs too — a typo in min_copies hurts
+// just as much in dev as in prod.
+func (a AutoscaleConfig) Validate() error {
+	if a.MinCopies < 1 {
+		return fmt.Errorf("autoscale.min_copies must be ≥ 1, got %d", a.MinCopies)
+	}
+	if a.MaxCopies > 0 && a.MaxCopies < a.MinCopies {
+		return fmt.Errorf("autoscale.max_copies (%d) must be ≥ autoscale.min_copies (%d) when non-zero",
+			a.MaxCopies, a.MinCopies)
+	}
+	if a.TargetCPU <= 0 || a.TargetCPU >= 100 {
+		return fmt.Errorf("autoscale.target_cpu must be in (0, 100), got %d", a.TargetCPU)
+	}
+	if a.TargetMemory <= 0 || a.TargetMemory >= 100 {
+		return fmt.Errorf("autoscale.target_memory must be in (0, 100), got %d", a.TargetMemory)
+	}
+	if a.IdleHold < 0 {
+		return fmt.Errorf("autoscale.idle_hold must be ≥ 0, got %s", a.IdleHold)
+	}
+	return nil
 }
 
 // defaults returns a Config populated with the sane defaults the agent

@@ -593,16 +593,25 @@ sequenceDiagram
 
 ### 6.2 NATS subjects
 
+Конвенция: `asty.v1.<role>.<nodeID>.<topic>` для всего per-node
+трафика; topics без `<nodeID>` зарезервированы для broadcast.
+NATS-wildcard `>` упрощает фильтрацию по роли (например,
+`asty.v1.agent.>` собирает всё, что публикуют агенты).
+
 ```
-asty.v1.cmd.<nodeID>.<verb>           # leader → agent RPC (req-reply)
-                                      # verb: start, stop, restart, getlogs, ping
-asty.v1.event.<nodeID>.<event>        # agent → fanout
-                                      # event: alloc.status, process.exit
-asty.v1.log.<role>.<nodeID>.<source>  # role: server|agent, source: agent|<service>
+asty.v1.agent.<nodeID>.cmd.<verb>     # leader → agent RPC (req-reply)
+                                      # verb: start, stop, restart, getlogs
+asty.v1.agent.<nodeID>.ping           # proximity probe (agent answers)
+asty.v1.agent.<nodeID>.ping-peer      # cross-node ping (initiator side)
+asty.v1.agent.<nodeID>.logs.agent     # agent's own zerolog stream
+asty.v1.agent.<nodeID>.logs.<service> # spawned service stdout/stderr
+asty.v1.server.logs                   # server's own zerolog stream (broadcast)
 asty.v1.metrics.gateway.<nodeID>      # agent gateway → server (RPS report)
-asty.v1.drain.progress.<nodeID>       # drainer → fanout
-asty.v1.deploy.progress.<service>     # deployer → fanout
-asty.v1.ping.<nodeID>                 # proximity probe
+asty.v1.drain.progress                # drainer → fanout
+                                      # (DrainStatus embeds node_id in payload,
+                                      # so no nodeID suffix on subject)
+asty.v1.deploy.progress.<service>     # deployer → fanout (per-service)
+asty.v1.audit.<resource>.<action>     # write-API audit (see §10.5)
 $SYS.REQ.SERVER.<id>.STATSZ           # SYS-account observer
 $SYS.REQ.SERVER.<id>.JSZ              # SYS-account observer
 ```
@@ -615,6 +624,10 @@ $SYS.REQ.SERVER.<id>.JSZ              # SYS-account observer
   без декодирования на стороне сервера).
 - `cmd.*` — request-reply с deadline 30 с. Reply содержит typed result
   или `ErrorReply{code,msg}`.
+- События lifecycle'а (alloc.status, process.exit) **не** идут
+  отдельным subject'ом — состояние пишется в KV (`asty-cluster`),
+  watcher'ы подписаны на KV-update'ы. NATS-fanout-evt'ов отдельно
+  не существует.
 
 ### 6.3 Конфиг nats.conf
 

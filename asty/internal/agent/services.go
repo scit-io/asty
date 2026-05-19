@@ -37,13 +37,22 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	}
 
 	serviceDir := filepath.Join(a.workDir, svc.Name)
-	if err := os.MkdirAll(serviceDir, 0755); err != nil {
+	if err := os.MkdirAll(serviceDir, 0o700); err != nil {
 		return fmt.Errorf("failed to create service directory: %w", err)
 	}
 
 	if svc.Artifact.URL != "" {
 		if err := a.artifactDownloader.Download(svc.Artifact.URL, svc.Artifact.Checksum, serviceDir); err != nil {
 			return fmt.Errorf("failed to download artifact: %w", err)
+		}
+		// Stamp +x on the entrypoint binary. The artifact downloader
+		// writes 0400 to honour TZ §10.2 (owner-read-only at rest);
+		// we add the exec bit here, just-in-time, so the file is
+		// runnable for fork+exec but stays as locked-down as the
+		// archive allows when not being executed.
+		entrypoint := filepath.Join(serviceDir, svc.Name)
+		if err := os.Chmod(entrypoint, 0o500); err != nil {
+			return fmt.Errorf("chmod +x %s: %w", entrypoint, err)
 		}
 	}
 
@@ -159,15 +168,11 @@ func (a *Agent) StopService(serviceName string) error {
 }
 
 // RestartService stops the currently-running copy (if any) and starts a
-// fresh one from svc. Used by the deployer's rolling-update path to apply
-// a new version: StartService alone is idempotent (it refreshes the alloc
-// PID and returns when the process exists), so the explicit stop here
-// bypasses the short-circuit and guarantees the new svc def — including
-// any version-substituted Artifact URL — actually takes effect.
+// fresh one from svc. The deployer's rolling-update path uses this:
+// StartService alone is idempotent, so the explicit stop guarantees
+// the new svc def (and any version-substituted Artifact URL) takes
+// effect.
 func (a *Agent) RestartService(svc *types.ServiceDefinition) error {
-	// Best-effort stop: ignore "service not running" so a restart targeted
-	// at a node that doesn't currently host the process still results in
-	// a fresh start.
 	if err := a.StopService(svc.Name); err != nil {
 		log.Debug().Err(err).Str("service", svc.Name).Msg("restart: stop returned (may have been already stopped)")
 	}
@@ -183,7 +188,6 @@ func (a *Agent) stopAllProcesses() {
 		services = append(services, name)
 	}
 	a.mu.RUnlock()
-
 	for _, name := range services {
 		if err := a.StopService(name); err != nil {
 			log.Error().Err(err).Str("service", name).Msg("failed to stop service")

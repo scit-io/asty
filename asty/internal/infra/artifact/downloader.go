@@ -32,10 +32,18 @@ func NewDownloader() *Downloader {
 	}
 }
 
-// Download downloads and extracts an artifact to the destination directory
+// Download downloads and extracts an artifact to the destination directory.
+//
+// URL schemes accepted: `https://...` (network fetch, the prod path),
+// `file://...` and the literal `local` (dev shortcuts). Plain `http://`
+// is rejected — TZ §10.2 mandates HTTPS for network fetches so the
+// agent never pulls an unverifiable payload over the wire.
 func (d *Downloader) Download(url, checksum, destDir string) error {
 	if strings.HasPrefix(url, "file://") || url == "local" {
 		return d.copyLocal(url, destDir)
+	}
+	if !strings.HasPrefix(url, "https://") {
+		return fmt.Errorf("artifact URL must be https:// (got %q) — plain http or other schemes rejected per TZ §10.2", url)
 	}
 
 	log.Info().
@@ -108,7 +116,7 @@ func (d *Downloader) copyLocal(url, destDir string) error {
 		Str("dest", destDir).
 		Msg("copying local binary")
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, artifactDirMode); err != nil {
 		return fmt.Errorf("failed to create dest dir: %w", err)
 	}
 
@@ -119,7 +127,7 @@ func (d *Downloader) copyLocal(url, destDir string) error {
 	defer src.Close()
 
 	destPath := filepath.Join(destDir, serviceName)
-	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	dst, err := os.OpenFile(destPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, artifactBinMode)
 	if err != nil {
 		return fmt.Errorf("failed to create dest binary: %w", err)
 	}
