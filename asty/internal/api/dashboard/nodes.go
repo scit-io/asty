@@ -149,11 +149,12 @@ func (api *API) handleNodeKill(w http.ResponseWriter, r *http.Request) {
 		api.writeError(w, http.StatusBadRequest, "confirm_name must match node id", nil)
 		return
 	}
-	if _, err := api.ctx.ClusterState().GetNode(nodeID); err != nil {
-		api.writeError(w, http.StatusNotFound, "node not found", err)
-		return
-	}
 
+	// No GetNode pre-check: the leader's bucket view may transiently
+	// lag the agent's (cluster catchup, replica upgrades), and the
+	// downstream steps are all idempotent — ShutdownAgent is a NATS
+	// RPC that either reaches the agent or times out; DeleteAllocation
+	// + RemoveNode are no-ops on missing keys.
 	shutdownErr := api.ctx.ShutdownAgent(nodeID)
 
 	for _, alloc := range api.allocsByNode(nodeID) {

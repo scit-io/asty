@@ -64,21 +64,17 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 	// alone would miss it.
 	selfDisk := astyBinarySizeMB() + dirSizeMB(a.workDir)
 
-	// Status defaults to Ready once the agent has real capacity numbers
-	// (CPU + memory). The first heartbeat may arrive before sysinfo
-	// readers populate them in dev/CI; in that window we stay Joining
-	// so the scheduler doesn't place onto a zero-capacity node.
-	// Operator-set states (Draining, Drained, Paused) are preserved
-	// across heartbeats.
-	status := types.NodeReady
-	if cpuTotal == 0 || memTotal == 0 {
-		status = types.NodeJoining
-	}
+	// Status comes from the existing KV record verbatim when the read
+	// succeeds (so operator-set Draining/Drained/Paused survive the
+	// roundtrip). When the read fails — e.g. nats-server cold restart
+	// on a 1→2 cluster growth, bucket leader still catching up — we
+	// leave Status empty and let the heartbeat caller decide between
+	// the in-memory cache and a fresh default. Conflating the failure
+	// case with a Ready default here is what used to silently clobber
+	// operator-set states during cluster reorganization.
+	var status types.NodeStatus
 	if existing, err := a.clusterState.GetNode(a.nodeID); err == nil {
-		switch existing.Status {
-		case types.NodeDraining, types.NodeDrained, types.NodePaused:
-			status = existing.Status
-		}
+		status = existing.Status
 	}
 
 	a.natsStats.mu.RLock()

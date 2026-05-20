@@ -11,6 +11,7 @@ import (
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
+	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/kv"
 	"asty/asty/internal/infra/artifact"
 	"asty/asty/internal/infra/probe"
@@ -82,6 +83,16 @@ type Agent struct {
 	// shutdownFn cancels Start's derived ctx so CmdShutdown can
 	// trigger the same graceful path as SIGTERM.
 	shutdownFn context.CancelFunc
+
+	// lastOperatorStatus caches the most recent operator-set status
+	// observed in KV (Draining, Drained, Paused). The heartbeat uses
+	// it as a fallback when its KV read fails — without it, transient
+	// catchup gaps during cluster growth would let the next write
+	// silently clobber an operator-set status with default Ready.
+	// Reset to "" whenever a successful read returns Ready/Joining
+	// (the operator explicitly cleared the drain or the node is just
+	// coming up).
+	lastOperatorStatus types.NodeStatus
 }
 
 // New creates a new Asty agent. The work directory is created on disk

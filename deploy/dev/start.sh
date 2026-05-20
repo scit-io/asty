@@ -133,6 +133,46 @@ teardown_loopback_aliases() {
 }
 
 # =============================================================================
+# Orphan sweep
+# =============================================================================
+# sweep_orphan_nodes drops pidfiles whose agent PID is gone — dashboard
+# kill, crash, or external SIGTERM all leave the file behind otherwise.
+# It also picks up the orphaned server process from the same pidfile
+# (servers don't die on their own when the agent does) and the matching
+# entry in PEERS_FILE so surviving nats-servers don't keep trying to
+# route to a dead peer. Called at the top of add_node and remove_node
+# so subsequent counts/index-picks see ground truth.
+#
+# Why `sudo kill -0`: the agent runs under sudo, so its PID is owned by
+# root; an unprivileged `kill -0` from this script's user gets EPERM
+# and falsely reports the process dead. A single `sudo kill -0` works
+# for both root-owned (agent) and user-owned (server) PIDs.
+sweep_orphan_nodes() {
+  local pf server_pid agent_pid idx addr tmp
+  for pf in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pf" ]] || continue
+    server_pid=$(sed -n '1p' "$pf" 2>/dev/null)
+    agent_pid=$(sed -n '2p' "$pf" 2>/dev/null)
+    # Agent alive — real node, leave it.
+    if [[ -n "$agent_pid" ]] && sudo kill -0 "$agent_pid" 2>/dev/null; then
+      continue
+    fi
+    info "sweeping stale node (pidfile $pf: agent gone)"
+    if [[ -n "$server_pid" ]] && sudo kill -0 "$server_pid" 2>/dev/null; then
+      sudo kill "$server_pid" 2>/dev/null && info "  ✓ killed orphan server PID $server_pid"
+    fi
+    idx="${pf##*-}"
+    addr="127.0.0.${idx}"
+    if [[ -f "$PEERS_FILE" ]]; then
+      tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
+      grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
+      mv "$tmp" "$PEERS_FILE"
+    fi
+    rm -f "$pf"
+  done
+}
+
+# =============================================================================
 # Asty: N nodes (each runs server + agent)
 # =============================================================================
 load_vars() {
@@ -235,6 +275,7 @@ start_node() {
 # restart their nats-server child. Reaching steady-state takes the
 # rendered-conf change + JetStream meta-leader re-election (~10–15 s).
 add_node() {
+  sweep_orphan_nodes
   if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
     die "no running cluster found (no ${PID_FILE_TMPL}-* / $PEERS_FILE). Start one with: $0 [N]"
   fi
@@ -273,6 +314,8 @@ add_node() {
 remove_node() {
   local target="${1:-}"
 
+  sweep_orphan_nodes
+
   if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
     die "no running cluster found. Start one with: $0 [N]"
   fi
@@ -293,24 +336,62 @@ remove_node() {
   if [[ ! -f "$pidfile" ]]; then
     die "node $target is not running ($pidfile missing)"
   fi
-  local remaining
-  remaining=$(compgen -G "${PID_FILE_TMPL}-*" | wc -l | tr -d ' ')
-  if [[ "$remaining" -le 1 ]]; then
-    warn "this is the last running node — the cluster will be fully dismantled"
-    printf "${YELLOW}Type 'yes' to confirm:${NC} "
-    local confirm
-    read -r confirm
-    [[ "$confirm" == "yes" ]] || die "aborted"
+  # Cluster size from the dashboard (= KV), not from local pidfiles.
+  # The two diverge whenever an out-of-band kill (UI button, crash)
+  # removes a node from KV while its host-side processes are still
+  # winding down — pidfile count would over-report and skip the
+  # last-node warning. Try each pidfile's IP until one dashboard
+  # answers successfully; if none do, skip the check with a warning.
+  local cluster_size="" addr_try
+  for pf_try in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pf_try" ]] || continue
+    addr_try="127.0.0.${pf_try##*-}"
+    cluster_size=$(curl -fsS --max-time 2 "http://${addr_try}:7060/dashboard/v1/nodes" 2>/dev/null \
+      | python3 -c "import sys,json; print(json.load(sys.stdin).get('count', ''))" 2>/dev/null || true)
+    [[ "$cluster_size" =~ ^[0-9]+$ ]] && break
+    cluster_size=""
+  done
+  if [[ -z "$cluster_size" ]]; then
+    warn "cannot reach the dashboard on any node — skipping last-node guard"
+  else
+    info "cluster size: $cluster_size"
+    if [[ "$cluster_size" -le 1 ]]; then
+      warn "this is the last running node — the cluster will be fully dismantled"
+      printf "${YELLOW}Type 'yes' to confirm:${NC} "
+      local confirm
+      read -r confirm
+      [[ "$confirm" == "yes" ]] || die "aborted"
+    fi
   fi
 
   local addr="127.0.0.$target"
   log "removing node $target (id=dev-node-$target, ip=$addr)..."
 
-  # 1) SIGTERM the node's server + agent (sudo — agent runs as root).
-  #    The agent's ctx-cancel path deregisters node.<id> from KV, then
-  #    signals the NATS supervisor to SIGTERM the nats-server child.
-  #    3s grace covers deregister round-trip + nats-server JetStream
-  #    flush before we escalate to SIGKILL.
+  # 1) Dashboard kill first. Drives the same flow as the UI button:
+  #    CmdShutdown to the agent + RemoveNode in KV. On a healthy
+  #    cluster this is what clears the node from the dashboard list —
+  #    the agent's own graceful path can fail to deregister when the
+  #    JS bucket is degraded, and SIGKILL three seconds later won't
+  #    retry. Best-effort: 5 s timeout, failure ignored, the local
+  #    process kill below still wraps up the host side.
+  local kill_url="http://${addr}:7060/dashboard/v1/nodes/dev-node-${target}/kill"
+  if curl -fsS -X POST \
+      -H "Authorization: Bearer ${A_TOKEN:-}" \
+      -H "Content-Type: application/json" \
+      -d "{\"confirm_name\":\"dev-node-${target}\"}" \
+      --max-time 5 \
+      "$kill_url" >/dev/null 2>&1; then
+    info "✓ dashboard kill dispatched (KV cleanup pending)"
+  else
+    warn "dashboard kill unreachable — relying on local SIGTERM only (KV record may linger)"
+  fi
+
+  # 2) SIGTERM the node's server + agent (sudo — agent runs as root).
+  #    The agent's ctx-cancel path deregisters node.<id> from KV (if
+  #    the dashboard call above didn't already), then signals the NATS
+  #    supervisor to SIGTERM the nats-server child. 3s grace covers
+  #    deregister round-trip + nats-server JetStream flush before we
+  #    escalate to SIGKILL.
   local pid
   while IFS= read -r pid; do
     [[ -n "$pid" ]] || continue
@@ -322,7 +403,7 @@ remove_node() {
     sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
   done < "$pidfile"
 
-  # 2) Drop the IP from PEERS_FILE so surviving agents notice on their
+  # 3) Drop the IP from PEERS_FILE so surviving agents notice on their
   #    next watcher tick and shrink their cluster.routes (SIGHUP hot
   #    reload when 2+ nodes remain, cold restart on the 2→1 step).
   local tmp
@@ -330,7 +411,7 @@ remove_node() {
   grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
   mv "$tmp" "$PEERS_FILE"
 
-  # 3) Clean per-node state — pidfile, working dir, JS store. Old
+  # 4) Clean per-node state — pidfile, working dir, JS store. Old
   #    JetStream data would conflict with a future add reusing
   #    the same index.
   rm -f "$pidfile"

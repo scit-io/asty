@@ -34,12 +34,48 @@ func (a *Agent) publishHeartbeat(ctx context.Context) {
 			return
 		case <-ticker.C:
 			info := a.getNodeInfo()
+			a.finalizeNodeStatus(info)
 			if err := a.clusterState.UpdateNode(info); err != nil {
 				log.Error().Err(err).Msg("failed to update node heartbeat")
 			} else {
 				log.Debug().Str("node_id", a.nodeID).Msg("heartbeat sent")
 			}
 		}
+	}
+}
+
+// finalizeNodeStatus resolves info.Status with three signals: the
+// value getNodeInfo got back from KV (empty = read failed), the
+// in-memory cache of the last observed operator-set status, and
+// the capacity probe state (zero capacity → Joining).
+//
+// Cache flow:
+//   - Observed Draining/Drained/Paused → cache it.
+//   - Observed Ready/Joining            → clear cache (operator's intent
+//                                          was cleared, OR fresh node).
+//   - Read failed (empty status)         → restore from cache if any,
+//                                          otherwise default by capacity.
+//
+// Without the cache, a transient KV failure during cluster growth
+// would let the next UpdateNode write default Ready over Drained.
+func (a *Agent) finalizeNodeStatus(info *types.NodeInfo) {
+	switch info.Status {
+	case types.NodeDraining, types.NodeDrained, types.NodePaused:
+		a.lastOperatorStatus = info.Status
+		return
+	case types.NodeReady, types.NodeJoining:
+		a.lastOperatorStatus = ""
+		return
+	}
+	// Status == "" — KV read failed inside getNodeInfo.
+	if a.lastOperatorStatus != "" {
+		info.Status = a.lastOperatorStatus
+		return
+	}
+	if info.CPUTotal == 0 || info.MemoryTotal == 0 {
+		info.Status = types.NodeJoining
+	} else {
+		info.Status = types.NodeReady
 	}
 }
 
