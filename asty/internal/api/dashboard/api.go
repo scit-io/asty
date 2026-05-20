@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"asty/asty/internal/api/health"
@@ -86,13 +87,15 @@ func (api *API) Start(ctx context.Context) error {
 	prometheusPrefix := api.cfg.Prometheus.Prefix
 	addr := api.cfg.Dashboard.Addr()
 
-	data := http.NewServeMux()
-	data.HandleFunc("GET /{$}", api.handleCluster)
-	data.HandleFunc("GET /logs", api.handleClusterLogs)
+	mux := http.NewServeMux()
+	mux.Handle("GET /health", health.Handler())
+	if api.cfg.Dashboard.Port == api.cfg.Prometheus.Port {
+		mux.Handle("GET "+prometheusPrefix, api.prometheusHandler)
+	}
 
 	// Writes chain tokenAuth → leaderOnly → auditLog → handler:
 	//   tokenAuth refuses without a valid Authorization/X-Asty-Token,
-	//   leaderOnly redirects followers to the leader (307),
+	//   leaderOnly reverse-proxies follower writes to the leader,
 	//   auditLog publishes an asty.v1.audit.* event after the
 	//     handler returns (status captured from a recorder wrapper),
 	//   and only then does the real handler run.
@@ -100,41 +103,38 @@ func (api *API) Start(ctx context.Context) error {
 		return api.tokenAuth(api.leaderOnly(api.auditLog(h)))
 	}
 
-	data.HandleFunc("GET /nodes", api.handleNodes)
-	data.HandleFunc("GET /nodes/{id}", api.handleNode)
-	data.HandleFunc("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
-	data.HandleFunc("POST /nodes/{id}/drain", write(api.handleNodeDrain))
-	data.HandleFunc("POST /nodes/{id}/pause", write(api.handleNodePause))
-	data.HandleFunc("GET /nodes/{id}/logs", api.handleNodeLogs)
-	data.HandleFunc("GET /nodes/{id}/allocations", api.handleNodeAllocations)
-	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
-	data.HandleFunc("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
-	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/restart", write(api.handleAllocationRestart))
-	data.HandleFunc("POST /nodes/{id}/allocations/{allocId}/stop", write(api.handleAllocationStop))
-
-	// Services.
-	data.HandleFunc("GET /services", api.handleServices)
-	data.HandleFunc("GET /services/{name}", api.handleService)
-	data.HandleFunc("POST /services/{name}/scale", write(api.handleServiceScale))
-	data.HandleFunc("GET /services/{name}/allocations", api.handleServiceAllocations)
-	data.HandleFunc("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
-	data.HandleFunc("GET /services/{name}/deploy", api.handleServiceDeployHistory)
-	data.HandleFunc("POST /services/{name}/deploy", write(api.handleServiceDeploy))
-
-	// Outer mux: /health at the root, /metrics at the configured
-	// prometheus prefix when the listener is shared with the
-	// dashboard, and the dashboard router under its own prefix.
-	mux := http.NewServeMux()
-	mux.Handle("GET /health", health.Handler())
-	// No method on the prefix — delegate ALL methods to the inner
-	// `data` router which is the source of truth for per-route method
-	// gating. Pinning the outer mux to GET (the previous shape) made
-	// every POST under /dashboard/v1/* fail with 405 before it could
-	// reach the inner router.
-	mux.Handle(dashboardPrefix+"/", http.StripPrefix(dashboardPrefix, data))
-	if api.cfg.Dashboard.Port == api.cfg.Prometheus.Port {
-		mux.Handle("GET "+prometheusPrefix, api.prometheusHandler)
+	// Routes are registered with the full prefix (no StripPrefix) so
+	// r.URL.Path stays intact through middleware — the leaderOnly
+	// reverse-proxy forwards the exact incoming URL to the leader's
+	// mux, which matches on the same prefix.
+	route := func(pattern string, h http.HandlerFunc) {
+		sp := strings.IndexByte(pattern, ' ')
+		mux.HandleFunc(pattern[:sp]+" "+dashboardPrefix+pattern[sp+1:], h)
 	}
+
+	route("GET /{$}", api.handleCluster)
+	route("GET /logs", api.handleClusterLogs)
+
+	route("GET /nodes", api.handleNodes)
+	route("GET /nodes/{id}", api.handleNode)
+	route("GET /nodes/{id}/drain", api.handleNodeDrainStatus)
+	route("POST /nodes/{id}/drain", write(api.handleNodeDrain))
+	route("POST /nodes/{id}/pause", write(api.handleNodePause))
+	route("POST /nodes/{id}/kill", write(api.handleNodeKill))
+	route("GET /nodes/{id}/logs", api.handleNodeLogs)
+	route("GET /nodes/{id}/allocations", api.handleNodeAllocations)
+	route("GET /nodes/{id}/allocations/{allocId}", api.handleAllocation)
+	route("GET /nodes/{id}/allocations/{allocId}/logs", api.handleAllocationLogs)
+	route("POST /nodes/{id}/allocations/{allocId}/restart", write(api.handleAllocationRestart))
+	route("POST /nodes/{id}/allocations/{allocId}/stop", write(api.handleAllocationStop))
+
+	route("GET /services", api.handleServices)
+	route("GET /services/{name}", api.handleService)
+	route("POST /services/{name}/scale", write(api.handleServiceScale))
+	route("GET /services/{name}/allocations", api.handleServiceAllocations)
+	route("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
+	route("GET /services/{name}/deploy", api.handleServiceDeployHistory)
+	route("POST /services/{name}/deploy", write(api.handleServiceDeploy))
 
 	api.httpServer = &http.Server{
 		Addr:              addr,

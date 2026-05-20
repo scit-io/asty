@@ -406,6 +406,42 @@ stateDiagram-v2
   миграции ещё не завершены. Оператор решает: force-complete (потеря
   тех аллокаций) или resume (откат).
 
+### 4.6 Kill (abrupt decommission)
+
+`POST /dashboard/v1/nodes/{id}/kill` — дашбордный аналог
+`deploy/dev/start.sh remove`. Для случаев, когда узел не отвечает или
+оператор сознательно отказывается от graceful-миграции. Терминальная
+операция; обратной кнопки нет — после `Drained`/удаления узел
+вернётся только новым `Joining`.
+
+```mermaid
+stateDiagram-v2
+    [*] --> KillRequested: API kill (confirm_name == nodeID)
+    KillRequested --> ShutdownDispatched: CmdShutdown ack
+    KillRequested --> ForceOnly: CmdShutdown timeout (unreachable agent)
+    ShutdownDispatched --> Purging: server force-purge KV (idempotent)
+    ForceOnly --> Purging: server force-purge KV
+    Purging --> Done: DeleteAllocation + RemoveNode, reconciler enqueues
+    Done --> [*]
+```
+
+- **Обязательное name-confirmation**: тело должно содержать
+  `confirm_name == nodeID`, иначе 400. UI блокирует кнопку до точного
+  совпадения.
+- **`CmdShutdown`** — новый kind (`asty.v1.agent.<nodeID>.cmd.shutdown`).
+  Хэндлер агента: ack первым, cancel ctx async. Дальше работает
+  существующий SIGTERM-путь (`agent/start.go` + `agent/natsleave.go`):
+  decommission NATS, shrink streams при шринке до 1, deregister
+  `node.<id>` из KV, `stopAllProcesses`.
+- **Force-purge** на стороне сервера — `DeleteAllocation` для каждой
+  живой аллокации + `RemoveNode`. Идемпотентно: при достижимом агенте
+  он сам всё снёс, у нас будет два warning'а «not found» и тишина.
+- **Reconciler** ловит `NodeDeleted` через `watchNodesToQueue` и
+  перепланирует затронутые сервисы на оставшиеся `NodeReady`-узлы.
+- UX: спиннер «Killing node {name}…» во время запроса, финальный тост
+  «Node killed», редирект на `/nodes`. Время отклика — 2–10 с (ack от
+  агента + force-purge + NATS round-trips).
+
 ---
 
 ## 5. Циклы управления (L3 ops)
@@ -600,7 +636,7 @@ NATS-wildcard `>` упрощает фильтрацию по роли (напр�
 
 ```
 asty.v1.agent.<nodeID>.cmd.<verb>     # leader → agent RPC (req-reply)
-                                      # verb: start, stop, restart, getlogs
+                                      # verb: start, stop, restart, getlogs, shutdown
 asty.v1.agent.<nodeID>.ping           # proximity probe (agent answers)
 asty.v1.agent.<nodeID>.ping-peer      # cross-node ping (initiator side)
 asty.v1.agent.<nodeID>.logs.agent     # agent's own zerolog stream
@@ -711,9 +747,11 @@ flowchart LR
   middleware `tokenAuth → leaderOnly → auditLog → handler`:
   - `tokenAuth` — constant-time-сравнение токена из
     `Authorization: Bearer` или `X-Asty-Token` с `cfg.Token`.
-  - `leaderOnly` — `307 Temporary Redirect` на `Location` с
-    `http://<leader-IP>:<dashboard.port><path>`. UI/CLI следует
-    автоматически (307 сохраняет метод и body).
+  - `leaderOnly` — server-side reverse-proxy на лидера через
+    `httputil.NewSingleHostReverseProxy`. Follower форвардит запрос
+    на `http://<leader-IP>:<dashboard.port>`, стримит ответ обратно,
+    добавляет заголовок `X-Asty-Leader`. Без 307-redirect, чтобы
+    избежать CORS/preflight-проблем для не-collocated SPA.
   - `auditLog` — публикует `types.AuditEvent` (CBOR через
     `codec.Wire`) на `asty.v1.audit.<resource>.<action>` после
     того, как handler вернётся, с захваченным HTTP-статусом.

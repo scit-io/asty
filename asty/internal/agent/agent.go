@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -77,6 +78,10 @@ type Agent struct {
 	// when cfg.Agent.RunAsUser is unset — agent stays at the OS uid.
 	// Resolved once at Start so a typo in the user name fails fast.
 	drop dropTarget
+
+	// shutdownFn cancels Start's derived ctx so CmdShutdown can
+	// trigger the same graceful path as SIGTERM.
+	shutdownFn context.CancelFunc
 }
 
 // New creates a new Asty agent. The work directory is created on disk

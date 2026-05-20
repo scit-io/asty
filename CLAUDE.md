@@ -343,6 +343,35 @@ routes) coordinates a node drain via the small `DrainDeps` interface
 - `Resume(nodeID)` cancels the drain context and CAS's the node back
   to `NodeReady`.
 
+### Kill (abrupt decommission)
+
+The dashboard equivalent of `deploy/dev/start.sh remove` — for nodes
+that are unresponsive, or when the operator deliberately wants to skip
+graceful migration. Two-step UI confirmation (warning + typed-name
+input), then `POST /dashboard/v1/nodes/{id}/kill` with body
+`{"confirm_name": "<node-id>"}`.
+
+Server-side flow (`api/dashboard/nodes.go:handleNodeKill`):
+
+1. **CmdShutdown over NATS** (`asty.v1.agent.<nodeID>.cmd.shutdown`).
+   The agent acks immediately, then cancels its own derived context;
+   the existing SIGTERM-graceful path runs (decommission NATS, shrink
+   streams if shrinking to one survivor, deregister node from KV, stop
+   all spawned processes). If the agent is unreachable the request
+   times out — the next step still runs.
+2. **Force-purge from server side**: every live allocation on the node
+   is `DeleteAllocation`'d, then `RemoveNode` clears the node KV
+   record. Both operations are idempotent — no-ops when the agent's
+   graceful path already handled them.
+3. **Reconciler** picks up the deleted allocations on its next pass
+   (node-watch fires `enqueueAllServices`) and reschedules them onto
+   surviving nodes.
+
+The agent's `CmdShutdown` handler (`agent/commands.go`) is intentionally
+async: ack first, cancel after, so the response wins the race against
+NATS going down inside the graceful path. There is no `Resume` for
+kill — it's terminal.
+
 ### Platform Services Architecture
 
 ```
@@ -416,6 +445,9 @@ same routes. URLs match the navigation hierarchy 1:1:
 - `/dashboard/v1/` — cluster snapshot (`GET /` under the prefix).
 - `/dashboard/v1/nodes`, `/dashboard/v1/nodes/{id}`,
   `/dashboard/v1/nodes/{id}/allocations/{allocId}/logs`.
+- `/dashboard/v1/nodes/{id}/drain` (POST start/cancel, GET status),
+  `/dashboard/v1/nodes/{id}/pause` (POST),
+  `/dashboard/v1/nodes/{id}/kill` (POST — abrupt decommission, see "Kill" §).
 - `/dashboard/v1/services`, `/dashboard/v1/services/{name}/allocations`,
   `/dashboard/v1/services/{name}/autoscaler`,
   `/dashboard/v1/services/{name}/deploy`.
@@ -440,7 +472,13 @@ layers in order:
 
   - `tokenAuth` constant-time-compares the request token (Authorization:
     Bearer / X-Asty-Token) against `cfg.Token`.
-  - `leaderOnly` 307-redirects followers to the leader.
+  - `leaderOnly` server-side reverse-proxies follower writes to the
+    leader's dashboard listener (`httputil.NewSingleHostReverseProxy`)
+    and streams the response back. The follower adds `X-Asty-Leader`
+    so clients can observe which node actually served the call. No
+    307-redirect — browsers/proxy libraries handle cross-origin POST
+    redirects poorly (preflight, body loss); server-side forwarding
+    keeps the round-trip single-hop from the client's view.
   - `auditLog` publishes a `types.AuditEvent` to
     `asty.v1.audit.<resource>.<action>` on NATS (CBOR via `codec.Wire`),
     capturing status, target, actor IP, and X-Request-Id.

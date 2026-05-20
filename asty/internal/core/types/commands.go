@@ -15,10 +15,11 @@ import (
 type CommandKind string
 
 const (
-	CmdStart   CommandKind = "start"
-	CmdRestart CommandKind = "restart"
-	CmdStop    CommandKind = "stop"
-	CmdLogs    CommandKind = "logs"
+	CmdStart    CommandKind = "start"
+	CmdRestart  CommandKind = "restart"
+	CmdStop     CommandKind = "stop"
+	CmdLogs     CommandKind = "logs"
+	CmdShutdown CommandKind = "shutdown"
 )
 
 const (

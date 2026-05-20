@@ -36,6 +36,16 @@ func (dm *DrainManager) runDrain(ctx context.Context, nodeID string, allocs []al
 	systemAllocs, regularAllocs := splitByType(allocs)
 	total := len(allocs)
 
+	// No peer to migrate to → degenerate drain: stop every allocation
+	// in place, including regular ones. The operator either wanted the
+	// node empty (single-node teardown) or accepted the consequences
+	// in the dialog; either way, hanging on a non-existent target is
+	// the wrong answer.
+	if !dm.hasOtherReadyNode(nodeID) {
+		systemAllocs = append(systemAllocs, regularAllocs...)
+		regularAllocs = nil
+	}
+
 	var wg sync.WaitGroup
 
 	// System services run one-per-node — there is no peer to migrate

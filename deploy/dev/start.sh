@@ -261,8 +261,9 @@ add_node() {
 # remove_node shrinks a running cluster by tearing down one node and
 # removing its entry from PEERS_FILE. Without args, removes the
 # highest-numbered node (symmetric with add_node). With an explicit
-# index, removes that one. Refuses to take the last node down —
-# stop_all is the right tool for that.
+# index, removes that one. Removing the last node prompts for an
+# explicit 'yes' — the cluster is fully dismantled in that case and
+# data dirs go with it.
 #
 # Surviving agents pick up the file change on their next watcher tick
 # (~5 s) and shrink their cluster.routes via SIGHUP (or cold restart
@@ -295,7 +296,11 @@ remove_node() {
   local remaining
   remaining=$(compgen -G "${PID_FILE_TMPL}-*" | wc -l | tr -d ' ')
   if [[ "$remaining" -le 1 ]]; then
-    die "refusing to remove the last running node — use '$0 stop' instead"
+    warn "this is the last running node — the cluster will be fully dismantled"
+    printf "${YELLOW}Type 'yes' to confirm:${NC} "
+    local confirm
+    read -r confirm
+    [[ "$confirm" == "yes" ]] || die "aborted"
   fi
 
   local addr="127.0.0.$target"

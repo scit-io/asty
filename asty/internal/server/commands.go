@@ -18,6 +18,10 @@ const agentStartCommandTimeout = 30 * time.Second
 // agentStopCommandTimeout is shorter — stops are local kills with no I/O.
 const agentStopCommandTimeout = 5 * time.Second
 
+// agentShutdownCommandTimeout — only the ack; agent runs graceful
+// shutdown async after acking.
+const agentShutdownCommandTimeout = 10 * time.Second
+
 // SendCommandToAgent sends a kind-typed command to nodeID and returns
 // the agent's response. The subject embeds the kind (see
 // types.CommandSubject) so the payload is plain — no envelope, no
@@ -108,6 +112,20 @@ func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinit
 	resolved := *svc
 	resolved.Artifact.URL = s.resolveArtifactURL(svc.Artifact.URL, version)
 	return &resolved
+}
+
+// ShutdownAgent asks the agent on nodeID to begin a graceful self-
+// shutdown (kind alone is the signal — no payload).
+func (s *Server) ShutdownAgent(nodeID string) error {
+	resp, err := s.SendCommandToAgent(nodeID, types.CmdShutdown, nil, agentShutdownCommandTimeout)
+	if err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("agent rejected shutdown: %s", resp.Error)
+	}
+	log.Info().Str("node_id", nodeID).Msg("shutdown command dispatched")
+	return nil
 }
 
 // StopServiceOnNode dispatches a stop command to a node's agent.

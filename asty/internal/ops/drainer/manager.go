@@ -176,6 +176,26 @@ func (dm *DrainManager) GetStatus(nodeID string) *DrainStatus {
 	return nil
 }
 
+// hasOtherReadyNode reports whether any node OTHER than nodeID is
+// effectively Ready. Used as the drain guard so we don't promise
+// migration when there's nothing to migrate to.
+func (dm *DrainManager) hasOtherReadyNode(nodeID string) bool {
+	nodes, err := dm.deps.GetClusterState().ListNodes()
+	if err != nil {
+		return false
+	}
+	now := time.Now()
+	for _, n := range nodes {
+		if n.ID == nodeID {
+			continue
+		}
+		if n.EffectiveStatus(now) == types.NodeReady {
+			return true
+		}
+	}
+	return false
+}
+
 // collectAllocs gathers every running/pending/starting allocation
 // currently bound to nodeID. Stopped/failed ones are ignored — they're
 // not contributing traffic and don't need migration. One Watch-based

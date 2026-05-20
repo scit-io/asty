@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Switch } from '@/components/ui/switch'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Activity,
@@ -26,12 +17,15 @@ import {
   Plug,
   Radio,
   Signal,
+  Skull,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
 import { MetricsChart } from '@/components/metrics-chart'
+import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { NodeHeader } from '@/components/node-header'
+import { NodeKillDialog } from '@/components/node-kill-dialog'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { Tile } from '@/components/tile'
@@ -43,13 +37,16 @@ import { useClusterStore } from '@/store/cluster'
 // here; allocations and logs moved to their own routes.
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
-  const { nodeCache, subscribeNode, updateNodeStatus } = useClusterStore()
+  const navigate = useNavigate()
+  const { nodeCache, nodes, subscribeNode, updateNodeStatus } = useClusterStore()
   const cached = nodeId ? nodeCache[nodeId] : undefined
   const node = cached?.node || null
+  const isLastNode = nodes.length <= 1
   const cpuMetrics = cached?.cpuMetrics || []
   const memoryMetrics = cached?.memoryMetrics || []
   const rpsMetrics = cached?.rpsMetrics || []
   const [showDrainDialog, setShowDrainDialog] = useState(false)
+  const [showKillDialog, setShowKillDialog] = useState(false)
 
   useEffect(() => {
     if (!nodeId) return
@@ -64,6 +61,18 @@ export default function NodeDetail() {
       toast.success(enable ? 'Draining node' : 'Node resumed')
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
+
+  const handleKill = async () => {
+    if (!nodeId) return
+    try {
+      await api.killNode(nodeId, nodeId)
+      toast.success(`Node ${nodeId} killed`)
+      navigate('/nodes')
+    } catch (err) {
+      toast.error(`Kill failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      throw err
     }
   }
 
@@ -142,16 +151,29 @@ export default function NodeDetail() {
             timestamp={node.last_seen} />
           <Tile className="col-span-6 lg:col-span-3" variant="actions"
             title="Maintenance" icon={<Wrench className="h-4 w-4" />}
-            hint={drainHint}
             actions={
-              <>
-                <div className="text-sm font-bold">Drain</div>
-                <Switch
-                  checked={draining}
-                  onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
-                  disabled={node.status === 'draining'}
-                />
-              </>
+              <div className="flex items-center justify-between w-full">
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold">Drain</span>
+                    <Switch
+                      checked={draining}
+                      onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
+                      disabled={node.status === 'draining'}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground leading-none">{drainHint}</span>
+                </div>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => setShowKillDialog(true)}
+                  title="Abrupt decommission — use Drain for routine operations"
+                >
+                  <Skull />
+                  Kill
+                </Button>
+              </div>
             } />
         </div>
       </section>
@@ -191,22 +213,19 @@ export default function NodeDetail() {
         </section>
       )}
 
-      <AlertDialog open={showDrainDialog} onOpenChange={setShowDrainDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Drain node {node.id}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              All running allocations on this node will be migrated to peers and the node will stop accepting new placements.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { setShowDrainDialog(false); handleDrain(true) }}>
-              Drain
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <NodeDrainDialog
+        open={showDrainDialog}
+        nodeId={node.id}
+        onOpenChange={setShowDrainDialog}
+        onConfirm={() => { setShowDrainDialog(false); handleDrain(true) }}
+      />
+      <NodeKillDialog
+        open={showKillDialog}
+        nodeId={node.id}
+        isLastNode={isLastNode}
+        onOpenChange={setShowKillDialog}
+        onConfirm={handleKill}
+      />
     </div>
   )
 }

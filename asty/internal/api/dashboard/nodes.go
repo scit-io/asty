@@ -134,6 +134,40 @@ func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleNodeKill serves POST /nodes/{id}/kill — abrupt decommission.
+// Body must carry `{"confirm_name": "<node-id>"}`.
+func (api *API) handleNodeKill(w http.ResponseWriter, r *http.Request) {
+	nodeID := r.PathValue("id")
+	var req struct {
+		ConfirmName string `json:"confirm_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		api.writeError(w, http.StatusBadRequest, "invalid request body", err)
+		return
+	}
+	if req.ConfirmName != nodeID {
+		api.writeError(w, http.StatusBadRequest, "confirm_name must match node id", nil)
+		return
+	}
+	if _, err := api.ctx.ClusterState().GetNode(nodeID); err != nil {
+		api.writeError(w, http.StatusNotFound, "node not found", err)
+		return
+	}
+
+	shutdownErr := api.ctx.ShutdownAgent(nodeID)
+
+	for _, alloc := range api.allocsByNode(nodeID) {
+		_ = api.ctx.ClusterState().DeleteAllocation(alloc.ServiceName, alloc.NodeID)
+	}
+	_ = api.ctx.ClusterState().RemoveNode(nodeID)
+
+	resp := map[string]any{"node_id": nodeID}
+	if shutdownErr != nil {
+		resp["shutdown_error"] = shutdownErr.Error()
+	}
+	api.writeJSON(w, http.StatusOK, resp)
+}
+
 // handleNodeDrainStatus serves GET /nodes/{id}/drain — drain progress
 // or the steady-state node status if no drain is running.
 func (api *API) handleNodeDrainStatus(w http.ResponseWriter, r *http.Request) {

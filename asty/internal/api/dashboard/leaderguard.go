@@ -3,21 +3,27 @@ package dashboard
 import (
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 )
 
 // leaderOnly is the middleware applied to every write (POST) handler.
-// On a follower it issues 307 Temporary Redirect to the same path on
-// the current leader's API address; the client (UI, CLI, ops script)
-// can follow without code changes. Returning 307 (not 302) preserves
-// the original method and body — POST stays POST after the redirect.
+// On a follower it reverse-proxies the request to the leader's
+// dashboard listener and streams the response back. The X-Asty-Leader
+// header is added so clients can still observe which node actually
+// served the write.
 //
-// We use a 307 even on leaderless transients (LeaderInfo.IP empty):
-// in that case Location is left out and the body explains the
-// situation; the client gets 503, since no node can serve the write.
+// Why proxy instead of 307-redirect: browsers (and many proxy
+// libraries) handle cross-origin POST redirects poorly — preflight,
+// method downgrade, lost body. Server-side forwarding sidesteps that:
+// the client sees exactly one same-origin POST and one final response.
+// In dev (SPA on vite:5173 → dashboard:7060) the redirect would force
+// the browser onto 127.0.0.2:7060 directly, triggering CORS; in prod
+// the same hazard exists whenever the SPA isn't collocated with the
+// leader. Proxying eliminates both.
 //
-// Centralising this in one place replaces the ad-hoc IsLeader checks
-// previously scattered across services.go and lets us treat
-// leader-only as a property of routes, not handlers.
+// On a leaderless transient (LeaderInfo.IP empty) we return 503; no
+// node can serve the write yet.
 func (api *API) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		le := api.ctx.LeaderElection()
@@ -34,20 +40,19 @@ func (api *API) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
 			api.writeError(w, http.StatusServiceUnavailable, "no leader currently known", nil)
 			return
 		}
-		// Redirect target: same path on the leader's dashboard
-		// listener. We assume every server in the cluster shares
-		// cfg.Dashboard.Port (the usual deployment pattern); cross-port
-		// topologies would need to publish the port into LeaderInfo.
-		// Path is preserved verbatim — cfg.Dashboard.Prefix is already
-		// part of r.URL.Path here, so the redirect points at the same
-		// data route.
+		// Same path on the leader's dashboard listener. Routes are
+		// registered with the full prefix (see api.go: route()), so
+		// r.URL.Path here already carries cfg.Dashboard.Prefix —
+		// NewSingleHostReverseProxy's default Director forwards it
+		// verbatim to the leader's mux, which matches on the same
+		// pattern. We assume every server shares cfg.Dashboard.Port.
 		port := api.cfg.Dashboard.Port
-		target := fmt.Sprintf("http://%s:%d%s", info.IP, port, r.URL.RequestURI())
-		w.Header().Set("Location", target)
+		target, err := url.Parse(fmt.Sprintf("http://%s:%d", info.IP, port))
+		if err != nil {
+			api.writeError(w, http.StatusInternalServerError, "invalid leader address", err)
+			return
+		}
 		w.Header().Set("X-Asty-Leader", info.ID)
-		http.Error(w, fmt.Sprintf("not leader, redirect to %s", info.ID), http.StatusTemporaryRedirect)
+		httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
 	}
 }
-
-// (apiPortFromAddr removed — the redirect now reads cfg.Dashboard.Port
-// directly, no string parsing needed.)

@@ -6,6 +6,7 @@ import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_SECTION_TABS } from '@/components/header'
+import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
@@ -37,6 +38,11 @@ export default function Nodes() {
   const nodes = useClusterStore((s) => s.nodes)
   const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
   const [pending, setPending] = useState<Record<string, boolean>>({})
+  // drainTarget is the node id awaiting drain confirmation. The
+  // detail page's dialog is reused verbatim — opening it on a
+  // toggle-on keeps the row's switch optimistic (snaps back if the
+  // user cancels) and avoids forking the wording.
+  const [drainTarget, setDrainTarget] = useState<Node | null>(null)
 
   useEffect(() => subscribeNodes(), [subscribeNodes])
 
@@ -111,7 +117,7 @@ export default function Nodes() {
         <Switch
           checked={n.status === 'draining' || n.status === 'drained'}
           disabled={pending[n.id]}
-          onCheckedChange={(checked) => handleDrain(n, checked)}
+          onCheckedChange={(checked) => checked ? setDrainTarget(n) : handleDrain(n, false)}
           onClick={(e) => e.stopPropagation()}
         />
       ),
@@ -128,6 +134,16 @@ export default function Nodes() {
         onRowClick={(n) => navigate(`/nodes/${n.id}`)}
         rowKey={(n) => n.id}
         emptyMessage="No nodes registered yet."
+      />
+      <NodeDrainDialog
+        open={drainTarget !== null}
+        nodeId={drainTarget?.id ?? ''}
+        onOpenChange={(open) => { if (!open) setDrainTarget(null) }}
+        onConfirm={() => {
+          const n = drainTarget
+          setDrainTarget(null)
+          if (n) handleDrain(n, true)
+        }}
       />
     </div>
   )

@@ -83,6 +83,16 @@ export const api = {
     fetchJSON<DrainStatus>(`${API_PREFIX}/nodes/${id}/drain`),
   pauseNode: (id: string) =>
     fetchJSON(`${API_PREFIX}/nodes/${id}/pause`, { method: 'POST' }),
+  // killNode is the abrupt-decommission counterpart of drain. Body
+  // carries `confirm_name` (must equal `id`); backend triggers the
+  // agent's graceful self-shutdown via NATS and force-purges any KV
+  // residue. Use Drain for normal operations — see Kill dialog copy.
+  killNode: (id: string, confirmName: string) =>
+    fetchJSON(`${API_PREFIX}/nodes/${id}/kill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm_name: confirmName }),
+    }),
 
   // Allocation actions
   restartAllocation: (nodeId: string, allocId: string) =>

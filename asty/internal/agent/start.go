@@ -40,6 +40,14 @@ func (a *Agent) Start(ctx context.Context) error {
 		Str("datacenter", a.cfg.Datacenter).
 		Msg("agent starting")
 
+	// Derive a child context so CmdShutdown can trigger the same
+	// graceful path as the parent's SIGTERM (start.sh remove). Cancel
+	// is also deferred so any early-error return below tears down
+	// goroutines we've already spawned.
+	ctx, cancel := context.WithCancel(ctx)
+	a.shutdownFn = cancel
+	defer cancel()
+
 	a.exportConfigEnv()
 
 	drop, err := a.resolveDropTarget()

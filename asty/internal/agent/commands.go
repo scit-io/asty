@@ -41,6 +41,8 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 		a.handleStopCommand(msg)
 	case types.CmdLogs:
 		a.handleLogsCommand(msg)
+	case types.CmdShutdown:
+		a.handleShutdownCommand(msg)
 	default:
 		log.Error().Str("kind", string(kind)).Msg("unknown command kind")
 		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command kind: %s", kind)))
@@ -108,6 +110,15 @@ func (a *Agent) handleStopCommand(msg *nats.Msg) {
 			log.Warn().Err(err).Str("service", stopCmd.ServiceName).Msg("background stop reported")
 		}
 	}()
+}
+
+// handleShutdownCommand acks first, then cancels the agent's ctx so
+// the graceful path (decommission NATS, stop services, deregister
+// node) runs — same flow as SIGTERM in start.sh remove.
+func (a *Agent) handleShutdownCommand(msg *nats.Msg) {
+	log.Info().Str("node_id", a.nodeID).Msg("shutdown command received")
+	msg.Respond(types.MarshalResponse(true, "shutdown initiated", nil))
+	a.shutdownFn()
 }
 
 func (a *Agent) handleLogsCommand(msg *nats.Msg) {
