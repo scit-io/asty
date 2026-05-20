@@ -27,14 +27,20 @@ import (
 
 // Tunables (metricsRetention, logBufferLines, …) live in tunables.go.
 
-// Start brings up the server. Returns when ctx is cancelled.
-func (s *Server) Start(ctx context.Context) error {
+// Start brings up the server. Returns when ctx is cancelled (parent
+// signal, or watchSelfRemoval firing on our own KV-entry delete).
+func (s *Server) Start(parent context.Context) error {
 	log.Info().Str("node_id", s.nodeID).Msg("server starting")
 
 	if err := s.initInfra(); err != nil {
 		return err
 	}
 	defer s.nc.Close()
+
+	// Child ctx so watchSelfRemoval can end Start on its own — see
+	// selfremoval.go.
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
 
 	s.initFeatures(ctx)
 
@@ -47,6 +53,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	go s.watchClusterNodes(ctx)
+	go s.watchSelfRemoval(ctx, cancel)
 	s.seedDevMockNodes()
 
 	// Start leader-scoped work once if we're already the leader; the

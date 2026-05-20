@@ -16,6 +16,30 @@ import (
 // land in tens of ms; this ceiling only matters as a deadlock fallback.
 const natsLeaveTimeout = 5 * time.Second
 
+// survivingClusterPeers counts live `node.<id>` entries minus self.
+// peers.txt / DNS are discovery sources; only start.sh remove or a
+// DNS edit updates them — a dashboard kill doesn't, so they lie about
+// membership the moment kills go through the UI. KV is updated by
+// every agent's graceful path (RemoveNode before exit), so it tracks
+// reality. Fallback to peers.txt on KV failure beats returning 0,
+// which would skip both shrink AND decommission.
+func (a *Agent) survivingClusterPeers() int {
+	if a.clusterState != nil {
+		nodes, err := a.clusterState.ListNodes()
+		if err == nil {
+			n := 0
+			for _, node := range nodes {
+				if node.ID != a.nodeID {
+					n++
+				}
+			}
+			return n
+		}
+		log.Warn().Err(err).Msg("pre-departure: ListNodes failed, falling back to peers.txt")
+	}
+	return len(a.resolveNATSPeers(a.resolveNodeIP()))
+}
+
 // shrinkStreamsToSingle runs only when the surviving cluster size will
 // be 1: it transfers leadership away from us (so NATS keeps R=1 data
 // on the survivor) and lowers Replicas to 1 on every R>1 stream.

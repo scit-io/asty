@@ -432,7 +432,17 @@ stateDiagram-v2
   Хэндлер агента: ack первым, cancel ctx async. Дальше работает
   существующий SIGTERM-путь (`agent/start.go` + `agent/natsleave.go`):
   decommission NATS, shrink streams при шринке до 1, deregister
-  `node.<id>` из KV, `stopAllProcesses`.
+  `node.<id>` из KV, `stopAllProcesses`. Решение «шринкать или нет»
+  берётся из `survivingClusterPeers()` (живые `node.<id>` в KV минус
+  self), а не из peers.txt — `peers.txt`/DNS не обновляются по
+  dashboard kill, и были бы устаревшим источником для этой
+  развилки.
+- **Локальный сервер-процесс** (`asty -mode server`) отдельный от
+  агента — CmdShutdown ему не приходит. Завершается через
+  `server/selfremoval.go:watchSelfRemoval`: подписан на `node.<id>`
+  в KV, на delete отменяет `Start`'s ctx. Без этого сервер пережил
+  бы kill агента и продолжал бы рефрешить leader-lease через
+  auto-discovered NATS-пира, блокируя других кандидатов на лидерство.
 - **Force-purge** на стороне сервера — `DeleteAllocation` для каждой
   живой аллокации + `RemoveNode`. Идемпотентно: при достижимом агенте
   он сам всё снёс, у нас будет два warning'а «not found» и тишина.
@@ -1231,6 +1241,10 @@ sequenceDiagram
   достижимым для последующих proposal'ов.
 - На переходе 2→1 уходящий узел понижает `Replicas` до 1 ДО
   `SERVER.REMOVE` (после disable JS UpdateStream уже не пройдёт).
+  Развилка «шринкать?» — `survivingClusterPeers()` (живые `node.<id>`
+  в KV минус self), не peers.txt: дашбордный kill не правит
+  peers.txt/DNS, KV — единственный надёжный источник истинной
+  членности в момент graceful-выхода.
 - Выжившие НЕ переходят в standalone-mode: `tryHotReloadNATS`
   передаёт `KeepClusterBlock=true` в `natsconf.Render`, NATS на
   SIGHUP принимает `cluster{}` с пустыми routes.

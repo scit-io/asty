@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
+import { nodeStatusSwitchClass } from '@/lib/node-status'
 import { MetricsChart } from '@/components/metrics-chart'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { NodeHeader } from '@/components/node-header'
@@ -158,6 +159,7 @@ export default function NodeDetail() {
                     <span className="text-sm font-bold">Drain</span>
                     <Switch
                       checked={draining}
+                      className={nodeStatusSwitchClass(node.status)}
                       onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
                       disabled={node.status === 'draining'}
                     />

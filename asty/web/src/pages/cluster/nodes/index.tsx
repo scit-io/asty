@@ -9,6 +9,7 @@ import { CLUSTER_SECTION_TABS } from '@/components/header'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
+import { nodeStatusSwitchClass } from '@/lib/node-status'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
 import { toast } from 'sonner'
@@ -117,6 +118,7 @@ export default function Nodes() {
         <Switch
           checked={n.status === 'draining' || n.status === 'drained'}
           disabled={pending[n.id]}
+          className={nodeStatusSwitchClass(n.status)}
           onCheckedChange={(checked) => checked ? setDrainTarget(n) : handleDrain(n, false)}
           onClick={(e) => e.stopPropagation()}
         />

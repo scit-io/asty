@@ -235,6 +235,16 @@ non-empty, `agent/natsleave.go` runs before `stopNATSSupervisor`:
   `LEADER_ELECTED` advisory) and then `UpdateStream(Replicas=1)`.
   The order matters — `SERVER.REMOVE` disables our JS, so any stream
   update has to land before it.
+- The `surviving` count comes from `survivingClusterPeers()`
+  (`agent/natsleave.go`), which reads live `node.<id>` entries from
+  cluster KV minus self — not from peers.txt / DNS. Discovery sources
+  are updated by `start.sh remove` or by an operator editing DNS; a
+  dashboard kill touches neither, so trusting them would miscount the
+  2→1 step and skip the shrink, pinning streams at R=3 with one alive
+  peer (no quorum → `nats: no response from stream` on every write).
+  KV is the orchestrator's own membership view, kept current by every
+  agent's `RemoveNode` on graceful exit. Falls back to peers.txt only
+  when KV is unreachable.
 
 Permissions: the `asty-observer` SYS user is granted publish on
 `$JS.API.SERVER.REMOVE` and subscribe on
@@ -371,6 +381,15 @@ The agent's `CmdShutdown` handler (`agent/commands.go`) is intentionally
 async: ack first, cancel after, so the response wins the race against
 NATS going down inside the graceful path. There is no `Resume` for
 kill — it's terminal.
+
+The local **server** process is a separate process and is NOT signalled
+by CmdShutdown. It exits via `server/selfremoval.go:watchSelfRemoval`,
+which watches `node.<id>` in cluster KV and cancels `Start`'s ctx when
+its own entry is deleted. The deletion arrives from the agent's
+graceful path (RemoveNode runs before nats-server is stopped). Without
+this, the server would survive a dashboard kill and keep refreshing
+the leader lease over auto-discovered NATS peers, blocking any other
+node from claiming leadership.
 
 ### Platform Services Architecture
 
@@ -815,6 +834,9 @@ asty/internal/
 │   ├── streamreplicas.go          # leader-only: watchStreamReplicas
 │   │                              #   bumps Replicas via UpdateStream when
 │   │                              #   the cluster grows
+│   ├── selfremoval.go             # watchSelfRemoval — exits server when
+│   │                              #   own node.<id> KV entry is deleted
+│   │                              #   (companion to dashboard kill)
 │   └── streamhub*.go              # streamhub.go, streamhub_run.go,
 │                                  #   streamhub_subs.go, streamhub_pubsub.go
 └── agent/                         # Agent sub-package
@@ -826,7 +848,9 @@ asty/internal/
     │                              #   child on peer-list changes
     ├── natsleave.go               # graceful shutdown:
     │                              #   SERVER.REMOVE + shrinkStreamsToSingle
-    │                              #   + transferStreamLeader
+    │                              #   + transferStreamLeader +
+    │                              #   survivingClusterPeers (cluster KV
+    │                              #   is the source of truth, not peers.txt)
     ├── natsstats.go               # STATSZ/JSZ poller → asty_node_nats_*
     ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService

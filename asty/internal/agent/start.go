@@ -112,8 +112,9 @@ func (a *Agent) Start(ctx context.Context) error {
 	// Pre-departure JS housekeeping (see natsleave.go for the why of
 	// each step). Order matters: shrink first if going to 1 survivor,
 	// then decommission — SERVER.REMOVE disables our JS, so any
-	// stream update has to land before it.
-	if surviving := len(a.resolveNATSPeers(a.resolveNodeIP())); surviving >= 1 {
+	// stream update has to land before it. survivingClusterPeers reads
+	// from KV, not peers.txt — see its doc for why.
+	if surviving := a.survivingClusterPeers(); surviving >= 1 {
 		if surviving == 1 {
 			a.shrinkStreamsToSingle()
 		}
