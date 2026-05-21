@@ -19,13 +19,9 @@ func (api *API) handleNodeLogs(w http.ResponseWriter, r *http.Request) {
 	nLines := readQueryLines(r)
 
 	if transportPolling(r) {
-		history := api.ctx.LogBuffer().GetLast("node."+nodeID, nLines)
-		lines := make([]string, len(history))
-		for i, e := range history {
-			lines[i] = e.Line
-		}
+		events := api.ctx.LogBuffer().GetLast("node."+nodeID, nLines)
 		api.writeJSON(w, http.StatusOK, map[string]any{
-			"node_id": nodeID, "logs": lines, "line_count": len(lines),
+			"node_id": nodeID, "logs": events, "line_count": len(events),
 		})
 		return
 	}
@@ -34,7 +30,7 @@ func (api *API) handleNodeLogs(w http.ResponseWriter, r *http.Request) {
 	if flusher == nil {
 		return
 	}
-	api.emitBufferedLines(w, "node."+nodeID, nLines)
+	api.emitBufferedEvents(w, "node."+nodeID, nLines)
 	flusher.Flush()
 	subject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", nodeID)
 	api.streamFromNATS(w, r, flusher, subject, false)

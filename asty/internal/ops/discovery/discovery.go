@@ -6,8 +6,18 @@ import (
 	"net"
 	"time"
 
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
+
+// dlog returns the global logger tagged as the discovery component.
+// Fresh per call so writer/level reassignments (logs.AttachNATS,
+// logs.SetLevel) take effect immediately — no init-time capture of the
+// pre-configured global.
+func dlog() *zerolog.Logger {
+	l := log.With().Str("component", "discovery").Logger()
+	return &l
+}
 
 // NodeDiscovery handles discovering cluster nodes via DNS
 type NodeDiscovery struct {
@@ -37,7 +47,7 @@ func (nd *NodeDiscovery) DiscoverNodes(ctx context.Context) ([]string, error) {
 		}
 	}
 
-	log.Info().
+	dlog().Info().
 		Str("domain", nd.domain).
 		Strs("nodes", nodes).
 		Msg("discovered cluster nodes")
@@ -59,12 +69,12 @@ func (nd *NodeDiscovery) WatchNodes(ctx context.Context, onChange func([]string)
 		case <-ticker.C:
 			nodes, err := nd.DiscoverNodes(ctx)
 			if err != nil {
-				log.Warn().Err(err).Msg("failed to discover nodes")
+				dlog().Warn().Err(err).Str("domain", nd.domain).Msg("failed to discover nodes")
 				continue
 			}
 
 			if nodesChanged(previousNodes, nodes) {
-				log.Info().
+				dlog().Info().
 					Strs("previous", previousNodes).
 					Strs("current", nodes).
 					Msg("cluster nodes changed")

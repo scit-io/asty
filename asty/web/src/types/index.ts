@@ -132,11 +132,26 @@ export interface AllocationsResponse {
   count: number
 }
 
+// LogEvent mirrors infra/logs/Event on the Go side — one canonical
+// shape for both polling history and live SSE. `line` carries raw
+// stdout (process output the agent could not parse as structured),
+// otherwise `level`/`message`/`fields` describe a zerolog record.
+export interface LogEvent {
+  timestamp?: number
+  time?: number
+  level?: string       // trace | debug | info | warn | error | fatal
+  component?: string   // server | agent | gateway | xauth | …
+  message?: string
+  error?: string
+  line?: string        // raw stdout line, mutually exclusive with message
+  fields?: Record<string, unknown>
+}
+
 export interface LogsResponse {
   allocation_id?: string
   service_name?: string
   node_id?: string
-  logs: string[]
+  logs: LogEvent[]
   line_count?: number
 }
 

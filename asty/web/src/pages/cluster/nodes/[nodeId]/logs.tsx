@@ -16,14 +16,16 @@ export default function NodeLogs() {
     : null)
   if (!nodeId) return null
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
       <NodeHeader node={node} nodeId={nodeId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={[
         { to: `/nodes/${nodeId}`, label: 'Overview' },
         { to: `/nodes/${nodeId}/allocations`, label: 'Allocations' },
         { to: `/nodes/${nodeId}/logs`, label: 'Logs' },
       ]} />
-      <LogsView title={`Logs · ${nodeId}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/logs`} />
+      <div className="min-h-0 flex-1">
+        <LogsView title={`Logs · ${nodeId}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/logs`} />
+      </div>
     </div>
   )
 }

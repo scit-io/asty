@@ -8,9 +8,11 @@ import { API_PREFIX } from '@/api/client'
 // same content-negotiation rule.
 export default function ClusterLogs() {
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
       <ResourceTabs items={CLUSTER_SECTION_TABS} />
-      <LogsView title="Cluster events" streamUrl={`${API_PREFIX}/logs`} />
+      <div className="min-h-0 flex-1">
+        <LogsView title="Cluster events" streamUrl={`${API_PREFIX}/logs`} />
+      </div>
     </div>
   )
 }

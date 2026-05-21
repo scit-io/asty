@@ -34,7 +34,7 @@ func (api *API) handleAllocationLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bufKey := "node." + allocation.NodeID + ".svc." + allocation.ServiceName
-	api.emitBufferedLines(w, bufKey, nLines)
+	api.emitBufferedEvents(w, bufKey, nLines)
 	flusher.Flush()
 	subject := fmt.Sprintf("asty.v1.agent.%s.logs.%s", allocation.NodeID, allocation.ServiceName)
 	api.streamFromNATS(w, r, flusher, subject, true)

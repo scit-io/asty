@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	"asty/asty/internal/core/netutil"
@@ -102,9 +101,7 @@ func (s *Server) initInfra() error {
 // pieces that don't depend on leadership: log buffering, gateway RPS
 // ingest, proximity validation, the snapshot hub.
 func (s *Server) initFeatures(ctx context.Context) {
-	// Mirror server logs into NATS so the UI can stream them.
-	natsWriter := logs.NewNATSWriter(s.nc, "asty.v1.server.logs")
-	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
+	logs.AttachNATS(s.nc, "asty.v1.server.logs")
 
 	s.scheduler = scheduler.NewScheduler(s.clusterState, s.cfg)
 	s.metricsStore = autometrics.NewStore(metricsRetention)

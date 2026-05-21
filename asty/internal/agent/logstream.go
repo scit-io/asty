@@ -2,12 +2,11 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
-	"asty/asty/internal/infra/process"
 	"asty/asty/internal/infra/logs"
+	"asty/asty/internal/infra/process"
 
 	"github.com/rs/zerolog/log"
 )
@@ -45,6 +44,28 @@ func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 
 	log.Info().Str("service", serviceName).Str("subject", subject).Msg("streaming logs to NATS")
 
+	tail(a, ctx, logLines, subject, serviceName)
+}
+
+// buildServiceEvent turns one stdout line from a managed service into an
+// Event the dashboard can render. If the line is already a zerolog JSON
+// object (the common case for our Go services), the structured shape is
+// preserved verbatim and only the component is stamped over to the
+// service name. Anything else — `printf` output, panics, raw text —
+// lands in the Line slot and renders as a plain row.
+func buildServiceEvent(service, line string) logs.Event {
+	now := time.Now().Unix()
+	if parsed, err := logs.ParseEvent([]byte(line)); err == nil && !parsed.IsLine() {
+		parsed.Component = service
+		if parsed.Timestamp == 0 {
+			parsed.Timestamp = now
+		}
+		return *parsed
+	}
+	return logs.Event{Component: service, Line: line, Timestamp: now}
+}
+
+func tail(a *Agent, ctx context.Context, logLines <-chan string, subject, serviceName string) {
 	for {
 		select {
 		case line, ok := <-logLines:
@@ -52,14 +73,8 @@ func (a *Agent) streamProcessLogs(serviceName string, proc *process.Process) {
 				log.Info().Str("service", serviceName).Msg("log channel closed, ending stream")
 				return
 			}
-			entry, err := json.Marshal(logs.LineFrame{
-				Line:      line,
-				Timestamp: time.Now().Unix(),
-			})
-			if err != nil {
-				continue
-			}
-			if pubErr := a.nc.Publish(subject, entry); pubErr != nil {
+			ev := buildServiceEvent(serviceName, line)
+			if pubErr := a.nc.Publish(subject, ev.MarshalWire()); pubErr != nil {
 				log.Error().Err(pubErr).Str("subject", subject).Msg("failed to publish log line")
 			}
 		case <-ctx.Done():

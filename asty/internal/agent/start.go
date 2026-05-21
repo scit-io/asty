@@ -3,13 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/infra/kv"
-	"asty/asty/internal/infra/probe"
 	"asty/asty/internal/infra/logs"
+	"asty/asty/internal/infra/probe"
 
 	"github.com/rs/zerolog/log"
 )
@@ -179,9 +178,7 @@ func (a *Agent) connectAndWireNATS(ctx context.Context) error {
 
 	a.healthChecker = probe.NewChecker(a.nc)
 
-	agentSubject := fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID)
-	natsWriter := logs.NewNATSWriter(a.nc, agentSubject)
-	log.Logger = log.Output(io.MultiWriter(log.Logger, natsWriter))
+	logs.AttachNATS(a.nc, fmt.Sprintf("asty.v1.agent.%s.logs.agent", a.nodeID))
 
 	go a.healthChecker.Start(ctx)
 	go a.metricsCollector.Start(ctx)

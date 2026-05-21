@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
 	"asty/asty/internal/agent"
@@ -26,8 +25,7 @@ func main() {
 	peersFlag := flag.String("peers", "", "Comma-separated peer IPs (nats-conf mode only)")
 	flag.Parse()
 
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stderr}).Hook(logs.TimestampHook{})
+	logs.InitGlobal(*mode)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -60,6 +58,7 @@ func main() {
 	if err := cfg.Validate(); err != nil {
 		log.Fatal().Err(err).Msg("invalid config")
 	}
+	logs.SetLevel(cfg.LogLevel)
 
 	// Dev mode flips both codec.Wire and codec.State back to JSON so
 	// `nats sub`/`nats kv get` show readable payloads. Production keeps

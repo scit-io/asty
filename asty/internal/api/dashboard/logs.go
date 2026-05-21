@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -23,36 +22,6 @@ const defaultLogLines = 100
 // file; if it hangs longer, something is wrong with NATS or the agent.
 const agentLogsRequestTimeout = 5 * time.Second
 
-// sseSetup moved to api/stream.Setup; logs handlers import it.
-
-// formatLogEntry turns a decoded zerolog entry into a readable display
-// string. If the entry is actually a logstream-wrapped raw stdout
-// line (no level, no message, just "line"), it returns that line
-// verbatim — covers the asty.v1.agent.<id>.logs.<svc> path where the
-// agent wraps process stdout in a LineFrame.
-func formatLogEntry(e *logs.ZerologEntry) string {
-	if lf, ok := e.AsLineFrame(); ok {
-		return lf.Line
-	}
-
-	ts := e.Timestamp
-	if ts == 0 {
-		ts = e.Time
-	}
-	timeStr := time.Now().Format(time.RFC3339)
-	if ts > 0 {
-		timeStr = time.Unix(ts, 0).Format(time.RFC3339)
-	}
-
-	line := fmt.Sprintf("[%s] [%s] %s", timeStr, e.Level, e.Message)
-	if len(e.Extras) > 0 {
-		if b, err := json.Marshal(e.Extras); err == nil {
-			line += " " + string(b)
-		}
-	}
-	return line
-}
-
 // readQueryLines extracts the ?lines=N parameter, falling back to
 // defaultLogLines when missing or unparseable.
 func readQueryLines(r *http.Request) int {
@@ -66,22 +35,21 @@ func readQueryLines(r *http.Request) int {
 }
 
 // streamFromNATS subscribes to subject and pushes each message as an
-// SSE "data:" line. It blocks until r.Context() is cancelled. Errors
-// reported by the parser are passed through verbatim — handlers
-// override this where they want stricter behaviour.
-func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher http.Flusher, subject string, fallthroughOnParse bool) {
+// SSE "data:" line carrying the structured Event JSON the UI knows
+// how to render. fallthroughOnRaw=true forwards the original bytes
+// when decode fails (covers raw stdout frames published before the
+// Event schema landed).
+func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher http.Flusher, subject string, fallthroughOnRaw bool) {
 	sub, err := api.ctx.NATSConn().Subscribe(subject, func(msg *nats.Msg) {
-		entry, err := logs.DecodeZerologEntry(msg.Data)
+		e, err := logs.ParseEvent(msg.Data)
 		if err != nil {
-			if fallthroughOnParse {
+			if fallthroughOnRaw {
 				fmt.Fprintf(w, "data: %s\n\n", msg.Data)
 				flusher.Flush()
 			}
 			return
 		}
-		line := formatLogEntry(entry)
-		data, _ := json.Marshal(logs.LineFrame{Line: line, Timestamp: entry.Timestamp})
-		fmt.Fprintf(w, "data: %s\n\n", data)
+		fmt.Fprintf(w, "data: %s\n\n", e.MarshalWire())
 		flusher.Flush()
 	})
 	if err != nil {
@@ -93,12 +61,12 @@ func (api *API) streamFromNATS(w http.ResponseWriter, r *http.Request, flusher h
 	<-r.Context().Done()
 }
 
-// emitBufferedLines writes the most recent N lines for source from the
-// in-memory log buffer as SSE data lines. Used to seed an SSE stream
-// with history before the live tail starts.
-func (api *API) emitBufferedLines(w http.ResponseWriter, source string, lines int) {
-	for _, entry := range api.ctx.LogBuffer().GetLast(source, lines) {
-		data, _ := json.Marshal(logs.LineFrame{Line: entry.Line, Timestamp: entry.Timestamp})
-		fmt.Fprintf(w, "data: %s\n\n", data)
+// emitBufferedEvents writes the most recent N events for source from the
+// in-memory log buffer as SSE data lines. Seeds an SSE stream with
+// history before the live tail starts so the UI shows context, not a
+// blank screen, on first open.
+func (api *API) emitBufferedEvents(w http.ResponseWriter, source string, lines int) {
+	for _, e := range api.ctx.LogBuffer().GetLast(source, lines) {
+		fmt.Fprintf(w, "data: %s\n\n", e.MarshalWire())
 	}
 }

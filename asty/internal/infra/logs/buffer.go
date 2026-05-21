@@ -6,45 +6,40 @@ import (
 	"asty/asty/internal/core/util/ringbuf"
 )
 
-// LogLine is a single buffered log entry.
-type LogLine struct {
-	Timestamp int64  `json:"ts"`
-	Level     string `json:"level,omitempty"`
-	Line      string `json:"line"`
-}
-
-// Buffer is a per-source ring buffer of recent log lines. Safe for
-// concurrent use. Sources: "cluster", "node.{id}", "node.{id}.svc.{svc}".
+// Buffer is a per-source ring of recent structured Events. Safe for
+// concurrent use. Source keys mirror the SSE routing the dashboard
+// hands out: "cluster", "node.{id}", "node.{id}.svc.{svc}".
 type Buffer struct {
 	mu   sync.RWMutex
-	bufs map[string]*ringbuf.Ring[LogLine]
+	bufs map[string]*ringbuf.Ring[Event]
 	maxN int
 }
 
 func NewBuffer(maxN int) *Buffer {
-	return &Buffer{bufs: make(map[string]*ringbuf.Ring[LogLine]), maxN: maxN}
+	return &Buffer{bufs: make(map[string]*ringbuf.Ring[Event]), maxN: maxN}
 }
 
-// Append adds a line to the named source buffer, evicting the oldest entry
-// when the buffer is full.
-func (b *Buffer) Append(source string, line LogLine) {
+// Append stores e under source, evicting the oldest entry once the
+// per-source ring is full.
+func (b *Buffer) Append(source string, e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	r, ok := b.bufs[source]
 	if !ok {
-		r = ringbuf.New[LogLine](b.maxN)
+		r = ringbuf.New[Event](b.maxN)
 		b.bufs[source] = r
 	}
-	r.Push(line)
+	r.Push(e)
 }
 
-// GetLast returns the last n lines from the named source.
-func (b *Buffer) GetLast(source string, n int) []LogLine {
+// GetLast returns the last n events from the named source, oldest
+// first.
+func (b *Buffer) GetLast(source string, n int) []Event {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	r, ok := b.bufs[source]
 	if !ok {
-		return []LogLine{}
+		return []Event{}
 	}
 	return r.Last(n)
 }

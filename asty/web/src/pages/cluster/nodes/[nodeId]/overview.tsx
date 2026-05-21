@@ -94,18 +94,14 @@ export default function NodeDetail() {
     : node.status === 'drained' ? 'Drained'
     : node.status
 
-  // hasAsty / hasNats decide whether to render the agent and NATS
-  // sub-blocks. NATS monitoring (-m 8222) is opt-in; without it every
-  // nats_* field is zero, so an "all zeros" reading means "no NATS to
-  // show" rather than "NATS is dead". Asty is always present on a
-  // running agent, but we still gate on at least one non-zero sample
-  // so a fresh node doesn't render an all-zero block before the first
-  // heartbeat.
+  // hasAsty gates only the agent sub-block — Asty is always present on
+  // a running agent, but we still hold rendering until at least one
+  // non-zero sample so a fresh node doesn't paint an all-zero block
+  // before the first heartbeat. NATS metrics on the other hand always
+  // render: an all-zeros reading just means the section is briefly
+  // empty (no data yet, or stream just reconnecting), and the zeros
+  // themselves are honest "we measured zero" values.
   const hasAsty = node.self_cpu_percent > 0 || node.self_memory_mb > 0 || node.self_disk_mb > 0
-  const hasNats = node.nats_cpu_percent > 0 || node.nats_memory_mb > 0 ||
-    node.nats_connections > 0 || node.nats_subscriptions > 0 ||
-    node.nats_in_msgs > 0 || node.nats_out_msgs > 0 ||
-    node.nats_jetstream_messages > 0 || node.nats_jetstream_bytes > 0
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
@@ -189,31 +185,29 @@ export default function NodeDetail() {
           }} />
       )}
 
-      {hasNats && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">NATS</h2>
-          <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-            <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
-              usage={node.nats_cpu_percent} total={100} format={formatMHz} />
-            <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-              usage={node.nats_memory_mb} total={node.memory_total} format={formatMB} />
-            <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
-              usage={node.nats_disk_mb} total={node.disk_total} format={formatMB} />
-            <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
-              value={node.nats_connections} hint="current clients" />
-            <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
-              value={node.nats_subscriptions} hint="active subjects" />
-            <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
-              value={node.nats_slow_consumers} hint="lifetime count" />
-            <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
-              value={formatCount(node.nats_in_msgs)} hint="since NATS start" />
-            <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
-              value={formatCount(node.nats_out_msgs)} hint="since NATS start" />
-            <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
-              value={formatCount(node.nats_jetstream_messages)} hint="JetStream total" />
-          </div>
-        </section>
-      )}
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">NATS</h2>
+        <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
+          <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
+            usage={node.nats_cpu_percent} total={100} format={formatMHz} />
+          <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+            usage={node.nats_memory_mb} total={node.memory_total} format={formatMB} />
+          <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
+            usage={node.nats_disk_mb} total={node.disk_total} format={formatMB} />
+          <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
+            value={node.nats_connections} hint="current clients" />
+          <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
+            value={node.nats_subscriptions} hint="active subjects" />
+          <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
+            value={node.nats_slow_consumers} hint="lifetime count" />
+          <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
+            value={formatCount(node.nats_in_msgs)} hint="since NATS start" />
+          <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
+            value={formatCount(node.nats_out_msgs)} hint="since NATS start" />
+          <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
+            value={formatCount(node.nats_jetstream_messages)} hint="JetStream total" />
+        </div>
+      </section>
 
       <NodeDrainDialog
         open={showDrainDialog}

@@ -16,13 +16,15 @@ export default function AllocationLogs() {
   if (!nodeId || !allocId) return null
   const label = allocation?.service_name || allocId
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
       <AllocationHeader allocation={allocation} nodeId={nodeId} allocId={allocId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={[
         { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
         { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },
       ]} />
-      <LogsView title={`Logs · ${label}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/logs`} />
+      <div className="min-h-0 flex-1">
+        <LogsView title={`Logs · ${label}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/logs`} />
+      </div>
     </div>
   )
 }
