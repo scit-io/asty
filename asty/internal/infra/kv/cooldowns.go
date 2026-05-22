@@ -57,6 +57,14 @@ func (cs *ClusterState) SetRollbackFailed(service string, failed bool) error {
 	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.RollbackFailed = failed })
 }
 
+// SetDeployInProgress toggles the per-service DeployInProgress gate
+// the autoscaler watches. Deployer writes true on Deploy.Begin and
+// false on any terminal state so a rollout and an autoscale event
+// cannot interleave.
+func (cs *ClusterState) SetDeployInProgress(service string, active bool) error {
+	return cs.mutateCooldown(service, func(c *types.ServiceCooldown) { c.DeployInProgress = active })
+}
+
 func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCooldown)) error {
 	key := fmt.Sprintf(serviceCooldownKey, service)
 	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {

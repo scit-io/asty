@@ -40,6 +40,7 @@ type StreamHub interface {
 	Subscribe() (<-chan *types.ClusterSnapshot, func())
 	SubscribeDrain() (<-chan []byte, func())
 	SubscribeEvents() (<-chan []byte, func())
+	SubscribeDeploy() (<-chan []byte, func())
 	Snapshot() *types.ClusterSnapshot
 }
 

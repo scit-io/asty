@@ -75,7 +75,6 @@ update:
   max_parallel: 1        # Instances replaced in parallel during rolling update (1 — keeps capacity stable)
   min_healthy_time: 10s  # Required healthy uptime before an instance counts as updated
   healthy_deadline: 3m   # Per-instance budget to become healthy; over budget → failed
-  progress_deadline: 10m # Whole-deploy budget; over budget triggers auto_revert
   auto_revert: true      # Whether to roll back to previous version on failure
 
 # Restart policy for unexpected crashes.

@@ -79,16 +79,23 @@ func NewServiceController(
 }
 
 // Run starts the watchers, periodic resync and worker goroutines and
-// blocks until ctx is cancelled.
+// blocks until ctx is cancelled. The first enqueueAllServices is
+// deferred until the cluster has settled (see runWarmup) so initial
+// placement spans the full intended node set rather than whichever
+// subset happened to be Ready at leader-election time.
 func (c *ServiceController) Run(ctx context.Context) {
 	log.Info().Int("workers", c.workers).Dur("resync", c.resyncEvery).Msg("controller running")
 	defer log.Info().Msg("controller stopped")
 
-	c.enqueueAllServices()
-
 	go c.watchAllocsToQueue(ctx)
 	go c.watchNodesToQueue(ctx)
 	go c.periodicResync(ctx)
+
+	c.runWarmup(ctx)
+	if ctx.Err() != nil {
+		return
+	}
+	c.enqueueAllServices()
 
 	var wg sync.WaitGroup
 	for i := 0; i < c.workers; i++ {
@@ -103,6 +110,9 @@ func (c *ServiceController) Run(ctx context.Context) {
 	c.queue.ShutDown()
 	wg.Wait()
 }
+
+// runWarmup is implemented in warmup.go alongside its constants —
+// pulled out of controller.go to keep the file under the size cap.
 
 func (c *ServiceController) runWorker(ctx context.Context, id int) {
 	for {

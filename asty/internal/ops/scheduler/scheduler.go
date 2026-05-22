@@ -133,13 +133,35 @@ func (s *Scheduler) ComputeNodeAllocCounts() map[string]int {
 // createAllocation writes a fresh "pending" allocation to KV. The
 // controller picks it up via WatchAllocations and dispatches a start
 // command to the target agent.
+//
+// Version is read from the per-service pin maintained by the deployer
+// (see kv.GetServiceVersion). Falls back to "latest" only when no
+// deploy has ever happened — dev artifacts (`url: local`, `file://`)
+// then still resolve, while prod URLs with `${VERSION}` fail loudly
+// at the downloader instead of silently drifting to a stale version.
 func (s *Scheduler) createAllocation(svc *types.ServiceDefinition, nodeID string) error {
 	return s.clusterState.CreateAllocation(&types.ServiceAllocation{
 		ServiceName: svc.Name,
 		NodeID:      nodeID,
 		Status:      types.AllocPending,
-		Version:     "latest",
+		Version:     s.VersionFor(svc.Name),
 	})
+}
+
+// VersionFor returns the version new allocations of svc should run.
+// Reads the deployer-maintained pin; falls back to "latest" when the
+// service has never been deployed. Exported so the autoscaler shares
+// the same source of truth — without this the autoscaler's scale-up
+// would silently create a stale-version copy after a deploy.
+func (s *Scheduler) VersionFor(serviceName string) string {
+	if s.clusterState == nil {
+		return "latest"
+	}
+	v, err := s.clusterState.GetServiceVersion(serviceName)
+	if err != nil || v.Current == "" {
+		return "latest"
+	}
+	return v.Current
 }
 
 // TargetCopies returns the desired live copy count for svc, respecting an

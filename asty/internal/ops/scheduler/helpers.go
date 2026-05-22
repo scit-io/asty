@@ -1,6 +1,10 @@
 package scheduler
 
-import "asty/asty/internal/core/types"
+import (
+	"sort"
+
+	"asty/asty/internal/core/types"
+)
 
 // OccupiedNodes returns the set of nodeIDs that should not receive a new placement.
 func OccupiedNodes(allocs []*types.ServiceAllocation) map[string]bool {
@@ -64,4 +68,37 @@ func DatacenterCountsByOccupied(healthy []*types.NodeInfo, occupied map[string]b
 		}
 	}
 	return counts
+}
+
+// PickRemovalVictims returns up to n allocations to remove, preferring
+// copies on the most-crowded DCs so geo-diversity is preserved as the
+// service shrinks. Tie-break by NodeID ascending for deterministic
+// operator-visible ordering. Shared between manual-scale (api/dashboard)
+// and autoscaler scale-down so both surfaces drain in the same order.
+func PickRemovalVictims(live []*types.ServiceAllocation, nodes []*types.NodeInfo, n int) []*types.ServiceAllocation {
+	if n <= 0 || len(live) == 0 {
+		return nil
+	}
+	if n >= len(live) {
+		out := append([]*types.ServiceAllocation(nil), live...)
+		sort.Slice(out, func(i, j int) bool { return out[i].NodeID < out[j].NodeID })
+		return out
+	}
+	nodeDC := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		nodeDC[node.ID] = DatacenterOf(node)
+	}
+	dcCount := make(map[string]int)
+	for _, a := range live {
+		dcCount[nodeDC[a.NodeID]]++
+	}
+	sorted := append([]*types.ServiceAllocation(nil), live...)
+	sort.Slice(sorted, func(i, j int) bool {
+		di, dj := nodeDC[sorted[i].NodeID], nodeDC[sorted[j].NodeID]
+		if dcCount[di] != dcCount[dj] {
+			return dcCount[di] > dcCount[dj]
+		}
+		return sorted[i].NodeID < sorted[j].NodeID
+	})
+	return sorted[:n]
 }

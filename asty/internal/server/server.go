@@ -56,6 +56,12 @@ type Server struct {
 	mu           sync.Mutex
 	leaderCancel context.CancelFunc
 	controller   *reconciler.ServiceController // non-nil only while this node is the leader
+
+	// lifeCtx is the process-scoped ctx set by Start. Background work
+	// that outlives a single HTTP request (e.g. a Deploy goroutine
+	// launched by the dashboard) uses it instead of context.Background
+	// so a clean shutdown cancels them too.
+	lifeCtx context.Context
 }
 
 // New creates a new Server. NodeID falls back to the OS hostname if the

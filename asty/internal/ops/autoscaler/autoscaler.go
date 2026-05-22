@@ -60,8 +60,13 @@ func (as *Autoscaler) EvaluateService(ctx context.Context, svc *types.ServiceDef
 		return nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	if cd, err := as.clusterState.GetServiceCooldown(svc.Name); err == nil && cd.RollbackFailed {
-		return noop(svc.Name, "rollback_failed: operator intervention required"), nil
+	if cd, err := as.clusterState.GetServiceCooldown(svc.Name); err == nil {
+		if cd.RollbackFailed {
+			return noop(svc.Name, "rollback_failed: operator intervention required"), nil
+		}
+		if cd.DeployInProgress {
+			return noop(svc.Name, "deploy in progress"), nil
+		}
 	}
 
 	live := scheduler.LiveAllocations(allocs)

@@ -259,11 +259,22 @@ rendered nats.conf to stdout without launching anything.
 
 Asty deploys services as **raw binaries** (not containers):
 - Services defined in `.asty` files (YAML declarative format, see `services/*.asty`)
-- Agent downloads binaries from URLs with checksum verification
+- Agent downloads binaries from URLs; sha256 checksum is verified when
+  the `.asty` supplies a real value, skipped when the field is empty or
+  contains an unresolved `${...}` template placeholder
 - Process lifecycle: start → health check → run → graceful shutdown (SIGTERM → SIGKILL)
 - Two service types:
   - `type: system` — one copy per node (currently only platform demos; the HTTP gateway is no longer a `.asty` service — it lives inside the agent binary)
   - `type: service` — autoscaled based on load (e.g., xauth, xhttp)
+
+**Version pin.** Per-service desired version is stored in KV at
+`service.<name>.version` as `{current, previous}` and is the sole input
+the scheduler reads when creating a fresh allocation (`createAllocation`
+→ `versionFor` → fallback `"latest"` only when the pin is absent). The
+deployer is the only writer: sets `{current: target, previous: old}`
+on Deploy.Begin, clears `previous` on success, restores `current =
+previous` on revert. Result: autoscaler-spawned copies created during
+or after a deploy run the deployed version, never the stale "latest".
 
 ### Locality-Aware Autoscaling
 
@@ -282,10 +293,51 @@ Autoscaler monitors (`ops/autoscaler/scale_up.go`):
 3. Scheduler's `PickCandidates` (incl. DC proximity matrix) chooses the
    target node for the new copy.
 
-Scale down (`scale_down.go`) honours `MinCopies` (default 3) and adds
-hysteresis: average usage across running copies must drop below
-`TargetCPU/2` AND `TargetMemory/2` (`idleFloorDivisor=2`). The victim
-is chosen from the most-crowded DC to preserve geo-diversity.
+Scale down (`scale_down.go`) honours the per-service **floor** (override
+from `kv.SetServiceScale` when set, otherwise `cfg.Autoscale.MinCopies`,
+default 3) and adds hysteresis: average usage across running copies
+must drop below `TargetCPU/2` AND `TargetMemory/2` (`idleFloorDivisor=2`).
+Victim selection is shared with the dashboard's manual-scale handler
+via `scheduler.PickRemovalVictims` — prefers the most-crowded DC, ties
+break by NodeID ascending. There is no clamp to floor>=1: an override
+of 0 truly empties the service (re-creation is then driven by
+locality-based scale-up if any traffic shows).
+
+**Autoscaler gates.** `EvaluateService` short-circuits to noop when
+either of two service-level flags is set in
+`ServiceCooldown` (`infra/kv/cooldowns.go`):
+
+- `RollbackFailed` — last deploy's auto_revert failed; the cluster is
+  in mixed-version limbo. Cleared by the operator via the API.
+- `DeployInProgress` — a rollout is currently running. Set by the
+  deployer on Deploy.Begin, cleared on any terminal state. Eliminates
+  the race where the autoscaler places a stale-version copy on a node
+  whose existing allocation is briefly Restarting.
+
+### Manual scale (per-service floor)
+
+The dashboard's "Min copies" control writes a per-service override to
+`service.<name>.scale` in KV. Contract:
+
+- The override **replaces** `cfg.Autoscale.MinCopies` as the scheduler's
+  placement target (`scheduler.TargetCopies`) AND as the autoscaler's
+  scale-down floor (`evaluateScaleDown`).
+- The override is **not a ceiling**. The autoscaler can still grow
+  copies above it in response to traffic or pressure, capped by
+  `cfg.Autoscale.MaxCopies`.
+- Setting count below the current live copy count stops the excess
+  copies immediately via the same DC-aware picker the autoscaler uses
+  (`scheduler.PickRemovalVictims`).
+- `POST /services/{name}/scale` rejects:
+  - `count > MaxCopies` (when MaxCopies > 0) → 400, because the
+    autoscaler would refuse to honour it anyway.
+  - `type: system` services → 409, because the scheduler immediately
+    re-creates whatever the handler killed (one-per-node invariant).
+
+The effective floor is surfaced in two places: snapshot's `min_copies`
+(used by the global services SSE) and `/services/{name}/autoscaler`
+which also reports `min_copies_default` and `min_copies_override` so
+the UI can flag "overridden" without a second round-trip.
 
 ### Reconciliation controller
 
@@ -297,6 +349,17 @@ is otherwise identical (still serves the API, still subscribes to log
 buffers) but does not place or dispatch allocations.
 
 Inside the controller (`controller.go`):
+- **Startup warmup** (`warmup.go`). The very first `enqueueAllServices`
+  is gated by an event-driven debouncer on `WatchNodes`: every new
+  `NodeReady` transition resets a `warmupQuietWindow` (3 s) timer; the
+  first reconcile fires only after the cluster goes that long without
+  a new ready node, or after `warmupMaxWait` (30 s). Without this the
+  leader's first pass would run while only a subset of expected nodes
+  has heartbeat'd, placing services on those few and leaving the
+  late-joining nodes empty (the scheduler only *adds* — once `target`
+  is met it never moves an existing copy). Subsequent reconciles fire
+  on watcher events and the safety-net resync as usual; warmup runs
+  once per leader incarnation.
 - A k8s-style **`Workqueue`** (`workqueue.go`) — deduplicated FIFO with
   per-key rate-limiting. Failed reconciles are re-enqueued via
   `AddRateLimited`; delay grows `BaseDelay * 2^failures`, capped at
@@ -463,6 +526,60 @@ state but operate on disjoint local-process state. The post-delay
 `Restarting → Pending` transition in `attemptRestart` is CAS-guarded
 on `Status == AllocRestarting`, so a concurrent operator restart
 that flips the alloc back to `Running` does not get downgraded.
+
+### Deploy (per-service rolling update)
+
+`POST /dashboard/v1/services/{name}/deploy` with body `{"version":"..."}`
+triggers a rolling update. Three observable properties: **async over
+HTTP**, **autoscaler-paused**, **version-pinned at the service level**.
+
+Flow (`server/deployment.go:DeployService`):
+
+1. Pre-checks: reject empty version (400); reject if a deploy is
+   already running for this service (409, `deployer.ErrDeployInFlight`).
+2. Load the freshly-parsed `.asty` so per-deploy edits to env, resources,
+   health, etc. are honoured.
+3. Read the version pin (`kv.GetServiceVersion`) — its `Current` becomes
+   `plan.CurrentVersion` (the rollback target). Absent pin means first
+   deploy, CurrentVersion is left empty so revert refuses to fire.
+4. List allocations, filter to `IsLive`, sort by NodeID ascending.
+   Sorted+filtered set means canary always picks the same copy on
+   retry, and Failed/Stopped allocs don't get spurious restarts.
+5. **Bootstrap** (no live allocs): just write the pin and call
+   `ReconcileService(name)`. Scheduler creates the first copies at the
+   pinned version on its next pass. Returns Completed immediately.
+6. **Normal path**: build plan, launch `deployer.Deploy(s.lifeCtx, plan)`
+   in a goroutine, return 202 with the initial running status.
+
+Deployer (`ops/deployer/deployer.go:Deploy`):
+
+1. `claim(serviceName)` — fails with `ErrDeployInFlight` on a second
+   concurrent call.
+2. `resetTouched`, `beginRecord` (in-memory history + KV `service.<name>.deployment` + SSE `asty.v1.deploy.progress.<name>`).
+3. `pinVersion({current: target, previous: plan.CurrentVersion})`.
+4. `setDeployGate(true)` — flips `ServiceCooldown.DeployInProgress`
+   so the autoscaler stops touching this service.
+5. Canary phase (if `update.canary > 0`): markPending → CmdRestart →
+   waitForBatchHealth, with `CanaryRetries+1` attempts.
+6. Rolling phase: batches of `max_parallel`, sequentially.
+7. On success: `pinVersion({current: target})` (Previous cleared),
+   `updateLastRecord(Completed)`, gate cleared via `defer`.
+8. On failure with `auto_revert: true`: `revertDeployment` re-dispatches
+   `touched` allocs at `plan.CurrentVersion`, waits for health. On
+   success: `pinVersion({current: plan.CurrentVersion})` (rollback
+   pinned). On failure: `markRollbackFailed` sets
+   `ServiceCooldown.RollbackFailed = true`; operator must clear via API.
+
+SSE: `GET /dashboard/v1/services/{name}/deploy` with
+`Accept: text/event-stream` streams `progress` events carrying the
+full DeploymentRecord JSON for the requested service (filtered on the
+server side from the `asty.v1.deploy.progress.>` wildcard subject).
+The JSON flavour of the same path returns history (in-memory ring,
+capped at 100).
+
+Concurrency guards live in `ops/deployer/lifecycle.go` —
+`claim`/`release`/`IsInFlight` + `pinVersion`/`setDeployGate` — kept
+separate from `deployer.go` to stay under the file-size cap.
 
 ### Platform Services Architecture
 
@@ -774,11 +891,12 @@ restart:
   delay: 5s         # Delay between restart attempts (default: 5s)
 
 update:                      # rolling-update parameters consumed by the deployer
-  max_parallel: 2            # REQUIRED if you ever call Deploy — see caveat below
+  canary: 1                  # canary copies; 0 skips the canary phase (default: 0)
+  canary_retries: 1          # extra canary attempts on health failure (default: 1)
+  max_parallel: 2            # rolling-batch size (default: 1)
   min_healthy_time: 10s      # default
-  healthy_deadline: 3m       # default
-  progress_deadline: 10m     # default (currently unused by the deployer loop)
-  auto_revert: true          # see caveat below
+  healthy_deadline: 3m       # per-batch budget (default: 3m)
+  auto_revert: true          # roll back to the pinned previous version on failure
 ```
 
 **Restart Policy:**
@@ -787,32 +905,50 @@ update:                      # rolling-update parameters consumed by the deploye
 - Failed allocations are removed and rescheduled to different nodes by the server
 - Restart counter resets to 0 on successful start
 
-**Deployment Caveats** (verified against `ops/deployer/` and
+**Deployment behaviour** (verified against `ops/deployer/` and
 `server/deployment.go`):
 
-- **Canary count is hard-coded to `1`** in `server.DeployService`
-  (`server/deployment.go:63`). There is no `update.canary` field on
-  `ServiceDefinition` — every deploy first updates one allocation, waits
-  for it to be healthy, and only then enters the rolling phase. To skip
-  canary you'd need to change the server code, not the `.asty` file.
-- **`update.max_parallel` must be > 0** if you intend to deploy. The
-  server pipes the value straight into the deployer without a default,
-  and `rolling.go:29` does `for i := 0; i < len(remaining); i += MaxParallel`
-  — a zero or negative value here is an infinite loop. The `.asty`
-  loader does not enforce a minimum.
-- **`auto_revert: true` now performs a real rollback** (TZ §4.4).
-  `revertDeployment` (`ops/deployer/history.go`) re-dispatches every
-  touched allocation at `CurrentVersion` and waits for the batch to be
-  healthy. On failure the deployment ends in the new `StateRollbackFailed`
-  terminal state and the service-level `ServiceCooldown.RollbackFailed`
-  flag is set in KV; the autoscaler reads this flag and refuses to act
-  on the service until the operator clears it via the API.
-- `update.canary_retries` (default 1) governs how many times an
-  unhealthy canary is re-dispatched before the deploy fails (TZ §4.4).
-- `current_version` displayed in deployment records is read from
-  `allocs[0].Version` (`server/deployment.go:42`) — fine for a uniform
-  cluster, but during a half-finished previous deploy it just shows
-  whichever version happened to come first.
+- **Canary respects `update.canary`** from the `.asty` file. Defaults
+  to 0 (no canary phase) via `Update.Canary`. Set it to >0 to opt in.
+- **`update.max_parallel`** is normalised by `ServiceDefinition.Resolve`
+  to 1 when omitted, so deploy never deadlocks on `MaxParallel == 0`.
+- **Versions are pinned at the service level**. KV key
+  `service.<name>.version` stores `{current, previous}`. The deployer
+  writes it on begin/success/revert; the scheduler's
+  `createAllocation` reads it so autoscaler-spawned copies pick up
+  the deployed version instead of drifting to "latest". Bootstrap
+  (first deploy on a service with no live allocs) just sets the pin
+  and lets reconcile create the allocs at that version — no canary
+  phase because there's nothing to update.
+- **Plan filters and sorts**. `ListAllocations` order is not
+  deterministic; `server.DeployService` filters to `IsLive` allocs and
+  sorts by `NodeID` ascending before handing the plan to the deployer,
+  so canary always picks the same copy on retry.
+- **`auto_revert: true` performs a real rollback**. `revertDeployment`
+  (`ops/deployer/history.go`) re-dispatches every touched allocation
+  at `plan.CurrentVersion` (read from the version pin's `previous`
+  field), waits for the batch to be healthy, and on success restores
+  `current = previous` in the pin. On rollback failure the deployment
+  ends in `StateRollbackFailed`, the service-level
+  `ServiceCooldown.RollbackFailed` flag is set in KV, and the
+  autoscaler refuses to act on the service until the operator clears
+  it via the API.
+- **Autoscaler is paused during a deploy.** Deployer sets
+  `ServiceCooldown.DeployInProgress = true` on start and false on any
+  terminal state; the autoscaler's `EvaluateService` returns noop
+  while the flag is set so a stale-version copy can't be placed on a
+  node that briefly looks uncovered during a Restarting transition.
+- **Deploy is async over HTTP.** `POST /services/{name}/deploy`
+  returns 202 immediately with the initial running status; the rollout
+  runs in a goroutine on the server lifecycle context. The dashboard
+  subscribes to `asty.v1.deploy.progress.<service>` via SSE (GET on
+  the same path with `Accept: text/event-stream`) for live progress.
+  Concurrent deploys on the same service are refused with 409
+  (`deployer.ErrDeployInFlight`).
+- **Checksum is optional.** The artifact downloader skips verification
+  when the field is empty or contains an unresolved `${...}` placeholder
+  (the prod-config pattern). When a real `sha256:...` is supplied it's
+  enforced as before.
 
 Variable substitution: `${A_NATS_USER}`, `${VERSION}`, `${ARCH}` expanded from orchestrator's environment.
 
@@ -844,12 +980,14 @@ asty/internal/
 │   ├── types/                     # NodeInfo, ServiceDefinition,
 │   │                              #   Allocation, Events, Commands,
 │   │                              #   Snapshot, Health, Metrics,
-│   │                              #   Scaling, AuditEvent, MustJSON
+│   │                              #   Scaling, AuditEvent, MustJSON,
+│   │                              #   ServiceVersion (deployer pin)
 │   └── util/ringbuf/              # generic ring buffer (logs/events)
 ├── infra/                         # L1 — adapters wrapping external systems
 │   ├── kv/                        # JetStream KV (state.go, nodes.go,
 │   │                              #   allocations.go, cooldowns.go,
-│   │                              #   scale.go, snapshot.go, watch.go)
+│   │                              #   scale.go, version.go, snapshot.go,
+│   │                              #   watch.go, deployments.go)
 │   ├── process/                   # exec + monitor + rotation + tail
 │   ├── probe/                     # HTTP/NATS health checks (checker.go,
 │   │                              #   probe.go) — package is `probe`
@@ -861,11 +999,21 @@ asty/internal/
 ├── domain/                        # L2 — pure types + FSMs (no I/O)
 │   └── proximity/                 # Matrix + sort + validate
 ├── ops/                           # L3 — use cases (orchestration)
-│   ├── reconciler/                # workqueue + reconcile pipeline
-│   ├── scheduler/                 # placement + DC diversity
+│   ├── reconciler/                # workqueue + reconcile pipeline.
+│   │                              #   warmup.go event-debounces the
+│   │                              #   first pass until NodeReady set
+│   │                              #   stabilises (no missing nodes at
+│   │                              #   initial placement).
+│   ├── scheduler/                 # placement + DC diversity. helpers.go
+│   │                              #   exports PickRemovalVictims (shared
+│   │                              #   with manual-scale handler).
 │   ├── autoscaler/                # EvaluateService + Execute +
-│   │                              #   metrics/store.go (RPS timeseries)
-│   ├── deployer/                  # canary + rolling + REAL rollback
+│   │                              #   metrics/store.go (RPS timeseries).
+│   │                              #   Skips work when service has
+│   │                              #   RollbackFailed or DeployInProgress.
+│   ├── deployer/                  # canary + rolling + REAL rollback.
+│   │                              #   lifecycle.go holds the in-flight
+│   │                              #   guard + KV pin/gate helpers.
 │   ├── drainer/                   # parallel migration
 │   ├── leader/                    # election + watch
 │   └── discovery/                 # DNS node discovery
@@ -883,8 +1031,11 @@ asty/internal/
 │   │                              #   self-name collision.
 │   ├── stream/                    # SSE plumbing + per-resource handlers
 │   │                              #   (Cluster, Node, Service, Allocation,
-│   │                              #   Nodes, Services). dashboard imports
-│   │                              #   them through a narrowed Context.
+│   │                              #   Nodes, Services, Deploy). dashboard
+│   │                              #   imports them through a narrowed
+│   │                              #   Context. Deploy filters the
+│   │                              #   wildcard `deploy.progress.>` to
+│   │                              #   one service.
 │   ├── health/                    # GET /health handler
 │   └── gateway/                   # /api/v1 (default) embedded gateway —
 │                                  #   gateway.go, routing.go, http.go,
@@ -897,7 +1048,12 @@ asty/internal/
 │   ├── tunables.go                # metricsRetention, streamHubInterval, …
 │   ├── context.go                 # ServerContext + DrainDeps getters
 │   ├── nats.go, commands.go       # NATS connection + agent RPC
-│   ├── deployment.go              # DeployService (plan builder)
+│   ├── deployment.go              # DeployService — async wrapper:
+│   │                              #   validates, builds plan from the
+│   │                              #   version pin + live allocs (sorted),
+│   │                              #   launches goroutine on s.lifeCtx,
+│   │                              #   returns 202. Bootstrap path when
+│   │                              #   no live allocs: pin + reconcile.
 │   ├── artifact.go                # artifact-side helpers
 │   ├── leadership.go              # watchLeadership + leader-scoped work
 │   ├── logbuffer.go, metrics.go   # NATS log/metrics subscriptions
@@ -911,7 +1067,10 @@ asty/internal/
 │   │                              #   own node.<id> KV entry is deleted
 │   │                              #   (companion to dashboard kill)
 │   └── streamhub*.go              # streamhub.go, streamhub_run.go,
-│                                  #   streamhub_subs.go, streamhub_pubsub.go
+│                                  #   streamhub_subs.go, streamhub_pubsub.go.
+│                                  #   Four NATS-driven fanouts: snapshots,
+│                                  #   drain.progress, cluster events,
+│                                  #   deploy.progress.> (per-service).
 └── agent/                         # Agent sub-package
     ├── agent.go                   # Agent struct + Start
     ├── natssup.go                 # bootstrapNATS, resolveNATSPeers,

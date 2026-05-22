@@ -82,12 +82,11 @@ func TestDeploymentStatus(t *testing.T) {
 
 func TestUpdateStrategy(t *testing.T) {
 	strategy := UpdateStrategy{
-		MaxParallel:      2,
-		MinHealthyTime:   15 * time.Second,
-		HealthyDeadline:  5 * time.Minute,
-		ProgressDeadline: 15 * time.Minute,
-		AutoRevert:       true,
-		Canary:           1,
+		MaxParallel:     2,
+		MinHealthyTime:  15 * time.Second,
+		HealthyDeadline: 5 * time.Minute,
+		AutoRevert:      true,
+		Canary:          1,
 	}
 
 	if strategy.MaxParallel != 2 {

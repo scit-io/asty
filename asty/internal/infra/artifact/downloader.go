@@ -76,15 +76,15 @@ func (d *Downloader) Download(url, checksum, destDir string) error {
 	}
 
 	calculatedChecksum := hex.EncodeToString(hash.Sum(nil))
-	expectedChecksum := strings.TrimPrefix(checksum, "sha256:")
-
-	if calculatedChecksum != expectedChecksum {
-		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, calculatedChecksum)
+	if checksumIsSpecified(checksum) {
+		expectedChecksum := strings.TrimPrefix(checksum, "sha256:")
+		if calculatedChecksum != expectedChecksum {
+			return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedChecksum, calculatedChecksum)
+		}
+		log.Info().Str("checksum", calculatedChecksum).Msg("artifact checksum verified")
+	} else {
+		log.Info().Str("checksum", calculatedChecksum).Msg("artifact downloaded (no checksum specified)")
 	}
-
-	log.Info().
-		Str("checksum", calculatedChecksum).
-		Msg("artifact checksum verified")
 
 	if _, err := tmpFile.Seek(0, 0); err != nil {
 		return fmt.Errorf("failed to seek temp file: %w", err)
@@ -99,6 +99,21 @@ func (d *Downloader) Download(url, checksum, destDir string) error {
 		Msg("artifact extracted successfully")
 
 	return nil
+}
+
+// checksumIsSpecified reports whether checksum is something we can
+// actually compare against. Empty strings and unresolved template
+// placeholders (`${...}`) both mean "no checksum supplied" — the
+// downloader logs the calculated hash instead of failing.
+func checksumIsSpecified(checksum string) bool {
+	c := strings.TrimSpace(checksum)
+	if c == "" {
+		return false
+	}
+	if strings.Contains(c, "${") {
+		return false
+	}
+	return true
 }
 
 func (d *Downloader) copyLocal(url, destDir string) error {

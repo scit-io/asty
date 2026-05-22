@@ -40,6 +40,7 @@ type Hub interface {
 	Subscribe() (<-chan *types.ClusterSnapshot, func())
 	SubscribeDrain() (<-chan []byte, func())
 	SubscribeEvents() (<-chan []byte, func())
+	SubscribeDeploy() (<-chan []byte, func())
 }
 
 // RPSSource lets cluster aggregation read the latest RPS per node.

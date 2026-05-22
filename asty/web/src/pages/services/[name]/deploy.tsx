@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -17,40 +18,61 @@ import { Rocket } from 'lucide-react'
 import { toast } from 'sonner'
 import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
-import { api } from '@/api/client'
+import { api, API_PREFIX } from '@/api/client'
 import type { DeploymentRecord, DeploymentsResponse } from '@/types'
 
 const statusVariant = (s: string) =>
-  s === 'running' ? 'default' : s === 'completed' ? 'default' :
-  s === 'failed' ? 'destructive' : s === 'reverted' ? 'secondary' : 'outline'
+  s === 'running' ? 'default'
+    : s === 'completed' ? 'default'
+    : s === 'failed' || s === 'rollback_failed' ? 'destructive'
+    : s === 'reverted' ? 'secondary'
+    : 'outline'
 
-// Deploy tab — version input + history. The placeholder text in the
-// version input comes from the latest record so the operator sees
-// what's running before typing the next tag (model: "подставляем
-// версию для деплоя из доступных").
+// Deploy tab — version input + live progress + history. The progress
+// stream is event-driven: subscribes to GET /services/{name}/deploy
+// with Accept: text/event-stream and merges incoming DeploymentRecord
+// updates into local state. History falls back to a single REST fetch
+// on mount + when the live stream flips to a terminal state, so we
+// don't need a polling loop.
 export default function ServiceDeploy() {
   const { name } = useParams<{ name: string }>()
   const [version, setVersion] = useState('')
   const [deploying, setDeploying] = useState(false)
   const [history, setHistory] = useState<DeploymentRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [live, setLive] = useState<DeploymentRecord | null>(null)
+  const liveRef = useRef<DeploymentRecord | null>(null)
 
   useEffect(() => {
     if (!name) return
     let cancelled = false
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const poll = async () => {
+    const loadHistory = async () => {
       try {
         const res = await api.getServiceDeployments(name) as DeploymentsResponse
         if (!cancelled) setHistory(res.deployments || [])
-      } catch { /* keep current */ }
-      if (!cancelled) {
-        setLoading(false)
-        timer = setTimeout(poll, 10000)
+      } catch { /* keep current */ } finally {
+        if (!cancelled) setLoading(false)
       }
     }
-    poll()
-    return () => { cancelled = true; if (timer) clearTimeout(timer) }
+    loadHistory()
+
+    const url = `${API_PREFIX}/services/${name}/deploy`
+    const es = new EventSource(url)
+    es.addEventListener('progress', (event) => {
+      try {
+        const rec = JSON.parse((event as MessageEvent).data) as DeploymentRecord
+        liveRef.current = rec
+        setLive(rec)
+        // Terminal state — refresh history so the new record is in the table.
+        if (rec.status !== 'running') {
+          loadHistory()
+        }
+      } catch { /* ignore malformed */ }
+    })
+    return () => {
+      cancelled = true
+      es.close()
+    }
   }, [name])
 
   const handleDeploy = async () => {
@@ -68,7 +90,9 @@ export default function ServiceDeploy() {
   }
 
   if (!name) return null
-  const latest = history[0]
+  const latest = live ?? history[0]
+  const liveActive = live?.status === 'running'
+
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <Breadcrumbs items={[
@@ -93,11 +117,32 @@ export default function ServiceDeploy() {
         <CardContent className="flex items-center gap-2">
           <Input className="w-64" value={version} onChange={(e) => setVersion(e.target.value)}
             placeholder={latest?.version ? `e.g. ${latest.version}` : 'version tag'} />
-          <Button onClick={handleDeploy} disabled={deploying || !version}>
-            {deploying ? 'Deploying…' : 'Deploy'}
+          <Button onClick={handleDeploy} disabled={deploying || !version || liveActive}>
+            {liveActive ? 'In progress…' : deploying ? 'Deploying…' : 'Deploy'}
           </Button>
         </CardContent>
       </Card>
+
+      {live && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Live deploy</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="font-mono">{live.version}</span>
+              <Badge variant={statusVariant(live.status)}>{live.status}</Badge>
+              <span className="text-muted-foreground">{live.strategy}</span>
+            </div>
+            <Progress value={live.progress} />
+            {live.rollback_steps && live.rollback_steps.length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Rollback steps: {live.rollback_steps.length}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

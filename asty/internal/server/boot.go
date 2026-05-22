@@ -40,6 +40,7 @@ func (s *Server) Start(parent context.Context) error {
 	// selfremoval.go.
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	s.lifeCtx = ctx
 
 	s.initFeatures(ctx)
 
@@ -105,6 +106,8 @@ func (s *Server) initFeatures(ctx context.Context) {
 
 	s.scheduler = scheduler.NewScheduler(s.clusterState, s.cfg)
 	s.metricsStore = autometrics.NewStore(metricsRetention)
+	s.metricsStore.AttachNATS(s.nc)
+	s.subscribeScalingEvents(ctx)
 	s.logBuffer = logs.NewBuffer(logBufferLines)
 	s.eventBuffer = events.NewBuffer(eventBufferEntries)
 	s.autoscaler = autoscaler.NewAutoscaler(s.clusterState, s.scheduler, s.cfg, s.metricsStore)
@@ -116,6 +119,7 @@ func (s *Server) initFeatures(ctx context.Context) {
 	go proximity.RunValidation(ctx, s.proximityMatrix, s.clusterState, s.pingPair)
 
 	s.deployer = deployer.NewDeployer(s.clusterState, s.nc, s.sendRestartCommand)
+	s.subscribeDeployHistory(ctx)
 	s.serviceLoader = deployer.NewServiceLoader(s.cfg.Agent.ServiceDir)
 	services, err := s.serviceLoader.LoadAll()
 	if err != nil {

@@ -49,7 +49,7 @@ export default function ServiceOverview() {
     setScaling(true)
     try {
       await api.scaleService(name, n)
-      toast.success(`Scaling ${name} to ${n}`)
+      toast.success(`Set ${name} floor to ${n}`)
       setScaleTo('')
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -107,18 +107,25 @@ export default function ServiceOverview() {
           {service.Type === 'service' && (
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-medium text-muted-foreground">Manual scale</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Min copies (floor)</CardTitle>
               </CardHeader>
-              <CardContent className="flex items-center gap-2">
-                <Input className="w-32" type="number" min={0}
-                  placeholder="copies" value={scaleTo}
-                  onChange={(e) => setScaleTo(e.target.value)} />
-                <Button onClick={handleScale} disabled={scaling || !scaleTo}>
-                  {scaling ? 'Scaling…' : 'Scale'}
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  Current: {runtime?.current_copies ?? 0} · min: {runtime?.min_copies ?? 0}
-                </span>
+              <CardContent className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input className="w-32" type="number" min={0}
+                    placeholder="copies" value={scaleTo}
+                    onChange={(e) => setScaleTo(e.target.value)} />
+                  <Button onClick={handleScale} disabled={scaling || !scaleTo}>
+                    {scaling ? 'Saving…' : 'Set floor'}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Current: {runtime?.current_copies ?? 0} · floor: {runtime?.min_copies ?? 0}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Sets the per-service minimum copy count. The autoscaler still grows
+                  above this in response to traffic or resource pressure; lowering the
+                  floor below the current copy count stops the excess copies immediately.
+                </p>
               </CardContent>
             </Card>
           )}

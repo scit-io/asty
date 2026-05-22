@@ -30,19 +30,21 @@ type streamHub struct {
 	mu       sync.RWMutex
 	snapshot *types.ClusterSnapshot
 
-	snapSubs  *subscribers[*types.ClusterSnapshot]
-	drainSubs *subscribers[[]byte]
-	eventSubs *subscribers[[]byte]
+	snapSubs   *subscribers[*types.ClusterSnapshot]
+	drainSubs  *subscribers[[]byte]
+	eventSubs  *subscribers[[]byte]
+	deploySubs *subscribers[[]byte]
 }
 
 func newStreamHub(server *Server, interval time.Duration) *streamHub {
 	return &streamHub{
-		server:    server,
-		interval:  interval,
-		idx:       newAllocIndex(),
-		snapSubs:  newSubscribers[*types.ClusterSnapshot](),
-		drainSubs: newSubscribers[[]byte](),
-		eventSubs: newSubscribers[[]byte](),
+		server:     server,
+		interval:   interval,
+		idx:        newAllocIndex(),
+		snapSubs:   newSubscribers[*types.ClusterSnapshot](),
+		drainSubs:  newSubscribers[[]byte](),
+		eventSubs:  newSubscribers[[]byte](),
+		deploySubs: newSubscribers[[]byte](),
 	}
 }
 

@@ -2,7 +2,6 @@ package autoscaler
 
 import (
 	"fmt"
-	"sort"
 	"time"
 
 	"asty/asty/internal/core/types"
@@ -35,8 +34,8 @@ func (as *Autoscaler) evaluateScaleDown(svc *types.ServiceDefinition, live []*ty
 	if override, ok := as.clusterState.GetServiceScale(svc.Name); ok {
 		floor = override
 	}
-	if floor < 1 {
-		floor = 1
+	if floor < 0 {
+		floor = 0
 	}
 	if len(live) <= floor {
 		as.clearIdleMarker(svc.Name)
@@ -156,28 +155,13 @@ func (as *Autoscaler) clearIdleMarker(service string) {
 	}
 }
 
-// pickAllocationToRemove chooses the victim for scale-down: prefer
-// the most-crowded DC (preserves geo-diversity), tie-break by node ID
-// for deterministic decisions.
+// pickAllocationToRemove chooses the single victim for scale-down by
+// delegating to scheduler.PickRemovalVictims so the autoscaler and
+// manual-scale share the same draining order.
 func (as *Autoscaler) pickAllocationToRemove(live []*types.ServiceAllocation, nodes []*types.NodeInfo) *types.ServiceAllocation {
-	if len(live) == 0 {
+	picks := scheduler.PickRemovalVictims(live, nodes, 1)
+	if len(picks) == 0 {
 		return nil
 	}
-	nodeDC := make(map[string]string, len(nodes))
-	for _, n := range nodes {
-		nodeDC[n.ID] = scheduler.DatacenterOf(n)
-	}
-	dcCount := make(map[string]int)
-	for _, a := range live {
-		dcCount[nodeDC[a.NodeID]]++
-	}
-	sorted := append([]*types.ServiceAllocation(nil), live...)
-	sort.Slice(sorted, func(i, j int) bool {
-		di, dj := nodeDC[sorted[i].NodeID], nodeDC[sorted[j].NodeID]
-		if dcCount[di] != dcCount[dj] {
-			return dcCount[di] > dcCount[dj]
-		}
-		return sorted[i].NodeID < sorted[j].NodeID
-	})
-	return sorted[0]
+	return picks[0]
 }

@@ -33,14 +33,32 @@ export default function ServiceAutoscaler() {
     return subscribeService(name)
   }, [name, subscribeService])
 
+  const [info, setInfo] = useState<{
+    min_copies: number; min_copies_default: number; min_copies_override: boolean
+    max_copies: number; deploy_in_progress: boolean
+  } | null>(null)
+
   useEffect(() => {
     if (!name) return
     let timer: ReturnType<typeof setTimeout> | null = null
     let cancelled = false
     const poll = async () => {
       try {
-        const res = await api.getServiceAutoscaler(name) as { events?: ScalingEvent[] }
-        if (!cancelled) setEvents(res.events || [])
+        const res = await api.getServiceAutoscaler(name) as {
+          events?: ScalingEvent[]
+          min_copies: number; min_copies_default: number; min_copies_override: boolean
+          max_copies: number; deploy_in_progress: boolean
+        }
+        if (!cancelled) {
+          setEvents(res.events || [])
+          setInfo({
+            min_copies: res.min_copies,
+            min_copies_default: res.min_copies_default,
+            min_copies_override: res.min_copies_override,
+            max_copies: res.max_copies,
+            deploy_in_progress: res.deploy_in_progress,
+          })
+        }
       } catch { /* keep current */ }
       if (!cancelled) {
         setLoading(false)
@@ -77,7 +95,17 @@ export default function ServiceAutoscaler() {
           ) : (
             <dl className="grid grid-cols-2 gap-y-2 text-sm">
               <dt className="text-muted-foreground">Current copies</dt><dd className="font-mono">{status.current_copies ?? 0}</dd>
-              <dt className="text-muted-foreground">Min copies</dt><dd className="font-mono">{status.min_copies ?? 0}</dd>
+              <dt className="text-muted-foreground">Min copies (floor)</dt>
+              <dd className="flex items-center gap-2 font-mono">
+                {info?.min_copies ?? status.min_copies ?? 0}
+                {info?.min_copies_override && (
+                  <Badge variant="secondary" className="font-sans text-[10px]">
+                    overridden (default {info.min_copies_default})
+                  </Badge>
+                )}
+              </dd>
+              <dt className="text-muted-foreground">Max copies (ceiling)</dt>
+              <dd className="font-mono">{info?.max_copies && info.max_copies > 0 ? info.max_copies : 'unlimited'}</dd>
               <dt className="text-muted-foreground">Target CPU</dt><dd className="font-mono">{status.target_cpu ?? 0}%</dd>
               <dt className="text-muted-foreground">Target Memory</dt><dd className="font-mono">{status.target_memory ?? 0}%</dd>
               <dt className="text-muted-foreground">Traffic threshold</dt><dd className="font-mono">{status.traffic_threshold ?? 0} Requests per second</dd>
@@ -85,7 +113,9 @@ export default function ServiceAutoscaler() {
               <dd className="flex gap-2">
                 {status.cooldown_up_active && <Badge variant="secondary">up</Badge>}
                 {status.cooldown_down_active && <Badge variant="secondary">down</Badge>}
-                {!status.cooldown_up_active && !status.cooldown_down_active && <span className="text-muted-foreground">inactive</span>}
+                {info?.deploy_in_progress && <Badge variant="secondary">deploy</Badge>}
+                {!status.cooldown_up_active && !status.cooldown_down_active && !info?.deploy_in_progress &&
+                  <span className="text-muted-foreground">inactive</span>}
               </dd>
               <dt className="text-muted-foreground">Last action</dt>
               <dd>{status.last_action
@@ -122,9 +152,14 @@ export default function ServiceAutoscaler() {
                   <TableRow key={i}>
                     <TableCell className="text-sm">{new Date(e.timestamp * 1000).toLocaleString()}</TableCell>
                     <TableCell>
-                      <Badge variant={e.action === 'scale_up' ? 'default' : 'secondary'}>
-                        {e.action === 'scale_up' ? 'Scale Up' : 'Scale Down'}
-                      </Badge>
+                      <div className="flex items-center gap-1">
+                        <Badge variant={e.action === 'scale_up' ? 'default' : 'secondary'}>
+                          {e.action === 'scale_up' ? 'Scale Up' : 'Scale Down'}
+                        </Badge>
+                        {e.reason.startsWith('manual:') && (
+                          <Badge variant="outline" className="text-[10px]">manual</Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="text-sm">{e.reason}</TableCell>
                     <TableCell>{e.from_count} → {e.to_count}</TableCell>

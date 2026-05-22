@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/kv"
 
 	"github.com/rs/zerolog/log"
@@ -49,6 +50,28 @@ func (d *Deployer) addRecord(record DeploymentRecord) {
 	d.history = append(d.history, record)
 	d.mu.Unlock()
 	d.persistLast()
+}
+
+// ApplyRemoteRecord merges a deployment record received via NATS
+// (subject asty.v1.deploy.progress.<service>) into the local history
+// ring. If a record with the same ID already exists, its fields are
+// overwritten so progressing status reflects on every node; otherwise
+// the record is appended. Without this every server's GET /deploy
+// returned only the locally-initiated runs — followers showed an
+// empty history table even though deploys had completed elsewhere.
+func (d *Deployer) ApplyRemoteRecord(rec DeploymentRecord) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for i := range d.history {
+		if d.history[i].ID == rec.ID {
+			d.history[i] = rec
+			return
+		}
+	}
+	if len(d.history) >= historyCap {
+		d.history = d.history[1:]
+	}
+	d.history = append(d.history, rec)
 }
 
 func (d *Deployer) updateLastRecord(status State, progress int) {
@@ -179,6 +202,7 @@ func (d *Deployer) revertDeployment(ctx context.Context, plan *DeploymentPlan, s
 	status.Status = StateReverted
 	status.EndTime = time.Now()
 	d.updateLastRecord(StateReverted, 0)
+	d.pinVersion(plan.ServiceName, types.ServiceVersion{Current: plan.CurrentVersion})
 	log.Info().Str("service", status.ServiceName).Msg("deployment rolled back successfully")
 	return status, fmt.Errorf("deployment reverted: %s", reason)
 }

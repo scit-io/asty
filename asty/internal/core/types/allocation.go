@@ -103,11 +103,19 @@ func (s AllocationStatus) Occupies() bool {
 // down) until the operator clears it via the API. Without this gate
 // the autoscaler would "fix" a mixed-version cluster by adding more
 // copies, which is more dangerous than leaving it alone.
+//
+// DeployInProgress is set by the deployer for the duration of a
+// rollout. Autoscaler treats it as a "skip" so it can't race with the
+// deploy and place a stale-version copy on a node that briefly looks
+// uncovered while its allocation is in Restarting. Cleared by the
+// deployer on any terminal state (completed, failed, reverted,
+// rollback_failed — the last one also keeps RollbackFailed=true).
 type ServiceCooldown struct {
-	LastScaleUp    time.Time `json:"last_scale_up,omitempty"`
-	LastScaleDown  time.Time `json:"last_scale_down,omitempty"`
-	IdleSince      time.Time `json:"idle_since,omitempty"`
-	RollbackFailed bool      `json:"rollback_failed,omitempty"`
+	LastScaleUp      time.Time `json:"last_scale_up,omitempty"`
+	LastScaleDown    time.Time `json:"last_scale_down,omitempty"`
+	IdleSince        time.Time `json:"idle_since,omitempty"`
+	RollbackFailed   bool      `json:"rollback_failed,omitempty"`
+	DeployInProgress bool      `json:"deploy_in_progress,omitempty"`
 }
 
 // CooldownStatus describes which cooldowns are currently active and what

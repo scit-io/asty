@@ -166,6 +166,11 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			cooldown = cd.Status(now, cfg.Autoscale.CooldownUp, cfg.Autoscale.CooldownDown)
 		}
 
+		minCopies := cfg.Autoscale.MinCopies
+		if override, ok := h.server.clusterState.GetServiceScale(svc.Name); ok {
+			minCopies = override
+		}
+
 		servicesOut = append(servicesOut, types.ServiceWithUsage{
 			ServiceDefinition:  svc,
 			CurrentCopies:      running,
@@ -173,7 +178,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			AvgMemoryPercent:   avgMemPct,
 			AvgCPUMHz:          avgCPUMHz,
 			AvgMemoryMB:        avgMemMB,
-			MinCopies:          cfg.Autoscale.MinCopies,
+			MinCopies:          minCopies,
 			TargetCPU:          cfg.Autoscale.TargetCPU,
 			TargetMemory:       cfg.Autoscale.TargetMemory,
 			TrafficThreshold:   cfg.Autoscale.TrafficRPSThreshold,

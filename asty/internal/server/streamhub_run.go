@@ -22,6 +22,13 @@ func (h *streamHub) Run(ctx context.Context) {
 	} else {
 		defer drainSub.Unsubscribe()
 	}
+	if deploySub, err := h.server.nc.Subscribe("asty.v1.deploy.progress.>", func(msg *nats.Msg) {
+		h.deploySubs.fanout(msg.Data)
+	}); err != nil {
+		log.Error().Err(err).Msg("streamHub: failed to subscribe deploy events")
+	} else {
+		defer deploySub.Unsubscribe()
+	}
 
 	notify := make(chan struct{}, 1)
 	triggerRefresh := func() {

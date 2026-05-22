@@ -1,17 +1,29 @@
 package metrics
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/core/util/ringbuf"
+
+	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog/log"
 )
 
 // eventsCapacity caps the in-memory scaling-event history. 1000 covers
 // roughly a week at one decision per ~10 minutes; older events fall
 // off the back of the ring.
 const eventsCapacity = 1000
+
+// ScalingEventSubject is the NATS subject carrying scaling-decision
+// notifications. Every server subscribes and stores locally so any
+// dashboard listener returns a consistent ring regardless of which
+// node served the GET — the alternative (per-process ring on the
+// leader only) made manual-scale and autoscaler events invisible to
+// dashboards routed through a follower.
+const ScalingEventSubject = "asty.v1.scaling.event"
 
 // MetricPoint represents a single metric data point
 type MetricPoint struct {
@@ -38,6 +50,8 @@ type Store struct {
 
 	eventsMu sync.RWMutex
 	events   *ringbuf.Ring[ScalingEvent]
+
+	nc *nats.Conn // optional, nil in tests; gates Publish()
 }
 
 func NewStore(maxAge time.Duration) *Store {
@@ -45,6 +59,37 @@ func NewStore(maxAge time.Duration) *Store {
 		rps:    make(map[string][]MetricPoint),
 		maxAge: maxAge,
 		events: ringbuf.New[ScalingEvent](eventsCapacity),
+	}
+}
+
+// AttachNATS wires the store to a NATS connection so callers can use
+// PublishEvent to broadcast a scaling decision to every server in the
+// cluster. Called from the server boot sequence; tests leave nc nil
+// and use AddEvent directly to seed the ring.
+func (s *Store) AttachNATS(nc *nats.Conn) { s.nc = nc }
+
+// PublishEvent broadcasts a scaling event to every server. The local
+// node receives the message through the same subscription that
+// remote servers do, so AddEvent is called from exactly one place —
+// the subscription handler in the server boot sequence — and there's
+// no risk of double-counting. Falls back to a local AddEvent when no
+// NATS connection is attached (tests, degraded mode).
+func (s *Store) PublishEvent(evt ScalingEvent) {
+	if evt.Timestamp == 0 {
+		evt.Timestamp = time.Now().Unix()
+	}
+	if s.nc == nil {
+		s.AddEvent(evt)
+		return
+	}
+	data, err := json.Marshal(evt)
+	if err != nil {
+		log.Warn().Err(err).Str("service", evt.Service).Msg("scaling event: marshal failed, dropping")
+		return
+	}
+	if err := s.nc.Publish(ScalingEventSubject, data); err != nil {
+		log.Warn().Err(err).Str("service", evt.Service).Msg("scaling event: NATS publish failed, falling back to local-only")
+		s.AddEvent(evt)
 	}
 }
 

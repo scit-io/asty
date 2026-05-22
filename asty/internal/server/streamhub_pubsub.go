@@ -26,6 +26,14 @@ func (h *streamHub) SubscribeEvents() (<-chan []byte, func()) {
 	return ch, unsub
 }
 
+// SubscribeDeploy returns a channel for deploy progress events
+// (JSON-encoded DeploymentRecord values published by the deployer on
+// asty.v1.deploy.progress.<service>).
+func (h *streamHub) SubscribeDeploy() (<-chan []byte, func()) {
+	ch, unsub := h.deploySubs.add(subscriberBuffer)
+	return ch, unsub
+}
+
 // FanoutEvent marshals e and delivers it to every event subscriber.
 // Slow subscribers drop the event.
 func (h *streamHub) FanoutEvent(e types.ClusterEvent) {

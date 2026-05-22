@@ -102,13 +102,12 @@ type Logs struct {
 // might just miss the HealthyDeadline, while the second arrives with
 // the binary already on disk.
 type Update struct {
-	MaxParallel      int    `yaml:"max_parallel"`
-	Canary           int    `yaml:"canary"`
-	CanaryRetries    int    `yaml:"canary_retries"`
-	MinHealthyTime   string `yaml:"min_healthy_time"`
-	HealthyDeadline  string `yaml:"healthy_deadline"`
-	ProgressDeadline string `yaml:"progress_deadline"`
-	AutoRevert       bool   `yaml:"auto_revert"`
+	MaxParallel     int    `yaml:"max_parallel"`
+	Canary          int    `yaml:"canary"`
+	CanaryRetries   int    `yaml:"canary_retries"`
+	MinHealthyTime  string `yaml:"min_healthy_time"`
+	HealthyDeadline string `yaml:"healthy_deadline"`
+	AutoRevert      bool   `yaml:"auto_revert"`
 }
 
 // GetMaxParallel returns the per-batch parallelism for rolling updates,

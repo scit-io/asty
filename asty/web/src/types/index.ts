@@ -184,11 +184,15 @@ export interface ScalingEvent {
 export interface AutoscalerServiceStatus {
   current_copies: number
   min_copies: number
+  min_copies_default: number
+  min_copies_override: boolean
+  max_copies: number
   target_cpu: number
   target_memory: number
   traffic_threshold: number
   cooldown_up_active: boolean
   cooldown_down_active: boolean
+  deploy_in_progress: boolean
   last_action: string
   last_action_at: number
 }
@@ -216,6 +220,15 @@ export interface DeploymentRecord {
   started_at: string
   completed_at?: string
   progress: number
+  rollback_steps?: Array<{
+    timestamp: string
+    node_id?: string
+    from_version: string
+    to_version: string
+    action: string
+    outcome: string
+    error?: string
+  }>
 }
 
 export interface DeploymentsResponse {

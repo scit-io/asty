@@ -22,7 +22,7 @@ func (as *Autoscaler) executeScaleUp(d *ScalingDecision, svc *types.ServiceDefin
 		ServiceName: svc.Name,
 		NodeID:      d.TargetNode,
 		Status:      types.AllocPending,
-		Version:     "latest",
+		Version:     as.scheduler.VersionFor(svc.Name),
 	}
 	if err := as.clusterState.CreateAllocation(alloc); err != nil {
 		return fmt.Errorf("failed to create allocation: %w", err)
@@ -57,10 +57,13 @@ func (as *Autoscaler) executeScaleDown(d *ScalingDecision, svc *types.ServiceDef
 // recordEvent re-reads the allocation list to compute "before/after"
 // counts for the event ring buffer. delta is +1 for ScaleUp, -1 for
 // ScaleDown so the FromCount/ToCount fields read correctly.
+// PublishEvent broadcasts over NATS so every server's local ring
+// stays consistent — the dashboard's GET hits whichever node the
+// browser is routed to, and pre-NATS we recorded only on the leader.
 func (as *Autoscaler) recordEvent(service string, action types.ScalingAction, reason, nodeID string, delta int) {
 	allocs, _ := as.clusterState.ListAllocations(service)
 	count := len(scheduler.LiveAllocations(allocs))
-	as.metricsStore.AddEvent(metrics.ScalingEvent{
+	as.metricsStore.PublishEvent(metrics.ScalingEvent{
 		Service:   service,
 		Action:    action,
 		Reason:    reason,

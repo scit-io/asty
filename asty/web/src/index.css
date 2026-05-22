@@ -94,7 +94,11 @@
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
+    /* Logo teal #1d8388 → hsl(183 65% 32%). Drives Button.default,
+       Switch/Checkbox checked state, link colour. Badge.default and
+       Progress are overridden to green to match the project's
+       healthy/ready palette (Tailwind green-500). */
+    --primary: 183 65% 32%;
     --primary-foreground: 210 40% 98%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
@@ -106,7 +110,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --ring: 183 65% 32%;
     --radius: 0.5rem;
     --chart-1: 199 89% 48%;
     --chart-2: 160 60% 45%;
@@ -122,8 +126,10 @@
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 4.9%;
     --popover-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    /* Same teal in dark mode — logo colour stays constant; lighten
+       a touch so contrast on the dark background reads clearly. */
+    --primary: 183 60% 42%;
+    --primary-foreground: 210 40% 98%;
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
@@ -134,7 +140,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    --ring: 183 60% 42%;
     --chart-1: 199 89% 58%;
     --chart-2: 160 60% 55%;
     --chart-3: 30 80% 65%;
