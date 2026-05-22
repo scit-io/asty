@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -27,6 +27,7 @@ import { useClusterStore } from '@/store/cluster'
 // has no per-allocation RPS counter yet.
 export default function AllocationDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
+  const navigate = useNavigate()
   const { allocationCache, nodeCache, subscribeAllocation } = useClusterStore()
   const cached = allocId ? allocationCache[allocId] : undefined
   const allocation = cached?.allocation || null
@@ -51,6 +52,12 @@ export default function AllocationDetail() {
     try {
       await (kind === 'restart' ? api.restartAllocation(nodeId, allocId) : api.stopAllocation(nodeId, allocId))
       toast.success(`${kind === 'restart' ? 'Restarted' : 'Stopped'} allocation`)
+      // Stop deletes this alloc; the page would 404 on next render.
+      // Send the operator to the nodes list so they can find where
+      // the reconciler placed the replacement copy.
+      if (kind === 'stop') {
+        navigate('/nodes')
+      }
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {

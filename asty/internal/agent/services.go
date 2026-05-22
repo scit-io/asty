@@ -110,87 +110,44 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 	return nil
 }
 
-// StopService stops a running service. If the process is unknown to the
-// agent (e.g. agent restarted between drain and stop), the allocation
-// is still marked stopped — the cluster shouldn't keep "running" state
-// for a process that does not actually exist on this node.
+// RestartService stops the local copy of svc in place and starts a
+// fresh one. The KV record stays in AllocRestarting throughout, which
+// preserves allocation identity (same ID, same node), holds the slot so
+// the scheduler will not race another copy onto a different node, and
+// signals the in-flight restart to observers. Used by both the deployer
+// (with a version-resolved svc def) and the dashboard's restart-allocation
+// action (which routes through CmdRestart for the same reasons).
 //
-// The status sequence is:
-//   Running → Stopping (right after dispatch) → Stopped (on confirmed exit)
-//
-// AllocStopping is the explicit "graceful exit in flight" window —
-// the slot is still occupied so the scheduler does not race another
-// copy into it before the agent confirms.
-func (a *Agent) StopService(serviceName string) error {
-	a.mu.Lock()
-	proc, exists := a.processes[serviceName]
-	if !exists {
-		a.mu.Unlock()
-		_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-			if alloc.Status == types.AllocStopped {
-				return false
-			}
-			alloc.Status = types.AllocStopped
+// If the alloc is missing in KV, the first mutate returns an error and
+// we bail before spawning anything — that's the guard against orphan
+// processes on a deleted slot. If StartService fails after the stop, we
+// roll the alloc back to Pending so the reconciler retries with backoff
+// rather than leaving it stuck in Restarting.
+func (a *Agent) RestartService(svc *types.ServiceDefinition) error {
+	if err := a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
+		alloc.Status = types.AllocRestarting
+		// Count the attempt, not the outcome — matches k8s restartCount
+		// semantics and the help string on asty_alloc_restarts_total
+		// ("Number of times the agent has restarted the allocation").
+		// ConsecutiveFailures stays put: this path is operator- or
+		// deployer-initiated, not a crash, so it should not feed
+		// pruneFailed's budget. A successful StartService below
+		// resets ConsecutiveFailures to 0 anyway.
+		alloc.Restarts++
+		return true
+	}); err != nil {
+		return fmt.Errorf("mark restarting: %w", err)
+	}
+
+	a.stopProcess(svc.Name)
+
+	if err := a.StartService(svc); err != nil {
+		_ = a.clusterState.MutateAllocation(svc.Name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
+			alloc.Status = types.AllocPending
 			alloc.PID = 0
 			return true
 		})
-		return fmt.Errorf("service %s not running", serviceName)
+		return err
 	}
-	delete(a.processes, serviceName)
-	a.mu.Unlock()
-
-	// Mark Stopping so observers see the intent in flight.
-	_ = a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-		if alloc.Status == types.AllocStopped || alloc.Status == types.AllocFailed {
-			return false
-		}
-		alloc.Status = types.AllocStopping
-		return true
-	})
-
-	a.healthChecker.Unregister(serviceName)
-	a.metricsCollector.Unregister(proc.PID())
-
-	if err := proc.Stop(); err != nil {
-		log.Error().Err(err).Str("service", serviceName).Msg("process stop failed")
-	}
-
-	if err := a.clusterState.MutateAllocation(serviceName, a.nodeID, func(alloc *types.ServiceAllocation) bool {
-		alloc.Status = types.AllocStopped
-		alloc.PID = 0
-		return true
-	}); err != nil {
-		log.Warn().Err(err).Str("service", serviceName).Msg("failed to mark allocation stopped")
-	}
-
-	log.Info().Str("service", serviceName).Msg("service stopped")
 	return nil
-}
-
-// RestartService stops the currently-running copy (if any) and starts a
-// fresh one from svc. The deployer's rolling-update path uses this:
-// StartService alone is idempotent, so the explicit stop guarantees
-// the new svc def (and any version-substituted Artifact URL) takes
-// effect.
-func (a *Agent) RestartService(svc *types.ServiceDefinition) error {
-	if err := a.StopService(svc.Name); err != nil {
-		log.Debug().Err(err).Str("service", svc.Name).Msg("restart: stop returned (may have been already stopped)")
-	}
-	return a.StartService(svc)
-}
-
-// stopAllProcesses runs StopService on every known process, called on
-// agent shutdown to leave cluster state consistent.
-func (a *Agent) stopAllProcesses() {
-	a.mu.RLock()
-	services := make([]string, 0, len(a.processes))
-	for name := range a.processes {
-		services = append(services, name)
-	}
-	a.mu.RUnlock()
-	for _, name := range services {
-		if err := a.StopService(name); err != nil {
-			log.Error().Err(err).Str("service", name).Msg("failed to stop service")
-		}
-	}
 }

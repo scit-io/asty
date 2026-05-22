@@ -104,6 +104,14 @@ func (a *Agent) attemptRestart(ctx context.Context, name string, proc *process.P
 	}
 
 	err = a.clusterState.MutateAllocation(name, a.nodeID, func(alloc *types.ServiceAllocation) bool {
+		// Guard against a concurrent user-initiated restart that
+		// already moved the alloc to Running (or some other live
+		// state) during our backoff sleep — don't downgrade it back
+		// to Pending. Only this loop's own AllocRestarting flip is
+		// eligible for the transition.
+		if alloc.Status != types.AllocRestarting {
+			return false
+		}
 		alloc.Status = types.AllocPending
 		alloc.PID = 0
 		return true

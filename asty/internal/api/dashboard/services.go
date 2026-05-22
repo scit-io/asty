@@ -111,12 +111,7 @@ func (api *API) handleServiceScale(w http.ResponseWriter, r *http.Request) {
 	if req.Count < len(live) {
 		victims := pickScaleDownVictims(live, len(live)-req.Count)
 		for _, v := range victims {
-			if err := api.ctx.StopServiceOnNode(v.NodeID, serviceName); err != nil {
-				api.writeError(w, http.StatusInternalServerError, "stop dispatch failed", err)
-				return
-			}
-			if err := api.ctx.ClusterState().DeleteAllocation(serviceName, v.NodeID); err != nil {
-				api.writeError(w, http.StatusInternalServerError, "delete allocation failed", err)
+			if !api.stopAndDeleteAllocation(r.Context(), w, serviceName, v.NodeID) {
 				return
 			}
 		}

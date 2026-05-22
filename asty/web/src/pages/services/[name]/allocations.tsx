@@ -48,6 +48,12 @@ export default function ServiceAllocations() {
     try {
       await (kind === 'restart' ? api.restartAllocation(a.node_id, a.id) : api.stopAllocation(a.node_id, a.id))
       toast.success(`${kind === 'restart' ? 'Restarted' : 'Stopped'} ${a.id.slice(0, 8)}`)
+      // Stop deletes the slot; the reconciler may backfill on a
+      // different node. Send the operator to the nodes list so they
+      // can spot where the replacement landed.
+      if (kind === 'stop') {
+        navigate('/nodes')
+      }
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {

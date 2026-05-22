@@ -909,7 +909,7 @@ flowchart TB
         WA[watchAllocsToQueue<br/>смена статуса аллокации<br/>пропускает Starting→Pending]
         WN[watchNodesToQueue<br/>любая смена статуса узла →<br/>enqueue ВСЕХ сервисов]
         RS[periodicResync<br/>каждые 60s — safety net]
-        API[API-обработчики<br/>scale / restart / stop /<br/>deploy → Enqueue name]
+        API[API-обработчики<br/>scale / stop / deploy →<br/>Enqueue name<br/>(per-alloc restart НЕ enqueue)]
         Init[enqueueAllServices<br/>на старте контроллера]
     end
 
@@ -984,9 +984,12 @@ flowchart TB
 
 ### Точки enqueue извне
 
-API-обработчики (scale, restart, stop) вызывают `Enqueue(name)`
+API-обработчики `scale`, `stop`, `deploy` вызывают `Enqueue(name)`
 (`controller.go:142`), чтобы изменения KV увидели работу очереди
-быстрее, чем через `periodicResync`.
+быстрее, чем через `periodicResync`. Per-alloc `restart` НЕ зовёт
+Enqueue — агент сам держит in-place FSM через `AllocRestarting`,
+controller'у реконсилить нечего (см. CLAUDE.md → "Restart / Stop
+allocation" и TZ.md §11.7).
 
 ---
 

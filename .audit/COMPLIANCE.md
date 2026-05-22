@@ -230,6 +230,8 @@
 | §11.3 локальный scale-up под нагрузкой | ✓ |
 | §11.4 deploy с реальным rollback | ✓ |
 | §11.5 drain узла | ✓ |
+| §11.6 сжатие кластера на лету (`SERVER.REMOVE` + `KeepClusterBlock`) | ✓ |
+| §11.7 restart/stop одной аллокации (in-place FSM на агенте, system Stop → 409) | ✓ `api/dashboard/allocations.go`, `agent/services.go:RestartService`, `agent/stop.go:stopProcess` |
 
 ---
 

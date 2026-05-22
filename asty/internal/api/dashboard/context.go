@@ -30,6 +30,7 @@ type ServerContext interface {
 	StreamHub() StreamHub
 	DeployService(ctx context.Context, service, version string) (*deployer.DeploymentStatus, error)
 	StopServiceOnNode(nodeID, serviceName string) error
+	RestartServiceOnNode(nodeID, serviceName string) error
 	ShutdownAgent(nodeID string) error
 	ReconcileService(svcName string)
 }

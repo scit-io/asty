@@ -308,8 +308,11 @@ Inside the controller (`controller.go`):
   controller-owned `Starting → Pending` rollback), `watchNodesToQueue`
   on any node status change (re-enqueues every service), and
   `periodicResync` every `resyncEvery` (default `60s`) as a safety
-  net. API handlers (`scale`, `restart`, `stop`, `deploy`) call
-  `Enqueue(name)` directly so user actions don't wait on the tick.
+  net. API handlers `scale`, `stop`, and `deploy` call `Enqueue(name)`
+  directly so user actions don't wait on the tick. The per-alloc
+  `restart` handler does NOT enqueue — the agent owns the FSM
+  in-place (see "Restart / Stop allocation" below), so the controller
+  has nothing to reconcile.
 - Per-key `reconcile` (`reconcile.go:22`) is a strict pipeline:
   `scheduler.ReconcileService` → `dispatchPending` → `pruneFailed` →
   `autoscaleOnce` (skipped for `ServiceTypeSystem`, since system
@@ -390,6 +393,76 @@ graceful path (RemoveNode runs before nats-server is stopped). Without
 this, the server would survive a dashboard kill and keep refreshing
 the leader lease over auto-discovered NATS peers, blocking any other
 node from claiming leadership.
+
+### Restart / Stop allocation
+
+Per-allocation operator actions exposed at
+`POST /dashboard/v1/nodes/{id}/allocations/{allocId}/{restart,stop}`.
+The finest-grained tool the dashboard offers: act on one specific
+copy on one specific node, distinct from scale (per-service),
+drain/kill (per-node), and deploy (per-service version roll).
+
+**Restart** — synchronous in-place restart that preserves allocation
+identity. The handler (`api/dashboard/allocations.go:handleAllocationRestart`)
+calls `ServerContext.RestartServiceOnNode` which resolves the current
+`ServiceDefinition` via `serviceLoader.GetService` and dispatches
+`CmdRestart` (server `sendRestartCommand`) with timeout sized to
+`svc.GetKillTimeout() + agentStartCommandTimeout`. The agent's
+`RestartService` (`agent/services.go`):
+
+  1. CAS the allocation to `AllocRestarting` and `Restarts++` in one
+     mutation. `ConsecutiveFailures` is left alone (this is operator-
+     initiated, not a crash, so it should not feed `pruneFailed`'s
+     budget); a successful start below resets it to 0.
+  2. `stopProcess` (shared with `StopService`) — kill the local
+     process and unregister health/metrics, WITHOUT touching KV.
+  3. `StartService` — fresh artifact resolve, spawn, mark `Running`
+     with new PID. On failure: roll the alloc back to `Pending` and
+     return the error; the controller's rate-limited dispatch will
+     retry via `CmdStart` (with backoff).
+
+KV transitions are `Running → Restarting → Running` (or `→ Pending`
+on failure). The slot is held throughout — `AllocRestarting` is in
+both `IsLive` and `Occupies`, so the scheduler does not place a
+competing copy elsewhere, and the node stays the same. No KV
+mutation from the dashboard side and no `ReconcileService` call —
+the agent owns the FSM end-to-end.
+
+The same `RestartService` path is used by the deployer's rolling
+update (`ops/deployer/sendUpdateCommand` → `CmdRestart`), so deploy
+restarts also increment `Restarts` and preserve identity.
+
+**Stop** — synchronous removal: `CmdStop` (agent fast-acks, runs
+`StopService` in a goroutine, KV transitions `Stopping → Stopped`),
+then the dashboard waits for `Stopped`/`Failed` via
+`WatchAllocation` (`api/dashboard/allocations.go:waitForAllocationStopped`)
+with budget `svc.GetKillTimeout() + 10s` (fallback `60s` for orphans
+with no resolvable service def), then `DeleteAllocation`, then
+`ReconcileService`. Mirrors the drain pattern (`ops/drainer/wait.go`)
+so the two paths don't drift; the helper `stopAndDeleteAllocation`
+is shared with the scale-down victims loop in
+`api/dashboard/services.go`.
+
+Rejected with **409** for `type: system` services — the scheduler
+would immediately re-create the slot on the same node (one-per-node
+invariant), making Stop a no-op. To remove a system-service copy
+from a node, drain or pause the node instead. Restart on system
+allocations is still allowed (the only way to bounce a system copy
+without touching its neighbours).
+
+The post-Stop UI behaviour is to navigate to `/nodes` after the
+toast — the reconciler may have backfilled the copy on a different
+node (regular service) or the same node (system service, theoretical
+since we reject; left for symmetry), and the operator needs the
+cluster-wide view to find it. The current allocation page would 404.
+
+Failure-recovery loop interaction: the agent's own
+`attemptRestart` (`agent/restart.go`) also writes
+`AllocRestarting` when a process crashes. The two paths share the
+state but operate on disjoint local-process state. The post-delay
+`Restarting → Pending` transition in `attemptRestart` is CAS-guarded
+on `Status == AllocRestarting`, so a concurrent operator restart
+that flips the alloc back to `Running` does not get downgraded.
 
 ### Platform Services Architecture
 

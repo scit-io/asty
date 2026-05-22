@@ -1252,6 +1252,76 @@ sequenceDiagram
   non-clustered mode` при попытке загрузить ранее реплицированные
   стримы из дискового стора.
 
+### 11.7 Перезапуск и остановка одной аллокации
+
+Самый мелкозернистый оператор-сценарий: подействовать на одну
+конкретную копию сервиса на одном конкретном узле. Отличие от
+соседних: scale меняет желаемое число копий целиком по сервису,
+drain/kill оперируют целым узлом, deploy катит версию по всему
+сервису канарейкой + rolling'ом.
+
+**Restart Allocation** — синхронный in-place перезапуск с
+сохранением идентичности аллокации (ID, узел, версия — те же).
+Дашборд (`POST /dashboard/v1/nodes/{id}/allocations/{aid}/restart`)
+вызывает на лидере `RestartServiceOnNode(nodeID, serviceName)`,
+тот шлёт `CmdRestart` с таймаутом `kill_timeout + start budget`.
+Агент в `RestartService`:
+
+1. CAS-мутация: `Status=AllocRestarting`, `Restarts++`.
+   `ConsecutiveFailures` не трогает (это не сбой, и в `pruneFailed`
+   ему делать нечего).
+2. `stopProcess` — SIGTERM/SIGKILL по группе, unregister метрик
+   и health-проб, БЕЗ KV-записей.
+3. `StartService` — заново резолвится артефакт, спавнится процесс,
+   на успехе мутация `Status=AllocRunning`, новый PID,
+   `ConsecutiveFailures=0`. На фейле откат `Status=AllocPending`,
+   реконсилер ретраит `CmdStart` с backoff'ом из workqueue.
+
+KV-переходы: `Running → Restarting → Running` (или `→ Pending` на
+ошибке). Слот удержан весь интервал — `AllocRestarting` есть и в
+`IsLive`, и в `Occupies`, поэтому шедулер не подсаживает конкурентную
+копию. Дашборд ничего не пишет в KV сам и `Enqueue` не зовёт —
+агент держит FSM от начала до конца.
+
+Та же `RestartService`-точка используется деплоером
+(`sendUpdateCommand` → `CmdRestart`), поэтому деплой-рестарты
+тоже инкрементируют `Restarts` и сохраняют идентичность.
+
+**Stop Allocation** — синхронное удаление. Дашборд
+(`POST .../{aid}/stop`):
+
+1. `StopServiceOnNode` → `CmdStop`. Агент fast-acks, в goroutine
+   гонит `StopService`: KV `Stopping`, kill, KV `Stopped`.
+2. `WatchAllocation` на `Stopped`/`Failed` (бюджет `kill_timeout
+   + 10s`, fallback `60s` для аллокаций без svc-def).
+3. `DeleteAllocation` — удаление записи.
+4. `ReconcileService` — реконсилер решает, нужно ли backfill'ить
+   на другой узел по `MinCopies`/`SetServiceScale` и где (через
+   `PickCandidates` с DC-diversity).
+
+Зеркалит drain (`ops/drainer/wait.go`), общий helper
+`stopAndDeleteAllocation` шерится со scale-down victims loop'ом,
+чтобы пути не разъезжались.
+
+Для `type: system` Stop отказывает с **409**: шедулер тут же
+пересоздаст слот на том же узле (one-per-node инвариант), операция
+бессмысленна. Для смены состава system-сервиса оператор должен
+дренировать или паузить узел. Restart для system-аллокации разрешён —
+единственный способ "пнуть" её, не трогая соседей по узлу.
+
+**UX**: после успешного Stop дашборд навигирует на `/nodes` —
+аллокация удалена, её страница 404'ит, плюс реконсилер мог
+переехать копию на другой узел, и оператору нужен кластер-вью.
+После Restart страница не меняется — копия здесь же.
+
+**Взаимодействие с failure-recovery'ем**: агентский
+`attemptRestart` пишет `AllocRestarting` тоже. Состояние общее,
+но локальные данные процесса не пересекаются. Пост-delay
+переход `Restarting → Pending` в `attemptRestart` CAS-сторожён
+условием `Status == AllocRestarting`, чтобы не затереть
+`Running`, который только что выставил параллельный
+operator-restart.
+
 ---
 
 ## 12. Идеальная файловая структура

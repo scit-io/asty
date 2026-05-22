@@ -70,9 +70,16 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 
 // sendRestartCommand asks the agent to stop the running copy and start a
 // fresh one from the resolved svc. Used by the deployer to apply a new
-// version: the dispatched svc has its artifact URL pre-expanded with
+// version and by RestartServiceOnNode for the dashboard's per-allocation
+// restart. The dispatched svc has its artifact URL pre-expanded with
 // version so the agent downloads the new tarball. Payload shape is
 // identical to start; only the subject suffix differs.
+//
+// The RPC timeout is sized to kill_timeout + the regular start budget
+// because the agent runs the restart synchronously: SIGTERM, wait up to
+// kill_timeout, optional SIGKILL, then the start sequence (artifact
+// download + spawn). Using agentStartCommandTimeout alone is too tight
+// once kill_timeout reaches its default of 30 s.
 func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition, version string) error {
 	kvEnv, err := s.provisionKVBuckets(svc)
 	if err != nil {
@@ -86,7 +93,8 @@ func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition,
 	if err != nil {
 		return fmt.Errorf("failed to marshal restart command: %w", err)
 	}
-	resp, err := s.SendCommandToAgent(nodeID, types.CmdRestart, cmd, agentStartCommandTimeout)
+	timeout := svc.GetKillTimeout() + agentStartCommandTimeout
+	resp, err := s.SendCommandToAgent(nodeID, types.CmdRestart, cmd, timeout)
 	if err != nil {
 		return err
 	}
@@ -94,6 +102,19 @@ func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition,
 		return fmt.Errorf("agent rejected restart: %s", resp.Error)
 	}
 	return nil
+}
+
+// RestartServiceOnNode dispatches a synchronous in-place restart of
+// serviceName on nodeID. Resolves the current service definition from
+// the loader so artifact URL placeholders pick up the latest pinned
+// version. Returns when the agent confirms the new copy is up, or with
+// an error on dispatch or restart failure.
+func (s *Server) RestartServiceOnNode(nodeID, serviceName string) error {
+	svc, err := s.serviceLoader.GetService(serviceName)
+	if err != nil {
+		return fmt.Errorf("load service: %w", err)
+	}
+	return s.sendRestartCommand(nodeID, svc, "")
 }
 
 // resolvedSvcForDispatch returns a shallow copy of svc with the artifact
