@@ -118,10 +118,30 @@ export default function ServiceAutoscaler() {
                   <span className="text-muted-foreground">inactive</span>}
               </dd>
               <dt className="text-muted-foreground">Last action</dt>
-              <dd>{status.last_action
-                ? <span>{status.last_action} · {status.last_action_at ? new Date(status.last_action_at * 1000).toLocaleString() : ''}</span>
-                : <span className="text-muted-foreground">—</span>}
-              </dd>
+              <dd>{(() => {
+                // Prefer the most recent entry from the events ring —
+                // it carries both autoscaler decisions and manual scale
+                // actions on a single timeline. Fall back to the
+                // snapshot's autoscaler-only fields when the ring is
+                // empty (cold cache after a server restart).
+                const latest = events[0]
+                if (latest) {
+                  const manual = latest.reason?.startsWith('manual:')
+                  const label = latest.action === 'scale_up' ? 'scale up' : 'scale down'
+                  return (
+                    <span className="inline-flex items-center gap-2">
+                      <span>{label}</span>
+                      {manual && <Badge variant="outline" className="text-[10px]">manual</Badge>}
+                      <span className="text-muted-foreground">·</span>
+                      <span>{new Date(latest.timestamp * 1000).toLocaleString()}</span>
+                    </span>
+                  )
+                }
+                if (status.last_action) {
+                  return <span>{status.last_action} · {status.last_action_at ? new Date(status.last_action_at * 1000).toLocaleString() : ''}</span>
+                }
+                return <span className="text-muted-foreground">—</span>
+              })()}</dd>
             </dl>
           )}
         </CardContent>
