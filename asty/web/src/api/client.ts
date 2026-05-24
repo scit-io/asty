@@ -5,16 +5,7 @@ import type {
   DeploymentsResponse,
   DrainStatus,
 } from '../types'
-
-// API_PREFIX is the single source of truth for the dashboard's HTTP
-// namespace on the frontend side. The backend default is
-// /dashboard/v1; configurable per deployment via A_DASHBOARD_PREFIX
-// on the orchestrator. Every fetch and EventSource in the SPA goes
-// through this.
-//
-// /metrics is reserved for Prometheus exposition; /api/v1 is the
-// gateway entry point for user traffic and is NOT used by the SPA.
-export const API_PREFIX = '/dashboard/v1'
+import { apiPaths } from '@/lib/routes'
 
 // authToken returns the Bearer token the client attaches to write
 // requests. We pull it from VITE_ASTY_TOKEN at build time and from
@@ -44,9 +35,9 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
 export const api = {
   // Services
   getService: (name: string) =>
-    fetchJSON<ServiceDetailResponse>(`${API_PREFIX}/services/${name}`),
+    fetchJSON<ServiceDetailResponse>(apiPaths.service(name)),
   scaleService: (name: string, count: number) =>
-    fetchJSON(`${API_PREFIX}/services/${name}/scale`, {
+    fetchJSON(apiPaths.serviceScale(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ count }),
@@ -54,43 +45,43 @@ export const api = {
 
   // Allocations (now scoped under their hosting node)
   getAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON<AllocationDetail>(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}`),
+    fetchJSON<AllocationDetail>(apiPaths.allocation(nodeId, allocId)),
   getAllocationLogs: (nodeId: string, allocId: string) =>
-    fetchJSON<LogsResponse>(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/logs`),
+    fetchJSON<LogsResponse>(apiPaths.allocationLogs(nodeId, allocId)),
 
   // Autoscaler — single per-service endpoint returns status + events.
   getServiceAutoscaler: (name: string) =>
-    fetchJSON(`${API_PREFIX}/services/${name}/autoscaler`),
+    fetchJSON(apiPaths.serviceAutoscaler(name)),
 
   // Deploy
   deploy: (service: string, version: string) =>
-    fetchJSON(`${API_PREFIX}/services/${service}/deploy`, {
+    fetchJSON(apiPaths.serviceDeploy(service), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ version }),
     }),
   getServiceDeployments: (service: string) =>
-    fetchJSON<DeploymentsResponse>(`${API_PREFIX}/services/${service}/deploy`),
+    fetchJSON<DeploymentsResponse>(apiPaths.serviceDeploy(service)),
   getServiceVersions: (service: string) =>
-    fetchJSON<{ versions: string[]; error?: string }>(`${API_PREFIX}/services/${service}/versions`),
+    fetchJSON<{ versions: string[]; error?: string }>(apiPaths.serviceVersions(service)),
 
   // Node maintenance
   drainNode: (id: string, enable: boolean) =>
-    fetchJSON(`${API_PREFIX}/nodes/${id}/drain`, {
+    fetchJSON(apiPaths.nodeDrain(id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enable }),
     }),
   getDrainStatus: (id: string) =>
-    fetchJSON<DrainStatus>(`${API_PREFIX}/nodes/${id}/drain`),
+    fetchJSON<DrainStatus>(apiPaths.nodeDrain(id)),
   pauseNode: (id: string) =>
-    fetchJSON(`${API_PREFIX}/nodes/${id}/pause`, { method: 'POST' }),
+    fetchJSON(apiPaths.nodePause(id), { method: 'POST' }),
   // killNode is the abrupt-decommission counterpart of drain. Body
   // carries `confirm_name` (must equal `id`); backend triggers the
   // agent's graceful self-shutdown via NATS and force-purges any KV
   // residue. Use Drain for normal operations — see Kill dialog copy.
   killNode: (id: string, confirmName: string) =>
-    fetchJSON(`${API_PREFIX}/nodes/${id}/kill`, {
+    fetchJSON(apiPaths.nodeKill(id), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm_name: confirmName }),
@@ -98,7 +89,7 @@ export const api = {
 
   // Allocation actions
   restartAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/restart`, { method: 'POST' }),
+    fetchJSON(apiPaths.allocationRestart(nodeId, allocId), { method: 'POST' }),
   stopAllocation: (nodeId: string, allocId: string) =>
-    fetchJSON(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/stop`, { method: 'POST' }),
+    fetchJSON(apiPaths.allocationStop(nodeId, allocId), { method: 'POST' }),
 }

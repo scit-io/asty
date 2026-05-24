@@ -2,7 +2,7 @@ import { useParams } from 'react-router-dom'
 import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
-import { API_PREFIX } from '@/api/client'
+import { apiPaths } from '@/lib/routes'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single node. The page owns exactly one
@@ -24,7 +24,7 @@ export default function NodeLogs() {
         { to: `/nodes/${nodeId}/logs`, label: 'Logs' },
       ]} />
       <div className="min-h-0 flex-1">
-        <LogsView title={`Logs · ${nodeId}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/logs`} />
+        <LogsView title={`Logs · ${nodeId}`} streamUrl={apiPaths.nodeLogs(nodeId)} />
       </div>
     </div>
   )

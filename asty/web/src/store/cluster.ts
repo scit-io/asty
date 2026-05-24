@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { API_PREFIX, api } from '@/api/client'
+import { api } from '@/api/client'
+import { apiPaths } from '@/lib/routes'
 import type {
   Node,
   ClusterStatus,
@@ -269,7 +270,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           }))
         }
       }
-      const close = openStream(`${API_PREFIX}/`, (es) => {
+      const close = openStream(apiPaths.cluster, (es) => {
         attachStatusHandler(es)
         es.addEventListener('nodes', (event) => {
           try {
@@ -320,7 +321,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           set(() => ({ nodes: [], clusterStatus: null }))
         }
       }
-      const close = openStream(`${API_PREFIX}/nodes`, (es) => {
+      const close = openStream(apiPaths.nodes, (es) => {
         attachStatusHandler(es)
         es.addEventListener('nodes', (event) => {
           try {
@@ -338,7 +339,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           set(() => ({ services: [], clusterStatus: null }))
         }
       }
-      const close = openStream(`${API_PREFIX}/services`, (es) => {
+      const close = openStream(apiPaths.services, (es) => {
         attachStatusHandler(es)
         es.addEventListener('services', (event) => {
           try {
@@ -372,7 +373,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           }))
         }
       }
-      const close = openStream(`${API_PREFIX}/nodes/${nodeId}`, (es) => {
+      const close = openStream(apiPaths.node(nodeId), (es) => {
         attachStatusHandler(es)
         es.addEventListener('node', (event) => {
           try {
@@ -456,7 +457,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           }))
         }
       }
-      const close = openStream(`${API_PREFIX}/services/${name}`, (es) => {
+      const close = openStream(apiPaths.service(name), (es) => {
         attachStatusHandler(es)
         es.addEventListener('detail', (event) => {
           try {
@@ -602,7 +603,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
         })
         loadHistory()
       }
-      const closeDeploy = openStream(`${API_PREFIX}/services/${name}/deploy`, (es) => {
+      const closeDeploy = openStream(apiPaths.serviceDeploy(name), (es) => {
         es.addEventListener('progress', (event) => {
           try {
             const rec = JSON.parse((event as MessageEvent).data) as DeploymentRecord
@@ -652,7 +653,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
           }))
         }
       }
-      const close = openStream(`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}`, (es) => {
+      const close = openStream(apiPaths.allocation(nodeId, allocId), (es) => {
         attachStatusHandler(es)
         es.addEventListener('detail', (event) => {
           try {

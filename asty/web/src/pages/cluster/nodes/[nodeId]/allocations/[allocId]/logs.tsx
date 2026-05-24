@@ -2,7 +2,7 @@ import { useParams } from 'react-router-dom'
 import { AllocationHeader } from '@/components/allocation-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
-import { API_PREFIX } from '@/api/client'
+import { apiPaths } from '@/lib/routes'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single allocation. The page owns exactly one
@@ -23,7 +23,7 @@ export default function AllocationLogs() {
         { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },
       ]} />
       <div className="min-h-0 flex-1">
-        <LogsView title={`Logs · ${label}`} streamUrl={`${API_PREFIX}/nodes/${nodeId}/allocations/${allocId}/logs`} />
+        <LogsView title={`Logs · ${label}`} streamUrl={apiPaths.allocationLogs(nodeId, allocId)} />
       </div>
     </div>
   )
