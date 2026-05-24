@@ -4,6 +4,7 @@ import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
 import { PageShell } from '@/components/page-shell'
+import { UsageCell } from '@/components/usage-cell'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
 import { routes } from '@/lib/routes'
@@ -44,17 +45,7 @@ export default function Services() {
       render: (s) => {
         const pct = Math.round(s.avg_cpu_percent ?? 0)
         const mhz = Math.round(((s.avg_cpu_percent ?? 0) / 100) * s.Resources.CPU)
-        return (
-          <div className="flex items-center gap-2">
-            <Cpu className="h-4 w-4 text-muted-foreground" />
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{pct}%</div>
-              <div className="text-xs text-muted-foreground">
-                {formatMHz(mhz)} / {formatMHz(s.Resources.CPU)}
-              </div>
-            </div>
-          </div>
-        )
+        return <UsageCell icon={Cpu} primary={`${pct}%`} secondary={`${formatMHz(mhz)} / ${formatMHz(s.Resources.CPU)}`} />
       },
     },
     {
@@ -64,15 +55,11 @@ export default function Services() {
         const used = s.avg_memory_mb ?? 0
         const pct = s.Resources.Memory > 0 ? Math.round((used / s.Resources.Memory) * 100) : null
         return (
-          <div className="flex items-center gap-2">
-            <MemoryStick className="h-4 w-4 text-muted-foreground" />
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : formatMB(used)}</div>
-              <div className="text-xs text-muted-foreground">
-                {formatMB(used)} / {formatMB(s.Resources.Memory)}
-              </div>
-            </div>
-          </div>
+          <UsageCell
+            icon={MemoryStick}
+            primary={pct !== null ? `${pct}%` : formatMB(used)}
+            secondary={`${formatMB(used)} / ${formatMB(s.Resources.Memory)}`}
+          />
         )
       },
     },

@@ -7,6 +7,7 @@ import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
+import { UsageCell } from '@/components/usage-cell'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { api } from '@/api/client'
@@ -70,15 +71,7 @@ export default function Nodes() {
       render: (n) => {
         const used = n.cpu_total - n.cpu_available
         const pct = percent(used, n.cpu_total)
-        return (
-          <div className="flex items-center gap-2">
-            <Cpu className="h-4 w-4 text-muted-foreground" />
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{pct}%</div>
-              <div className="text-xs text-muted-foreground">{formatMHz(used)} / {formatMHz(n.cpu_total)}</div>
-            </div>
-          </div>
-        )
+        return <UsageCell icon={Cpu} primary={`${pct}%`} secondary={`${formatMHz(used)} / ${formatMHz(n.cpu_total)}`} />
       },
     },
     {
@@ -87,15 +80,7 @@ export default function Nodes() {
       render: (n) => {
         const used = n.memory_total - n.memory_available
         const pct = percent(used, n.memory_total)
-        return (
-          <div className="flex items-center gap-2">
-            <MemoryStick className="h-4 w-4 text-muted-foreground" />
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{pct}%</div>
-              <div className="text-xs text-muted-foreground">{formatMB(used)} / {formatMB(n.memory_total)}</div>
-            </div>
-          </div>
-        )
+        return <UsageCell icon={MemoryStick} primary={`${pct}%`} secondary={`${formatMB(used)} / ${formatMB(n.memory_total)}`} />
       },
     },
     {

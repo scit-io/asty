@@ -16,6 +16,7 @@ import { toast } from 'sonner'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
+import { UsageCell } from '@/components/usage-cell'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
@@ -81,15 +82,11 @@ export default function ServiceAllocations() {
       key: 'cpu', label: 'CPU',
       sort: (a, b) => a.cpu_usage - b.cpu_usage,
       render: (a) => (
-        <div className="flex items-center gap-2">
-          <Cpu className="h-4 w-4 text-muted-foreground" />
-          <div className="space-y-1">
-            <div className="text-sm font-medium">{formatPercent(a.cpu_usage)}</div>
-            {res && <div className="text-xs text-muted-foreground">
-              {formatMHz(Math.round((a.cpu_usage / 100) * res.CPU))} / {formatMHz(res.CPU)}
-            </div>}
-          </div>
-        </div>
+        <UsageCell
+          icon={Cpu}
+          primary={formatPercent(a.cpu_usage)}
+          secondary={res ? `${formatMHz(Math.round((a.cpu_usage / 100) * res.CPU))} / ${formatMHz(res.CPU)}` : undefined}
+        />
       ),
     },
     {
@@ -98,15 +95,11 @@ export default function ServiceAllocations() {
       render: (a) => {
         const pct = res ? Math.round((a.memory_usage / res.Memory) * 100) : null
         return (
-          <div className="flex items-center gap-2">
-            <MemoryStick className="h-4 w-4 text-muted-foreground" />
-            <div className="space-y-1">
-              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : formatMB(a.memory_usage)}</div>
-              {res && <div className="text-xs text-muted-foreground">
-                {formatMB(a.memory_usage)} / {formatMB(res.Memory)}
-              </div>}
-            </div>
-          </div>
+          <UsageCell
+            icon={MemoryStick}
+            primary={pct !== null ? `${pct}%` : formatMB(a.memory_usage)}
+            secondary={res ? `${formatMB(a.memory_usage)} / ${formatMB(res.Memory)}` : undefined}
+          />
         )
       },
     },
