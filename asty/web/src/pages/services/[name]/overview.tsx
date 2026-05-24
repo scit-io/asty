@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -12,20 +11,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Layers, Heart, Cpu, MemoryStick, Rocket, Settings2, Scaling } from 'lucide-react'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableRow,
-} from '@/components/ui/table'
+import { Layers, Heart, Cpu, MemoryStick, Rocket, Scaling } from 'lucide-react'
 import { toast } from 'sonner'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
-import { TimeStack } from '@/components/time-stack'
 import { Tile } from '@/components/tile'
+import { ServiceConfigCard } from '@/features/services/service-config-card'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
@@ -50,16 +43,7 @@ export default function ServiceOverview() {
   const latestEvent = cached?.scalingEvents?.[0] ?? null
   const live = cached?.liveDeploy ?? null
   const deployHistory = cached?.deployHistory ?? []
-  // Pick the more recent of "latest scaling event" vs "latest deploy
-  // record" so Last action reflects whichever happened most recently —
-  // operator-driven scale, autoscaler decision, or a deploy roll. The
-  // same comparison is mirrored server-side in snapshot.go for the
-  // /services list view; here we redo it because Overview already has
-  // both ring + history loaded into the per-service cache.
-  const latestEventTs = latestEvent ? latestEvent.timestamp * 1000 : 0
   const latestDeploy = deployHistory[0] ?? null
-  const latestDeployTs = latestDeploy ? new Date(latestDeploy.started_at).getTime() : 0
-  const deployIsLatest = latestDeploy !== null && latestDeployTs >= latestEventTs
   const githubVersions = cached?.availableVersions ?? []
   const [scaleTo, setScaleTo] = useState('')
   const [scaling, setScaling] = useState(false)
@@ -180,109 +164,13 @@ export default function ServiceOverview() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Running allocations" data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
 
-          <Card className="col-span-12 lg:col-span-8 lg:row-span-2">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Configuration</CardTitle>
-                <Settings2 className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {!runtime ? (
-                  <Skeleton className="h-32 w-full" />
-                ) : (
-                  <Table>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Current copies</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">{runtime.current_copies ?? 0}</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Min copies (floor)</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">
-                          <span className="inline-flex items-center gap-2 justify-end">
-                            {autoscaler?.min_copies ?? runtime.min_copies ?? 0}
-                            {autoscaler?.min_copies_override && (
-                              <Badge variant="secondary" className="font-sans text-[10px]">
-                                overridden (default {autoscaler.min_copies_default})
-                              </Badge>
-                            )}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Max copies (ceiling)</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">
-                          {autoscaler?.max_copies && autoscaler.max_copies > 0 ? autoscaler.max_copies : 'unlimited'}
-                        </TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Target CPU</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">{runtime.target_cpu ?? 0}%</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Target Memory</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">{runtime.target_memory ?? 0}%</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Traffic threshold</TableCell>
-                        <TableCell className="font-mono text-right px-0 py-2">{runtime.traffic_threshold ?? 0} RPS</TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Cooldown</TableCell>
-                        <TableCell className="text-right px-0 py-2">
-                          <span className="inline-flex gap-1 justify-end">
-                            {runtime.cooldown_up_active && <Badge variant="secondary">up</Badge>}
-                            {runtime.cooldown_down_active && <Badge variant="secondary">down</Badge>}
-                            {autoscaler?.deploy_in_progress && <Badge variant="secondary">deploy</Badge>}
-                            {!runtime.cooldown_up_active && !runtime.cooldown_down_active && !autoscaler?.deploy_in_progress &&
-                              <span className="text-muted-foreground">inactive</span>}
-                          </span>
-                        </TableCell>
-                      </TableRow>
-                      <TableRow>
-                        <TableCell className="text-muted-foreground px-0 py-2">Last action</TableCell>
-                        <TableCell className="text-right text-sm px-0 py-2">
-                          {deployIsLatest && latestDeploy ? (() => {
-                            const d = new Date(latestDeploy.started_at)
-                            return (
-                              <span className="inline-flex items-center gap-2 justify-end">
-                                <span>deploy <span className="font-mono">{latestDeploy.version}</span></span>
-                                <Badge variant={latestDeploy.status === 'failed' || latestDeploy.status === 'rollback_failed' ? 'destructive' : latestDeploy.status === 'reverted' ? 'secondary' : 'default'} className="text-[10px]">
-                                  {latestDeploy.status}
-                                </Badge>
-                                <span className="text-muted-foreground">·</span>
-                                <TimeStack date={d} compact />
-                              </span>
-                            )
-                          })() : latestEvent ? (() => {
-                            const d = new Date(latestEvent.timestamp * 1000)
-                            return (
-                              <span className="inline-flex items-center gap-2 justify-end">
-                                <span>{latestEvent.action === 'scale_up' ? 'scale up' : 'scale down'}</span>
-                                {latestEvent.reason?.startsWith('manual:') && (
-                                  <Badge variant="outline" className="text-[10px]">manual</Badge>
-                                )}
-                                <span className="text-muted-foreground">·</span>
-                                <TimeStack date={d} compact />
-                              </span>
-                            )
-                          })() : runtime.last_action ? (() => {
-                            const d = runtime.last_action_at ? new Date(runtime.last_action_at * 1000) : null
-                            return (
-                              <span>
-                                {runtime.last_action}
-                                {d && <> · <TimeStack date={d} compact /></>}
-                              </span>
-                            )
-                          })() : (
-                            <span className="text-muted-foreground">—</span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
+          <ServiceConfigCard
+            className="col-span-12 lg:col-span-8 lg:row-span-2"
+            runtime={runtime}
+            autoscaler={autoscaler}
+            latestDeploy={latestDeploy}
+            latestEvent={latestEvent}
+          />
 
           {service.Type === 'service' && (
             <Card className="col-span-12 lg:col-span-4">
