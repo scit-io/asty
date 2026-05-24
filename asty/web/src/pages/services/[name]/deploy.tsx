@@ -7,15 +7,9 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
+import { deployStatusVariant } from '@/lib/variants'
 import { useClusterStore } from '@/store/cluster'
 import type { DeploymentRecord } from '@/types'
-
-const statusVariant = (s: string) =>
-  s === 'running' ? 'default'
-    : s === 'completed' ? 'default'
-    : s === 'failed' || s === 'rollback_failed' ? 'destructive'
-    : s === 'reverted' ? 'secondary'
-    : 'outline'
 
 // historyColumns lifted out of the component so SSE refreshes don't
 // break DataTable's sort/page state by giving it a new array
@@ -34,7 +28,7 @@ const historyColumns: Column<DeploymentRecord>[] = [
   {
     key: 'status', label: 'Status',
     sort: (a, b) => a.status.localeCompare(b.status),
-    render: (r) => <Badge variant={statusVariant(r.status)}>{r.status}</Badge>,
+    render: (r) => <Badge variant={deployStatusVariant(r.status)}>{r.status}</Badge>,
   },
   {
     key: 'progress', label: 'Progress',

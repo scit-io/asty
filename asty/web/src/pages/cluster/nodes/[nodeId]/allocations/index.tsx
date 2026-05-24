@@ -21,13 +21,9 @@ import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
 import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
+import { allocHealthVariant, allocStatusVariant } from '@/lib/variants'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
-
-const healthVariant = (h: Allocation['health_status']) =>
-  h === 'healthy' ? 'success' : h === 'unhealthy' ? 'destructive' : 'secondary'
-const statusVariant = (s: Allocation['status']) =>
-  s === 'running' ? 'success' : s === 'failed' ? 'destructive' : 'secondary'
 
 // Per-node allocations list. Same DataTable contract as /nodes but
 // scoped to one node; per-row dropdown lets the operator
@@ -76,12 +72,12 @@ export default function NodeAllocations() {
     {
       key: 'status', label: 'Status',
       sort: (a, b) => a.status.localeCompare(b.status),
-      render: (a) => <Badge variant={statusVariant(a.status)}>{a.status}</Badge>,
+      render: (a) => <Badge variant={allocStatusVariant(a.status)}>{a.status}</Badge>,
     },
     { key: 'version', label: 'Version', render: (a) => <span className="font-mono text-xs">{a.version || '—'}</span> },
     {
       key: 'health', label: 'Health',
-      render: (a) => <Badge variant={healthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
+      render: (a) => <Badge variant={allocHealthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
     },
     {
       key: 'cpu', label: 'CPU',

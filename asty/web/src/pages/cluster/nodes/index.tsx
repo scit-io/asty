@@ -16,19 +16,7 @@ import { nodeStatusSwitchClass } from '@/lib/node-status'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
 import { toast } from 'sonner'
-
-// statusVariant maps a node lifecycle into one of the project's
-// custom Badge variants so colour matches operator expectation:
-// green = ready, yellow = transitioning, red = down.
-const statusVariant = (s: Node['status']): 'success' | 'warning' | 'destructive' | 'secondary' => {
-  switch (s) {
-    case 'ready': return 'success'
-    case 'down': return 'destructive'
-    case 'draining':
-    case 'drained': return 'warning'
-    default: return 'secondary'
-  }
-}
+import { nodeStatusVariant } from '@/lib/variants'
 
 const percent = (used: number, total: number) => total > 0 ? Math.round((used / total) * 100) : 0
 
@@ -74,7 +62,7 @@ export default function Nodes() {
     {
       key: 'status', label: 'Status',
       sort: (a, b) => a.status.localeCompare(b.status),
-      render: (n) => <Badge variant={statusVariant(n.status)}>{n.status}</Badge>,
+      render: (n) => <Badge variant={nodeStatusVariant(n.status)}>{n.status}</Badge>,
     },
     {
       key: 'cpu', label: 'CPU',

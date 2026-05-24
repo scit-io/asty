@@ -21,13 +21,9 @@ import { api } from '@/api/client'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
+import { allocHealthVariant, allocStatusVariant } from '@/lib/variants'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
-
-const healthVariant = (h: Allocation['health_status']) =>
-  h === 'healthy' ? 'success' : h === 'unhealthy' ? 'destructive' : 'secondary'
-const statusVariant = (s: Allocation['status']) =>
-  s === 'running' ? 'success' : s === 'failed' ? 'destructive' : 'secondary'
 
 // All allocations for a single service, regardless of node. Subscribes
 // to the service stream (which already returns the alloc list); the
@@ -75,11 +71,11 @@ export default function ServiceAllocations() {
     {
       key: 'status', label: 'Status',
       sort: (a, b) => a.status.localeCompare(b.status),
-      render: (a) => <Badge variant={statusVariant(a.status)}>{a.status}</Badge>,
+      render: (a) => <Badge variant={allocStatusVariant(a.status)}>{a.status}</Badge>,
     },
     {
       key: 'health', label: 'Health',
-      render: (a) => <Badge variant={healthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
+      render: (a) => <Badge variant={allocHealthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
     },
     {
       key: 'cpu', label: 'CPU',
