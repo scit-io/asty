@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,31 +147,35 @@ export default function NodeAllocations() {
       {!cached ? (
         <Skeleton className="h-32 w-full" />
       ) : (
-        <DataTable
-          rows={allocations}
-          columns={columns}
-          search={{ placeholder: 'Search by service name…', match: (a, q) => a.service_name.toLowerCase().includes(q.toLowerCase()) }}
-          onRowClick={(a) => navigate(`/nodes/${nodeId}/allocations/${a.id}`)}
-          rowKey={(a) => a.id}
-          emptyMessage="No allocations on this node."
-          actions={(a) => (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" disabled={pending[a.id]}>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => act('restart', a)}>
-                  <RotateCw className="h-4 w-4 mr-2" /> Restart
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => act('stop', a)} className="text-destructive">
-                  <StopCircle className="h-4 w-4 mr-2" /> Stop
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        />
+        <Card>
+          <CardContent className="pt-6">
+            <DataTable
+              rows={allocations}
+              columns={columns}
+              search={{ placeholder: 'Search by service name…', match: (a, q) => a.service_name.toLowerCase().includes(q.toLowerCase()) }}
+              onRowClick={(a) => navigate(`/nodes/${nodeId}/allocations/${a.id}`)}
+              rowKey={(a) => a.id}
+              emptyMessage="No allocations on this node."
+              actions={(a) => (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" disabled={pending[a.id]}>
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => act('restart', a)}>
+                      <RotateCw className="h-4 w-4 mr-2" /> Restart
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => act('stop', a)} className="text-destructive">
+                      <StopCircle className="h-4 w-4 mr-2" /> Stop
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            />
+          </CardContent>
+        </Card>
       )}
     </div>
   )

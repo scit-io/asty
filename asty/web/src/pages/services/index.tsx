@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
-import { Breadcrumbs } from '@/components/breadcrumbs'
+import { Cpu, MemoryStick } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 import type { ServiceDefinition } from '@/types'
@@ -36,14 +37,42 @@ export default function Services() {
         : <span className="text-muted-foreground">{s.current_copies ?? 0}</span>,
     },
     {
-      key: 'cpu', label: 'CPU avg',
+      key: 'cpu', label: 'CPU per copy',
       sort: (a, b) => (a.avg_cpu_percent ?? 0) - (b.avg_cpu_percent ?? 0),
-      render: (s) => `${Math.round(s.avg_cpu_percent ?? 0)}% (${formatMHz(s.Resources.CPU)} limit)`,
+      render: (s) => {
+        const pct = Math.round(s.avg_cpu_percent ?? 0)
+        const mhz = Math.round(((s.avg_cpu_percent ?? 0) / 100) * s.Resources.CPU)
+        return (
+          <div className="flex items-center gap-2">
+            <Cpu className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct}%</div>
+              <div className="text-xs text-muted-foreground">
+                {formatMHz(mhz)} / {formatMHz(s.Resources.CPU)}
+              </div>
+            </div>
+          </div>
+        )
+      },
     },
     {
-      key: 'mem', label: 'Memory avg',
+      key: 'mem', label: 'Memory per copy',
       sort: (a, b) => (a.avg_memory_mb ?? 0) - (b.avg_memory_mb ?? 0),
-      render: (s) => `${formatMB(s.avg_memory_mb ?? 0)} / ${formatMB(s.Resources.Memory)}`,
+      render: (s) => {
+        const used = s.avg_memory_mb ?? 0
+        const pct = s.Resources.Memory > 0 ? Math.round((used / s.Resources.Memory) * 100) : null
+        return (
+          <div className="flex items-center gap-2">
+            <MemoryStick className="h-4 w-4 text-muted-foreground" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{pct !== null ? `${pct}%` : formatMB(used)}</div>
+              <div className="text-xs text-muted-foreground">
+                {formatMB(used)} / {formatMB(s.Resources.Memory)}
+              </div>
+            </div>
+          </div>
+        )
+      },
     },
     {
       key: 'cooldown', label: 'Cooldown',
@@ -57,24 +86,58 @@ export default function Services() {
     },
     {
       key: 'last', label: 'Last action',
-      sort: (a, b) => (a.last_action_at ?? 0) - (b.last_action_at ?? 0),
-      render: (s) => s.last_action
-        ? <span className="text-xs">{s.last_action} · {s.last_action_at ? new Date(s.last_action_at * 1000).toLocaleTimeString() : ''}</span>
-        : <span className="text-muted-foreground text-xs">—</span>,
+      sort: (a, b) => Math.max(a.last_action_at ?? 0, a.last_deploy_at ?? 0)
+        - Math.max(b.last_action_at ?? 0, b.last_deploy_at ?? 0),
+      render: (s) => {
+        const scaleTs = s.last_action_at ?? 0
+        const deployTs = s.last_deploy_at ?? 0
+        const showDeploy = !!s.last_deploy_version && deployTs >= scaleTs
+        if (showDeploy) {
+          const status = s.last_deploy_status ?? ''
+          const variant = status === 'failed' || status === 'rollback_failed' ? 'destructive'
+            : status === 'reverted' ? 'secondary'
+            : 'default'
+          return (
+            <span className="inline-flex items-center gap-1 text-xs">
+              <span>deploy <span className="font-mono">{s.last_deploy_version}</span></span>
+              <Badge variant={variant} className="text-[10px]">{status}</Badge>
+              <span className="text-muted-foreground">·</span>
+              <span>{new Date(deployTs * 1000).toLocaleTimeString()}</span>
+            </span>
+          )
+        }
+        if (s.last_action) return (
+          <span className="inline-flex items-center gap-1 text-xs">
+            <span>{s.last_action === 'scale_up' ? 'scale up' : 'scale down'}</span>
+            {s.last_reason?.startsWith('manual:') && (
+              <Badge variant="outline" className="text-[10px]">manual</Badge>
+            )}
+            <span className="text-muted-foreground">·</span>
+            <span>{scaleTs ? new Date(scaleTs * 1000).toLocaleTimeString() : ''}</span>
+          </span>
+        )
+        return <span className="text-muted-foreground text-xs">—</span>
+      },
     },
   ]
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
-      <Breadcrumbs items={[{ label: 'Cluster', to: '/' }, { label: 'Services' }]} />
-      <DataTable
-        rows={services}
-        columns={columns}
-        search={{ placeholder: 'Search by name…', match: (s, q) => s.Name.toLowerCase().includes(q.toLowerCase()) }}
-        onRowClick={(s) => navigate(`/services/${s.Name}`)}
-        rowKey={(s) => s.Name}
-        emptyMessage="No services loaded yet."
-      />
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold">Services</h2>
+        <Card>
+          <CardContent className="pt-6">
+            <DataTable
+              rows={services}
+              columns={columns}
+              search={{ placeholder: 'Search by name…', match: (s, q) => s.Name.toLowerCase().includes(q.toLowerCase()) }}
+              onRowClick={(s) => navigate(`/services/${s.Name}`)}
+              rowKey={(s) => s.Name}
+              emptyMessage="No services loaded yet."
+            />
+          </CardContent>
+        </Card>
+      </section>
     </div>
   )
 }

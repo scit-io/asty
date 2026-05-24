@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,8 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
-import { Breadcrumbs } from '@/components/breadcrumbs'
 import { ResourceTabs } from '@/components/resource-tabs'
+import { ServiceHeader } from '@/components/service-header'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
@@ -121,46 +122,45 @@ export default function ServiceAllocations() {
   if (!name) return null
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
-      <Breadcrumbs items={[
-        { label: 'Cluster', to: '/' },
-        { label: 'Services', to: '/services' },
-        { label: name, to: `/services/${name}` },
-        { label: 'Allocations' },
-      ]} />
+      <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Allocations' }]} />
       <ResourceTabs items={[
         { to: `/services/${name}`, label: 'Overview' },
         { to: `/services/${name}/allocations`, label: 'Allocations' },
-        { to: `/services/${name}/autoscaler`, label: 'Autoscaler' },
-        { to: `/services/${name}/deploy`, label: 'Deploy' },
+        { to: `/services/${name}/autoscaler`, label: 'Scaling events' },
+        { to: `/services/${name}/deploy`, label: 'Deploy history' },
       ]} />
       {!cached ? (
         <Skeleton className="h-32 w-full" />
       ) : (
-        <DataTable
-          rows={allocations}
-          columns={columns}
-          search={{ placeholder: 'Search by node…', match: (a, q) => a.node_id.toLowerCase().includes(q.toLowerCase()) }}
-          onRowClick={(a) => navigate(`/nodes/${a.node_id}/allocations/${a.id}`)}
-          rowKey={(a) => a.id}
-          emptyMessage="No allocations for this service."
-          actions={(a) => (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="sm" disabled={pending[a.id]}>
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => act('restart', a)}>
-                  <RotateCw className="h-4 w-4 mr-2" /> Restart
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => act('stop', a)} className="text-destructive">
-                  <StopCircle className="h-4 w-4 mr-2" /> Stop
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-        />
+        <Card>
+          <CardContent className="pt-6">
+            <DataTable
+              rows={allocations}
+              columns={columns}
+              search={{ placeholder: 'Search by node…', match: (a, q) => a.node_id.toLowerCase().includes(q.toLowerCase()) }}
+              onRowClick={(a) => navigate(`/nodes/${a.node_id}/allocations/${a.id}`)}
+              rowKey={(a) => a.id}
+              emptyMessage="No allocations for this service."
+              actions={(a) => (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="sm" disabled={pending[a.id]}>
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => act('restart', a)}>
+                      <RotateCw className="h-4 w-4 mr-2" /> Restart
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => act('stop', a)} className="text-destructive">
+                      <StopCircle className="h-4 w-4 mr-2" /> Stop
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            />
+          </CardContent>
+        </Card>
       )}
     </div>
   )

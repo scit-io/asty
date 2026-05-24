@@ -104,7 +104,7 @@ export default function NodeDetail() {
   const hasAsty = node.self_cpu_percent > 0 || node.self_memory_mb > 0 || node.self_disk_mb > 0
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <NodeHeader node={node} />
 
       <ResourceTabs items={[
@@ -114,7 +114,6 @@ export default function NodeDetail() {
       ]} />
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Node</h2>
         <div className="grid grid-cols-12 gap-3">
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="CPU" icon={<Cpu className="h-4 w-4" />}

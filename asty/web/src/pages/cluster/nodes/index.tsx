@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
@@ -128,15 +129,20 @@ export default function Nodes() {
 
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
+      <h2 className="text-lg font-semibold">Cluster</h2>
       <ResourceTabs items={CLUSTER_SECTION_TABS} />
-      <DataTable
-        rows={nodes}
-        columns={columns}
-        search={{ placeholder: 'Search by ID or IP…', match: (n, q) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q) }}
-        onRowClick={(n) => navigate(`/nodes/${n.id}`)}
-        rowKey={(n) => n.id}
-        emptyMessage="No nodes registered yet."
-      />
+      <Card>
+        <CardContent className="pt-6">
+          <DataTable
+            rows={nodes}
+            columns={columns}
+            search={{ placeholder: 'Search by ID or IP…', match: (n, q) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q) }}
+            onRowClick={(n) => navigate(`/nodes/${n.id}`)}
+            rowKey={(n) => n.id}
+            emptyMessage="No nodes registered yet."
+          />
+        </CardContent>
+      </Card>
       <NodeDrainDialog
         open={drainTarget !== null}
         nodeId={drainTarget?.id ?? ''}

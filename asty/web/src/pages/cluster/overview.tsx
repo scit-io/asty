@@ -83,11 +83,11 @@ export default function Cluster() {
   const healthPct = nodesTotal > 0 ? Math.round((nodesHealthy / nodesTotal) * 100) : 0
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-6">
+    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+      <h2 className="text-lg font-semibold">Cluster</h2>
       <ResourceTabs items={CLUSTER_SECTION_TABS} />
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Cluster</h2>
         <div className="grid grid-cols-12 gap-3">
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="CPU" icon={<Cpu className="h-4 w-4" />}

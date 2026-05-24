@@ -115,6 +115,10 @@ export interface ServiceDefinition {
   cooldown_down_active?: boolean
   last_action?: string
   last_action_at?: number
+  last_reason?: string
+  last_deploy_version?: string
+  last_deploy_status?: string
+  last_deploy_at?: number
 }
 
 export interface NodesResponse {

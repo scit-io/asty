@@ -134,6 +134,7 @@ func (api *API) Start(ctx context.Context) error {
 	route("GET /services/{name}/allocations", api.handleServiceAllocations)
 	route("GET /services/{name}/autoscaler", api.handleServiceAutoscaler)
 	route("GET /services/{name}/deploy", api.handleServiceDeployHistory)
+	route("GET /services/{name}/versions", api.handleServiceVersions)
 	route("POST /services/{name}/deploy", write(api.handleServiceDeploy))
 
 	api.httpServer = &http.Server{

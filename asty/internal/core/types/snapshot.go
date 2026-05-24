@@ -35,8 +35,18 @@ type ServiceWithUsage struct {
 	TargetCPU          int    `json:"target_cpu"`
 	TargetMemory       int    `json:"target_memory"`
 	TrafficThreshold   int    `json:"traffic_threshold"`
-	CooldownUpActive   bool   `json:"cooldown_up_active"`
-	CooldownDownActive bool   `json:"cooldown_down_active"`
+	CooldownUpActive   bool          `json:"cooldown_up_active"`
+	CooldownDownActive bool          `json:"cooldown_down_active"`
 	LastAction         ScalingAction `json:"last_action,omitempty"`
 	LastActionAt       int64         `json:"last_action_at,omitempty"`
+	// LastReason mirrors the most recent scaling-event reason so the
+	// dashboard can distinguish autoscaler decisions from manual
+	// operator actions (reason starts with "manual:") in the list view.
+	LastReason string `json:"last_reason,omitempty"`
+	// Latest deployment record for the service — exposed so the UI's
+	// "Last action" column can pick the more recent of {scaling event,
+	// deploy} without a parallel fetch per row.
+	LastDeployVersion string `json:"last_deploy_version,omitempty"`
+	LastDeployStatus  string `json:"last_deploy_status,omitempty"`
+	LastDeployAt      int64  `json:"last_deploy_at,omitempty"`
 }

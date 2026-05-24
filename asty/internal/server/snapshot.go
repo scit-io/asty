@@ -171,6 +171,35 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			minCopies = override
 		}
 
+		// Last action is sourced from the scaling-events ring rather
+		// than ServiceCooldown.LastScaleUp/Down — the ring also
+		// captures manual scale operations (the autoscaler-only
+		// cooldown fields never see those). Falls back to the
+		// cooldown timestamps when the ring is empty.
+		lastAction := cooldown.LastAction
+		lastActionAt := cooldown.LastActionAt
+		var lastReason string
+		if events := h.server.metricsStore.GetEvents(svc.Name, 1); len(events) > 0 {
+			lastAction = events[0].Action
+			lastActionAt = events[0].Timestamp
+			lastReason = events[0].Reason
+		}
+
+		// Latest deploy for the same service — surfaced separately so
+		// the UI's Last action column can pick the more recent of
+		// {scaling event, deploy} per-row without a second fetch.
+		var lastDeployVersion, lastDeployStatus string
+		var lastDeployAt int64
+		for _, rec := range h.server.deployer.GetHistory() {
+			if rec.Service != svc.Name {
+				continue
+			}
+			lastDeployVersion = rec.Version
+			lastDeployStatus = string(rec.Status)
+			lastDeployAt = rec.StartedAt.Unix()
+			break
+		}
+
 		servicesOut = append(servicesOut, types.ServiceWithUsage{
 			ServiceDefinition:  svc,
 			CurrentCopies:      running,
@@ -184,8 +213,12 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 			TrafficThreshold:   cfg.Autoscale.TrafficRPSThreshold,
 			CooldownUpActive:   cooldown.UpActive,
 			CooldownDownActive: cooldown.DownActive,
-			LastAction:         cooldown.LastAction,
-			LastActionAt:       cooldown.LastActionAt,
+			LastAction:         lastAction,
+			LastActionAt:       lastActionAt,
+			LastReason:         lastReason,
+			LastDeployVersion:  lastDeployVersion,
+			LastDeployStatus:   lastDeployStatus,
+			LastDeployAt:       lastDeployAt,
 		})
 	}
 

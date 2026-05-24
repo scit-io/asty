@@ -71,6 +71,8 @@ export const api = {
     }),
   getServiceDeployments: (service: string) =>
     fetchJSON<DeploymentsResponse>(`${API_PREFIX}/services/${service}/deploy`),
+  getServiceVersions: (service: string) =>
+    fetchJSON<{ versions: string[]; error?: string }>(`${API_PREFIX}/services/${service}/versions`),
 
   // Node maintenance
   drainNode: (id: string, enable: boolean) =>

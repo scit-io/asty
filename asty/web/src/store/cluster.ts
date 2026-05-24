@@ -1,12 +1,27 @@
 import { create } from 'zustand'
-import { API_PREFIX } from '@/api/client'
+import { API_PREFIX, api } from '@/api/client'
 import type {
   Node,
   ClusterStatus,
   MetricPoint,
   Allocation,
   ServiceDefinition,
+  ScalingEvent,
+  DeploymentRecord,
+  DeploymentsResponse,
 } from '@/types'
+
+// AutoscalerInfo mirrors the fields the dashboard's /autoscaler
+// endpoint returns alongside the events ring. Lifted into the store
+// so Overview's configuration card and the Scaling events tab share
+// a single poller per active service instead of each duplicating it.
+interface AutoscalerInfo {
+  min_copies: number
+  min_copies_default: number
+  min_copies_override: boolean
+  max_copies: number
+  deploy_in_progress: boolean
+}
 
 // Max chart points kept in memory per series (5min at 5s = 60 points).
 const MAX_CHART_POINTS = 60
@@ -44,6 +59,18 @@ interface ServiceData {
   cpuMetrics: MetricPoint[]
   memoryMetrics: MetricPoint[]
   allocCountMetrics: MetricPoint[]
+  // Autoscaler + deploy data are fetched alongside the per-service
+  // SSE so every view under /services/:name (Overview, Scaling
+  // events, Deploy history) reads from the same cache without
+  // duplicating pollers / EventSources.
+  autoscaler: AutoscalerInfo | null
+  scalingEvents: ScalingEvent[]
+  liveDeploy: DeploymentRecord | null
+  deployHistory: DeploymentRecord[]
+  // Deploy-target versions pulled from the GitHub Releases of the
+  // configured repo (server-side cached). Empty list in dev where
+  // the artifact URL is `local`. Refetched on subscribeService.
+  availableVersions: string[]
 }
 
 interface AllocationData {
@@ -78,6 +105,13 @@ interface ClusterStore {
   subscribeNode: (nodeId: string) => () => void
   subscribeService: (name: string) => () => void
   subscribeAllocation: (nodeId: string, allocId: string) => () => void
+
+  // refreshService re-fetches the autoscaler payload + deploy history
+  // for one service immediately, bypassing the 15-second poll cadence.
+  // Called by Overview's Set floor / Deploy buttons so the
+  // Configuration card reflects the new state without waiting for the
+  // next tick.
+  refreshService: (name: string) => Promise<void>
 
   // Optimistic mutation (used by drain before SSE catches up).
   updateNodeStatus: (nodeId: string, status: Node['status']) => void
@@ -148,6 +182,7 @@ const emptyNodeData = (): NodeData => ({
 
 const emptyServiceData = (): ServiceData => ({
   service: null, allocations: [], cpuMetrics: [], memoryMetrics: [], allocCountMetrics: [],
+  autoscaler: null, scalingEvents: [], liveDeploy: null, deployHistory: [], availableVersions: [],
 })
 
 // Common handler for the compact `status` event that every stream
@@ -317,10 +352,13 @@ export const useClusterStore = create<ClusterStore>((set) => ({
     })
 
     const onState = (st: connectionState) => {
-      // Stream lost — wipe this node's snapshot. Tiles fall back to
-      // their natural empty-state rendering instead of showing the
-      // last-known CPU / memory values that may no longer be true.
-      if (st !== 'streaming') {
+      // Only wipe on terminal "dead" — transient 'connecting' fires
+      // on every tab switch (each page reopens its EventSource) and
+      // would clear the cached node snapshot between mount and the
+      // first SSE frame, making the header (id + status dot + ip/dc
+      // line) flicker. 'reconnecting' similarly keeps the last good
+      // snapshot until the new stream lands.
+      if (st === 'dead') {
         set((state) => ({
           nodeCache: { ...state.nodeCache, [nodeId]: emptyNodeData() },
         }))
@@ -398,7 +436,13 @@ export const useClusterStore = create<ClusterStore>((set) => ({
 
   subscribeService: (name) => {
     const onState = (st: connectionState) => {
-      if (st !== 'streaming') {
+      // Only wipe on terminal "dead" — transient 'connecting' fires
+      // on every tab switch (each page reopens its EventSource) and
+      // would clear cached service/allocations between mount and the
+      // first SSE frame, making the type Badge in the header flicker.
+      // 'reconnecting' similarly keeps the last good snapshot until
+      // the new stream lands.
+      if (st === 'dead') {
         set((state) => ({
           serviceCache: { ...state.serviceCache, [name]: emptyServiceData() },
         }))
@@ -453,10 +497,110 @@ export const useClusterStore = create<ClusterStore>((set) => ({
         } catch { /* ignore */ }
       })
     }, onState)
+
+    // Autoscaler poll — single source for both the configuration card
+    // on Overview and the events table on the Scaling events tab.
+    let autoTimer: ReturnType<typeof setTimeout> | null = null
+    let autoCancelled = false
+    const pollAutoscaler = async () => {
+      try {
+        const res = await api.getServiceAutoscaler(name) as {
+          events?: ScalingEvent[]
+          min_copies: number; min_copies_default: number; min_copies_override: boolean
+          max_copies: number; deploy_in_progress: boolean
+        }
+        if (autoCancelled) return
+        set((state) => {
+          const existing = state.serviceCache[name] || emptyServiceData()
+          return {
+            serviceCache: {
+              ...state.serviceCache,
+              [name]: {
+                ...existing,
+                autoscaler: {
+                  min_copies: res.min_copies,
+                  min_copies_default: res.min_copies_default,
+                  min_copies_override: res.min_copies_override,
+                  max_copies: res.max_copies,
+                  deploy_in_progress: res.deploy_in_progress,
+                },
+                scalingEvents: res.events ?? [],
+              },
+            },
+          }
+        })
+      } catch { /* keep current */ }
+      if (!autoCancelled) autoTimer = setTimeout(pollAutoscaler, 15000)
+    }
+    pollAutoscaler()
+
+    // Deploy history initial load + live SSE — single feed used by
+    // Overview's live deploy card and by Deploy history's table.
+    let historyCancelled = false
+    const loadHistory = async () => {
+      try {
+        const res = await api.getServiceDeployments(name) as DeploymentsResponse
+        if (historyCancelled) return
+        set((state) => {
+          const existing = state.serviceCache[name] || emptyServiceData()
+          return {
+            serviceCache: {
+              ...state.serviceCache,
+              [name]: { ...existing, deployHistory: res.deployments ?? [] },
+            },
+          }
+        })
+      } catch { /* keep current */ }
+    }
+    loadHistory()
+
+    // Deploy-target versions — pulled from GitHub Releases server-
+    // side and cached for versionsCacheTTL. One-shot fetch on
+    // subscribe; the list rarely moves and the operator gets the
+    // freshest copy by reopening the page.
+    const loadVersions = async () => {
+      try {
+        const res = await api.getServiceVersions(name)
+        if (historyCancelled) return
+        set((state) => {
+          const existing = state.serviceCache[name] || emptyServiceData()
+          return {
+            serviceCache: {
+              ...state.serviceCache,
+              [name]: { ...existing, availableVersions: res.versions ?? [] },
+            },
+          }
+        })
+      } catch { /* keep current */ }
+    }
+    loadVersions()
+
+    const deployES = new EventSource(`${API_PREFIX}/services/${name}/deploy`)
+    deployES.addEventListener('progress', (event) => {
+      try {
+        const rec = JSON.parse((event as MessageEvent).data) as DeploymentRecord
+        set((state) => {
+          const existing = state.serviceCache[name] || emptyServiceData()
+          return {
+            serviceCache: {
+              ...state.serviceCache,
+              [name]: { ...existing, liveDeploy: rec.status === 'running' ? rec : null },
+            },
+          }
+        })
+        if (rec.status !== 'running') loadHistory()
+      } catch { /* ignore malformed */ }
+    })
+
     return () => {
       close()
+      autoCancelled = true
+      if (autoTimer) clearTimeout(autoTimer)
+      historyCancelled = true
+      deployES.close()
       // Same rule as subscribeNode — only the chart timeseries gets
-      // freed; the service snapshot stays for the next page open.
+      // freed; the service snapshot + autoscaler + deploy caches stay
+      // for the next page open so re-entry is instant.
       set((state) => {
         const existing = state.serviceCache[name]
         if (!existing) return {}
@@ -529,5 +673,52 @@ export const useClusterStore = create<ClusterStore>((set) => ({
       }
       return next
     })
+  },
+
+  refreshService: async (name) => {
+    // Fire the same three fetches subscribeService runs on a timer.
+    // Parallel — the autoscaler payload and the deploy history are
+    // independent, no need to chain them. Errors swallowed so a
+    // transient hiccup doesn't surface as a toast on a successful
+    // mutation.
+    const writeAutoscaler = api.getServiceAutoscaler(name).then((res) => {
+      const r = res as {
+        events?: ScalingEvent[]
+        min_copies: number; min_copies_default: number; min_copies_override: boolean
+        max_copies: number; deploy_in_progress: boolean
+      }
+      set((state) => {
+        const existing = state.serviceCache[name] || emptyServiceData()
+        return {
+          serviceCache: {
+            ...state.serviceCache,
+            [name]: {
+              ...existing,
+              autoscaler: {
+                min_copies: r.min_copies,
+                min_copies_default: r.min_copies_default,
+                min_copies_override: r.min_copies_override,
+                max_copies: r.max_copies,
+                deploy_in_progress: r.deploy_in_progress,
+              },
+              scalingEvents: r.events ?? [],
+            },
+          },
+        }
+      })
+    }).catch(() => { /* keep current */ })
+    const writeHistory = api.getServiceDeployments(name).then((res) => {
+      const r = res as DeploymentsResponse
+      set((state) => {
+        const existing = state.serviceCache[name] || emptyServiceData()
+        return {
+          serviceCache: {
+            ...state.serviceCache,
+            [name]: { ...existing, deployHistory: r.deployments ?? [] },
+          },
+        }
+      })
+    }).catch(() => { /* keep current */ })
+    await Promise.all([writeAutoscaler, writeHistory])
   },
 }))

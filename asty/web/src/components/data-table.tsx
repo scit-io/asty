@@ -141,12 +141,12 @@ export function DataTable<T>({
                   className={onRowClick ? 'cursor-pointer' : ''}
                 >
                   {columns.map((c) => (
-                    <TableCell key={c.key} className={c.className}>
+                    <TableCell key={c.key} className={`py-2 ${c.className ?? ''}`}>
                       {c.render(row)}
                     </TableCell>
                   ))}
                   {actions && (
-                    <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                    <TableCell className="py-2 text-right" onClick={(e) => e.stopPropagation()}>
                       {actions(row)}
                     </TableCell>
                   )}
