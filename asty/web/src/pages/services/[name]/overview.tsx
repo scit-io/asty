@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -11,7 +10,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Layers, Heart, Cpu, MemoryStick, Rocket, Scaling } from 'lucide-react'
+import { Layers, Heart, Cpu, MemoryStick, Rocket } from 'lucide-react'
 import { toast } from 'sonner'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
@@ -19,6 +18,7 @@ import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { Tile } from '@/components/tile'
 import { ServiceConfigCard } from '@/features/services/service-config-card'
+import { ServiceMinCopiesCard } from '@/features/services/service-min-copies-card'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
@@ -45,8 +45,6 @@ export default function ServiceOverview() {
   const deployHistory = cached?.deployHistory ?? []
   const latestDeploy = deployHistory[0] ?? null
   const githubVersions = cached?.availableVersions ?? []
-  const [scaleTo, setScaleTo] = useState('')
-  const [scaling, setScaling] = useState(false)
   const [version, setVersion] = useState('latest')
   const [deploying, setDeploying] = useState(false)
 
@@ -60,18 +58,6 @@ export default function ServiceOverview() {
   const healthy = allocations.filter((a) => a.status === 'running' && a.health_status === 'healthy').length
   const healthPct = allocations.length > 0 ? Math.round((healthy / allocations.length) * 100) : 0
   const liveActive = live?.status === 'running'
-
-  // Default the Min copies input to the live current_copies once the
-  // runtime first arrives; after that the field is owned by the
-  // operator so the autoscaler bumping current_copies up/down doesn't
-  // clobber whatever they're typing.
-  const minCopiesInitialized = useRef(false)
-  useEffect(() => {
-    if (!minCopiesInitialized.current && runtime?.current_copies !== undefined) {
-      setScaleTo(String(runtime.current_copies))
-      minCopiesInitialized.current = true
-    }
-  }, [runtime?.current_copies])
 
   // Available versions for the Deploy select. Order:
   //   1. "latest" — always first, GitHub Release alias + sensible
@@ -95,25 +81,6 @@ export default function ServiceOverview() {
     allocations.forEach((a) => add(a.version))
     return out
   }, [githubVersions, deployHistory, allocations])
-
-  const handleScale = async () => {
-    if (!name || !scaleTo) return
-    const n = parseInt(scaleTo, 10)
-    if (Number.isNaN(n) || n < 0) {
-      toast.error('Enter a non-negative integer')
-      return
-    }
-    setScaling(true)
-    try {
-      await api.scaleService(name, n)
-      toast.success(`Set ${name} floor to ${n}`)
-      await refreshService(name)
-    } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
-    } finally {
-      setScaling(false)
-    }
-  }
 
   const handleDeploy = async () => {
     if (!name || !version) return
@@ -173,26 +140,12 @@ export default function ServiceOverview() {
           />
 
           {service.Type === 'service' && (
-            <Card className="col-span-12 lg:col-span-4">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Min copies</CardTitle>
-                <Scaling className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <div className="flex items-center gap-2 mt-2 mb-4">
-                  <Input className="flex-1" type="number" min={0}
-                    placeholder="copies" value={scaleTo}
-                    onChange={(e) => setScaleTo(e.target.value)} />
-                  <Button onClick={handleScale} disabled={scaling || !scaleTo}>
-                    {scaling ? 'Saving…' : 'Set floor'}
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Per-service floor. Autoscaler can grow above; lowering stops
-                  excess copies immediately.
-                </p>
-              </CardContent>
-            </Card>
+            <ServiceMinCopiesCard
+              className="col-span-12 lg:col-span-4"
+              name={name}
+              currentCopies={runtime?.current_copies}
+              onChanged={() => refreshService(name)}
+            />
           )}
 
           <Card className={service.Type === 'service' ? 'col-span-12 lg:col-span-4' : 'col-span-12 lg:col-span-4 lg:row-span-2'}>
