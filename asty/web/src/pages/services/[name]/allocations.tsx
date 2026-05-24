@@ -18,6 +18,8 @@ import { ServiceHeader } from '@/components/service-header'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
+import { routes } from '@/lib/routes'
+import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
@@ -53,7 +55,7 @@ export default function ServiceAllocations() {
       // different node. Send the operator to the nodes list so they
       // can spot where the replacement landed.
       if (kind === 'stop') {
-        navigate('/nodes')
+        navigate(routes.nodes)
       }
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -123,12 +125,7 @@ export default function ServiceAllocations() {
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Allocations' }]} />
-      <ResourceTabs items={[
-        { to: `/services/${name}`, label: 'Overview' },
-        { to: `/services/${name}/allocations`, label: 'Allocations' },
-        { to: `/services/${name}/autoscaler`, label: 'Scaling events' },
-        { to: `/services/${name}/deploy`, label: 'Deploy history' },
-      ]} />
+      <ResourceTabs items={serviceTabs(name)} />
       {!cached ? (
         <Skeleton className="h-32 w-full" />
       ) : (
@@ -138,7 +135,7 @@ export default function ServiceAllocations() {
               rows={allocations}
               columns={columns}
               search={{ placeholder: 'Search by node…', match: (a, q) => a.node_id.toLowerCase().includes(q.toLowerCase()) }}
-              onRowClick={(a) => navigate(`/nodes/${a.node_id}/allocations/${a.id}`)}
+              onRowClick={(a) => navigate(routes.allocation(a.node_id, a.id))}
               rowKey={(a) => a.id}
               emptyMessage="No allocations for this service."
               actions={(a) => (

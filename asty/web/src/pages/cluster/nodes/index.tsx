@@ -6,9 +6,10 @@ import { Switch } from '@/components/ui/switch'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
 import { ResourceTabs } from '@/components/resource-tabs'
-import { CLUSTER_SECTION_TABS } from '@/components/header'
+import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { api } from '@/api/client'
+import { routes } from '@/lib/routes'
 import { formatMB, formatMHz } from '@/lib/format'
 import { nodeStatusSwitchClass } from '@/lib/node-status'
 import { useClusterStore } from '@/store/cluster'
@@ -130,14 +131,14 @@ export default function Nodes() {
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <h2 className="text-lg font-semibold">Cluster</h2>
-      <ResourceTabs items={CLUSTER_SECTION_TABS} />
+      <ResourceTabs items={CLUSTER_TABS} />
       <Card>
         <CardContent className="pt-6">
           <DataTable
             rows={nodes}
             columns={columns}
             search={{ placeholder: 'Search by ID or IP…', match: (n, q) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q) }}
-            onRowClick={(n) => navigate(`/nodes/${n.id}`)}
+            onRowClick={(n) => navigate(routes.node(n.id))}
             rowKey={(n) => n.id}
             emptyMessage="No nodes registered yet."
           />

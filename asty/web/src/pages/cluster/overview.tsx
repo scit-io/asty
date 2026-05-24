@@ -18,7 +18,7 @@ import {
 import { MetricsChart } from '@/components/metrics-chart'
 import { ResourcesBlock } from '@/components/resources-block'
 import { ResourceTabs } from '@/components/resource-tabs'
-import { CLUSTER_SECTION_TABS } from '@/components/header'
+import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { Tile } from '@/components/tile'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
@@ -85,7 +85,7 @@ export default function Cluster() {
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <h2 className="text-lg font-semibold">Cluster</h2>
-      <ResourceTabs items={CLUSTER_SECTION_TABS} />
+      <ResourceTabs items={CLUSTER_TABS} />
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">

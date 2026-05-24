@@ -31,6 +31,8 @@ import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
+import { routes } from '@/lib/routes'
+import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Node Overview (/nodes/:id) — first tab of the node section.
@@ -70,7 +72,7 @@ export default function NodeDetail() {
     try {
       await api.killNode(nodeId, nodeId)
       toast.success(`Node ${nodeId} killed`)
-      navigate('/nodes')
+      navigate(routes.nodes)
     } catch (err) {
       toast.error(`Kill failed: ${err instanceof Error ? err.message : 'unknown'}`)
       throw err
@@ -107,11 +109,7 @@ export default function NodeDetail() {
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <NodeHeader node={node} />
 
-      <ResourceTabs items={[
-        { to: `/nodes/${node.id}`, label: 'Overview' },
-        { to: `/nodes/${node.id}/allocations`, label: 'Allocations' },
-        { to: `/nodes/${node.id}/logs`, label: 'Logs' },
-      ]} />
+      <ResourceTabs items={nodeTabs(node.id)} />
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">

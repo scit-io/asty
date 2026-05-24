@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
+import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 import type { ScalingEvent } from '@/types'
 
@@ -77,12 +78,7 @@ export default function ServiceScalingEvents() {
   return (
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Scaling events' }]} />
-      <ResourceTabs items={[
-        { to: `/services/${name}`, label: 'Overview' },
-        { to: `/services/${name}/allocations`, label: 'Allocations' },
-        { to: `/services/${name}/autoscaler`, label: 'Scaling events' },
-        { to: `/services/${name}/deploy`, label: 'Deploy history' },
-      ]} />
+      <ResourceTabs items={serviceTabs(name)} />
 
       <Card>
         <CardContent className="pt-6">

@@ -3,6 +3,7 @@ import { AllocationHeader } from '@/components/allocation-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
 import { apiPaths } from '@/lib/routes'
+import { allocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single allocation. The page owns exactly one
@@ -18,10 +19,7 @@ export default function AllocationLogs() {
   return (
     <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
       <AllocationHeader allocation={allocation} nodeId={nodeId} allocId={allocId} tail={[{ label: 'Logs' }]} />
-      <ResourceTabs items={[
-        { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
-        { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },
-      ]} />
+      <ResourceTabs items={allocationTabs(nodeId, allocId)} />
       <div className="min-h-0 flex-1">
         <LogsView title={`Logs · ${label}`} streamUrl={apiPaths.allocationLogs(nodeId, allocId)} />
       </div>

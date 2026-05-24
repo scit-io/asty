@@ -17,6 +17,8 @@ import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
+import { routes } from '@/lib/routes'
+import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
@@ -55,7 +57,7 @@ export default function NodeAllocations() {
       // different node. Send the operator to the nodes list so they
       // can spot where the replacement landed.
       if (kind === 'stop') {
-        navigate('/nodes')
+        navigate(routes.nodes)
       }
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -137,11 +139,7 @@ export default function NodeAllocations() {
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       {node && <NodeHeader node={node} tail={[{ label: 'Allocations' }]} />}
       {nodeId && (
-        <ResourceTabs items={[
-          { to: `/nodes/${nodeId}`, label: 'Overview' },
-          { to: `/nodes/${nodeId}/allocations`, label: 'Allocations' },
-          { to: `/nodes/${nodeId}/logs`, label: 'Logs' },
-        ]} />
+        <ResourceTabs items={nodeTabs(nodeId)} />
       )}
 
       {!cached ? (
@@ -153,7 +151,7 @@ export default function NodeAllocations() {
               rows={allocations}
               columns={columns}
               search={{ placeholder: 'Search by service name…', match: (a, q) => a.service_name.toLowerCase().includes(q.toLowerCase()) }}
-              onRowClick={(a) => navigate(`/nodes/${nodeId}/allocations/${a.id}`)}
+              onRowClick={(a) => navigate(routes.allocation(nodeId!, a.id))}
               rowKey={(a) => a.id}
               emptyMessage="No allocations on this node."
               actions={(a) => (

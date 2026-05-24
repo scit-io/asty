@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { routes } from '@/lib/routes'
 import type { Node } from '@/types'
 
 // statusDot picks the colour pellet by node lifecycle. Matches the
@@ -41,11 +42,11 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
   const id = node?.id ?? nodeId
   if (!id) return null
   const crumbs: Crumb[] = [
-    { label: 'Cluster', to: '/' },
-    { label: 'Nodes', to: '/nodes' },
+    { label: 'Cluster', to: routes.cluster },
+    { label: 'Nodes', to: routes.nodes },
     tail.length === 0
       ? { label: id }
-      : { label: id, to: `/nodes/${id}` },
+      : { label: id, to: routes.node(id) },
     ...tail,
   ]
 

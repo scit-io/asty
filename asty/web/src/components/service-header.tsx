@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { routes } from '@/lib/routes'
 import type { ServiceDefinition } from '@/types'
 
 interface ServiceHeaderProps {
@@ -22,10 +23,10 @@ interface ServiceHeaderProps {
 // type Badge right.
 export function ServiceHeader({ service, name, tail = [] }: ServiceHeaderProps) {
   const crumbs: Crumb[] = [
-    { label: 'Services', to: '/services' },
+    { label: 'Services', to: routes.services },
     tail.length === 0
       ? { label: name }
-      : { label: name, to: `/services/${name}` },
+      : { label: name, to: routes.service(name) },
     ...tail,
   ]
   return (

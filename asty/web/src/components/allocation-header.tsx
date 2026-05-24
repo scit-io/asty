@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { routes } from '@/lib/routes'
 import type { Allocation } from '@/types'
 
 // statusDot mirrors the allocation status palette used by the table
@@ -41,14 +42,14 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
   if (!nid || !aid) return null
   const title = allocation?.service_name ?? aid
   const base: Crumb[] = [
-    { label: 'Cluster', to: '/' },
-    { label: 'Nodes', to: '/nodes' },
-    { label: nid, to: `/nodes/${nid}` },
-    { label: 'Allocations', to: `/nodes/${nid}/allocations` },
+    { label: 'Cluster', to: routes.cluster },
+    { label: 'Nodes', to: routes.nodes },
+    { label: nid, to: routes.node(nid) },
+    { label: 'Allocations', to: routes.nodeAllocations(nid) },
   ]
   const leaf: Crumb = tail.length === 0
     ? { label: title }
-    : { label: title, to: `/nodes/${nid}/allocations/${aid}` }
+    : { label: title, to: routes.allocation(nid, aid) }
   const crumbs: Crumb[] = [...base, leaf, ...tail]
 
   return (

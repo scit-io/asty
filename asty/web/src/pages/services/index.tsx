@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
+import { routes } from '@/lib/routes'
 import { useClusterStore } from '@/store/cluster'
 import type { ServiceDefinition } from '@/types'
 
@@ -131,7 +132,7 @@ export default function Services() {
               rows={services}
               columns={columns}
               search={{ placeholder: 'Search by name…', match: (s, q) => s.Name.toLowerCase().includes(q.toLowerCase()) }}
-              onRowClick={(s) => navigate(`/services/${s.Name}`)}
+              onRowClick={(s) => navigate(routes.service(s.Name))}
               rowKey={(s) => s.Name}
               emptyMessage="No services loaded yet."
             />

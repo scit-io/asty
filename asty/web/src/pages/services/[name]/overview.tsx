@@ -26,6 +26,7 @@ import { ServiceHeader } from '@/components/service-header'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
+import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Service Overview (/services/:name). All per-service data —
@@ -149,12 +150,7 @@ export default function ServiceOverview() {
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <ServiceHeader name={name} service={service} />
 
-      <ResourceTabs items={[
-        { to: `/services/${name}`, label: 'Overview' },
-        { to: `/services/${name}/allocations`, label: 'Allocations' },
-        { to: `/services/${name}/autoscaler`, label: 'Scaling events' },
-        { to: `/services/${name}/deploy`, label: 'Deploy history' },
-      ]} />
+      <ResourceTabs items={serviceTabs(name)} />
 
       {!service ? (
         <Skeleton className="h-32 w-full" />

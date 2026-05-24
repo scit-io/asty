@@ -21,6 +21,8 @@ import { MetricsChart } from '@/components/metrics-chart'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
+import { routes } from '@/lib/routes'
+import { allocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Allocation Overview (/nodes/:id/allocations/:allocId) — first tab
@@ -63,7 +65,7 @@ export default function AllocationDetail() {
       // Send the operator to the nodes list so they can find where
       // the reconciler placed the replacement copy.
       if (kind === 'stop') {
-        navigate('/nodes')
+        navigate(routes.nodes)
       }
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
@@ -85,10 +87,7 @@ export default function AllocationDetail() {
     <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <AllocationHeader allocation={allocation} />
 
-      <ResourceTabs items={[
-        { to: `/nodes/${nodeId}/allocations/${allocId}`, label: 'Overview' },
-        { to: `/nodes/${nodeId}/allocations/${allocId}/logs`, label: 'Logs' },
-      ]} />
+      <ResourceTabs items={allocationTabs(nodeId!, allocId!)} />
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">

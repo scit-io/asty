@@ -9,34 +9,26 @@ import {
   navigationMenuTriggerStyle,
 } from '@/components/ui/navigation-menu'
 import { cn } from '@/lib/utils'
+import { routes } from '@/lib/routes'
+import { CLUSTER_TABS } from '@/pages/cluster/tabs'
+import { SERVICES_TABS } from '@/pages/services/tabs'
+import type { TabItem } from '@/components/resource-tabs'
 import logo from '@/assets/img/logo.svg'
 
 // Sections map exactly the model: top-level menu entries open into
 // dropdowns listing their static child pages. Dynamic pages
 // (/nodes/:id, /services/:name, etc.) are reached from list views;
-// they don't appear in the global header.
+// they don't appear in the global header. Each section reads its
+// tabs from the section's own tabs.ts file — the same list the
+// page-shell ResourceTabs row renders inside the section's pages.
 interface Section {
   label: string
-  pages: { to: string; label: string }[]
+  pages: TabItem[]
 }
 
-// CLUSTER_SECTION_TABS / SERVICES_SECTION_TABS are exported so the
-// Cluster section's static pages (/, /nodes, /logs) can render the
-// same children inside the page as tabs, duplicating the dropdown's
-// affordance one click closer to the content.
-export const CLUSTER_SECTION_TABS = [
-  { to: '/', label: 'Overview' },
-  { to: '/nodes', label: 'Nodes' },
-  { to: '/logs', label: 'Logs' },
-]
-
-export const SERVICES_SECTION_TABS = [
-  { to: '/services', label: 'Overview' },
-]
-
 const SECTIONS: Section[] = [
-  { label: 'Cluster', pages: CLUSTER_SECTION_TABS },
-  { label: 'Services', pages: SERVICES_SECTION_TABS },
+  { label: 'Cluster', pages: CLUSTER_TABS },
+  { label: 'Services', pages: SERVICES_TABS },
 ]
 
 export function Header() {
@@ -44,13 +36,13 @@ export function Header() {
 
   const isActiveSection = (section: Section) =>
     section.pages.some((p) =>
-      p.to === '/' ? location.pathname === '/' : location.pathname.startsWith(p.to))
+      p.to === routes.cluster ? location.pathname === routes.cluster : location.pathname.startsWith(p.to))
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur-sm supports-backdrop-filter:bg-background/60">
       <div className="container mx-auto flex h-16 items-center justify-between px-4 sm:px-6">
         <div className="flex items-center gap-6">
-          <Link to="/" className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity">
+          <Link to={routes.cluster} className="flex items-center gap-2 sm:gap-3 hover:opacity-80 transition-opacity">
             <img src={logo} alt="Asty" className="h-7 w-7 sm:h-8 sm:w-8" />
             <h1 className="text-lg sm:text-xl font-semibold">Asty</h1>
           </Link>
@@ -89,8 +81,8 @@ export function Header() {
                     <NavigationMenuContent>
                       <ul className="grid w-48 gap-1 p-2">
                         {section.pages.map((page) => {
-                          const pageActive = page.to === '/'
-                            ? location.pathname === '/'
+                          const pageActive = page.to === routes.cluster
+                            ? location.pathname === routes.cluster
                             : location.pathname.startsWith(page.to)
                           return (
                             <li key={page.to}>

@@ -3,6 +3,7 @@ import { NodeHeader } from '@/components/node-header'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
 import { apiPaths } from '@/lib/routes'
+import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single node. The page owns exactly one
@@ -18,11 +19,7 @@ export default function NodeLogs() {
   return (
     <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
       <NodeHeader node={node} nodeId={nodeId} tail={[{ label: 'Logs' }]} />
-      <ResourceTabs items={[
-        { to: `/nodes/${nodeId}`, label: 'Overview' },
-        { to: `/nodes/${nodeId}/allocations`, label: 'Allocations' },
-        { to: `/nodes/${nodeId}/logs`, label: 'Logs' },
-      ]} />
+      <ResourceTabs items={nodeTabs(nodeId)} />
       <div className="min-h-0 flex-1">
         <LogsView title={`Logs · ${nodeId}`} streamUrl={apiPaths.nodeLogs(nodeId)} />
       </div>
