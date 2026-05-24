@@ -75,7 +75,7 @@ export default function AllocationDetail() {
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
+    <div className="container mx-auto p-4 sm:p-6 space-y-4">
       <AllocationHeader allocation={allocation} />
 
       <ResourceTabs items={[
@@ -84,8 +84,6 @@ export default function AllocationDetail() {
       ]} />
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Allocation</h2>
-
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
             usage={allocation.cpu_usage} total={cpuTotal} format={formatMHz} />

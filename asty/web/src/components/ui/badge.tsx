@@ -22,7 +22,7 @@ const badgeVariants = cva(
           "border-transparent bg-green-500 text-white dark:text-black hover:bg-green-500/80",
         warning:
           "border-transparent bg-yellow-500 text-white dark:text-black hover:bg-yellow-500/80",
-        outline: "text-foreground dark:text-black",
+        outline: "text-foreground",
       },
     },
     defaultVariants: {
