@@ -44,9 +44,10 @@ type ScalingEvent struct {
 
 // Store holds data needed for autoscaler decisions.
 type Store struct {
-	mu     sync.RWMutex
-	rps    map[string][]MetricPoint
-	maxAge time.Duration
+	mu         sync.RWMutex
+	rps        map[string][]MetricPoint
+	serviceRPS map[string]MetricPoint // latest sample only; see service_rps.go
+	maxAge     time.Duration
 
 	eventsMu sync.RWMutex
 	events   *ringbuf.Ring[ScalingEvent]
@@ -56,9 +57,10 @@ type Store struct {
 
 func NewStore(maxAge time.Duration) *Store {
 	return &Store{
-		rps:    make(map[string][]MetricPoint),
-		maxAge: maxAge,
-		events: ringbuf.New[ScalingEvent](eventsCapacity),
+		rps:        make(map[string][]MetricPoint),
+		serviceRPS: make(map[string]MetricPoint),
+		maxAge:     maxAge,
+		events:     ringbuf.New[ScalingEvent](eventsCapacity),
 	}
 }
 

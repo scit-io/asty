@@ -7,6 +7,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -54,11 +55,28 @@ type Gateway struct {
 	// traffic on this node. Sampled by reportRPSLoop.
 	validRequests atomic.Int64
 
+	// serviceRequests sharded by the first path segment (service name).
+	// Bumped from the same point as validRequests so the two stay in
+	// agreement; sampled by ReportRPSLoop to attribute traffic to
+	// individual allocations on this node.
+	serviceRequests sync.Map // map[string]*atomic.Int64
+
 	// ctx is the gateway-scoped context. Cancelled when the parent
 	// context (the agent's) is cancelled, which lets WS handlers and
 	// HTTP requests observe a single shutdown signal.
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+// bumpService increments the per-service surviving-request counter for
+// the path segment route() parsed out. Lazy-init via LoadOrStore so the
+// fast path (counter already present) avoids allocating.
+func (gw *Gateway) bumpService(service string) {
+	v, ok := gw.serviceRequests.Load(service)
+	if !ok {
+		v, _ = gw.serviceRequests.LoadOrStore(service, new(atomic.Int64))
+	}
+	v.(*atomic.Int64).Add(1)
 }
 
 // New builds a gateway bound to nc and cfg. nodeID is the agent's

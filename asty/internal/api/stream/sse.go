@@ -43,10 +43,12 @@ type Hub interface {
 	SubscribeDeploy() (<-chan []byte, func())
 }
 
-// RPSSource lets cluster aggregation read the latest RPS per node.
-// MetricsStore in ops/autoscaler/metrics satisfies it.
+// RPSSource lets cluster aggregation read the latest RPS per node,
+// and per-(node, service) for the allocation page. MetricsStore in
+// ops/autoscaler/metrics satisfies both methods.
 type RPSSource interface {
 	GetLatestRPS(nodeID string) float64
+	GetLatestServiceRPS(nodeID, service string) float64
 }
 
 // Setup writes SSE response headers and returns the http.Flusher the

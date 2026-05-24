@@ -17,14 +17,17 @@ import { Activity, Clock, Cpu, HardDrive, MemoryStick, RefreshCw, RotateCw, Stop
 import { formatMB, formatMHz } from '@/lib/format'
 import { toast } from 'sonner'
 import { AllocationHeader } from '@/components/allocation-header'
+import { MetricsChart } from '@/components/metrics-chart'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
 import { useClusterStore } from '@/store/cluster'
 
 // Allocation Overview (/nodes/:id/allocations/:allocId) — first tab
-// of the allocation section. RPS tile is a placeholder: the backend
-// has no per-allocation RPS counter yet.
+// of the allocation section. CPU/Memory/RPS time series come from
+// the allocation SSE's `metrics` event (per-tick sample of the
+// allocation's process metrics + the gateway's per-(node, service)
+// RPS attribution); the SPA accumulates them in the store.
 export default function AllocationDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
   const navigate = useNavigate()
@@ -33,6 +36,9 @@ export default function AllocationDetail() {
   const allocation = cached?.allocation || null
   const svcDef = cached?.service || null
   const node = nodeId ? nodeCache[nodeId]?.node : undefined
+  const cpuMetrics = cached?.cpuMetrics || []
+  const memoryMetrics = cached?.memoryMetrics || []
+  const rpsMetrics = cached?.rpsMetrics || []
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -43,6 +49,7 @@ export default function AllocationDetail() {
   const cpuTotal = svcDef?.Resources.CPU ?? 100
   const memTotal = svcDef?.Resources.Memory ?? 0
   const diskTotal = node?.disk_total ?? 0
+  const rps = rpsMetrics.length ? rpsMetrics[rpsMetrics.length - 1].value : 0
   const uptimeStartedAt = allocation?.status === 'running' ? allocation.started_at : ''
   const diskUnit = node?.disk_type === 'ssd' || node?.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''
 
@@ -84,15 +91,26 @@ export default function AllocationDetail() {
       ]} />
 
       <section className="space-y-3">
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-          <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
+        <div className="grid grid-cols-12 gap-3">
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
+            title="CPU" icon={<Cpu className="h-4 w-4" />}
             usage={allocation.cpu_usage} total={cpuTotal} format={formatMHz} />
-          <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
+            title="Memory" icon={<MemoryStick className="h-4 w-4" />}
             usage={allocation.memory_usage} total={memTotal} format={formatMB} />
-          <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
+          <Tile className="col-span-6 lg:col-span-3" variant="metric"
+            title="Disk" icon={<HardDrive className="h-4 w-4" />}
             usage={allocation.disk_usage} total={diskTotal} unit={diskUnit} format={formatMB} />
-          <Tile variant="stat" bar title="RPS" icon={<Activity className="h-4 w-4" />}
-            value={0} hint="Requests per second" />
+          <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
+            title="RPS" icon={<Activity className="h-4 w-4" />}
+            value={Math.round(rps)} hint="Requests per second" />
+
+          <MetricsChart className="col-span-12 md:col-span-4"
+            title="Allocation CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
+          <MetricsChart className="col-span-12 md:col-span-4"
+            title="Allocation Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
+          <MetricsChart className="col-span-12 md:col-span-4"
+            title="Allocation RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

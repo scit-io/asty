@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"asty/asty/internal/core/codec"
@@ -25,6 +26,7 @@ func (gw *Gateway) ReportRPSLoop(ctx context.Context) {
 
 	subject := types.MetricsGatewaySubject(gw.nodeID)
 	var prev int64
+	servicePrev := make(map[string]int64)
 
 	for {
 		select {
@@ -38,6 +40,7 @@ func (gw *Gateway) ReportRPSLoop(ctx context.Context) {
 			report := types.GatewayMetricsReport{
 				NodeID:   gw.nodeID,
 				ValidRPS: float64(delta) / rpsReporterInterval.Seconds(),
+				Services: gw.sampleServiceRPS(servicePrev),
 			}
 			data, err := codec.Wire.Marshal(report)
 			if err != nil {
@@ -49,4 +52,21 @@ func (gw *Gateway) ReportRPSLoop(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// sampleServiceRPS walks the per-service counters and returns the
+// delta-per-second since the previous tick, refreshing the prev totals.
+// A service that hasn't seen traffic this window still emits a zero
+// (because its counter stayed at the previous total) — the chart shows
+// a flatline rather than going blank during a quiet stretch.
+func (gw *Gateway) sampleServiceRPS(prev map[string]int64) map[string]float64 {
+	out := make(map[string]float64, len(prev))
+	gw.serviceRequests.Range(func(k, v any) bool {
+		name := k.(string)
+		cur := v.(*atomic.Int64).Load()
+		out[name] = float64(cur-prev[name]) / rpsReporterInterval.Seconds()
+		prev[name] = cur
+		return true
+	})
+	return out
 }

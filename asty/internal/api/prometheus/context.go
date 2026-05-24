@@ -25,11 +25,14 @@ type SnapshotSource interface {
 	Snapshot() *types.ClusterSnapshot
 }
 
-// RPSSource is the subset of MetricsStore the cluster collector reads.
-// MetricsStore in ops/autoscaler/metrics satisfies it; a nil RPSSource
-// is tolerated by the collector (RPS just stays at zero).
+// RPSSource is the subset of MetricsStore the cluster collector reads
+// for the cluster-wide RPS aggregate, and that allocCollector reads
+// for the per-(node, service) attribution. MetricsStore in
+// ops/autoscaler/metrics satisfies both methods; a nil RPSSource is
+// tolerated by the collectors (RPS just stays at zero).
 type RPSSource interface {
 	GetLatestRPS(nodeID string) float64
+	GetLatestServiceRPS(nodeID, service string) float64
 }
 
 // DeployHistorySource is the subset of *deployer.Deployer the deploy

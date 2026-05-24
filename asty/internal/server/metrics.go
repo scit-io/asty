@@ -27,6 +27,9 @@ func (s *Server) subscribeGatewayMetrics() {
 			return
 		}
 		s.metricsStore.AddRPS(report.NodeID, report.ValidRPS)
+		for svc, rps := range report.Services {
+			s.metricsStore.AddServiceRPS(report.NodeID, svc, rps)
+		}
 	})
 	if err != nil {
 		log.Error().Err(err).Str("subject", subject).Msg("failed to subscribe to gateway metrics")

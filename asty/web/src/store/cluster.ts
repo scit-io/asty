@@ -76,6 +76,9 @@ interface ServiceData {
 interface AllocationData {
   allocation: Allocation | null
   service: ServiceDefinition | null
+  cpuMetrics: MetricPoint[]
+  memoryMetrics: MetricPoint[]
+  rpsMetrics: MetricPoint[]
 }
 
 interface ClusterStore {
@@ -183,6 +186,10 @@ const emptyNodeData = (): NodeData => ({
 const emptyServiceData = (): ServiceData => ({
   service: null, allocations: [], cpuMetrics: [], memoryMetrics: [], allocCountMetrics: [],
   autoscaler: null, scalingEvents: [], liveDeploy: null, deployHistory: [], availableVersions: [],
+})
+
+const emptyAllocationData = (): AllocationData => ({
+  allocation: null, service: null, cpuMetrics: [], memoryMetrics: [], rpsMetrics: [],
 })
 
 // Common handler for the compact `status` event that every stream
@@ -616,9 +623,11 @@ export const useClusterStore = create<ClusterStore>((set) => ({
 
   subscribeAllocation: (nodeId, allocId) => {
     const onState = (st: connectionState) => {
-      if (st !== 'streaming') {
+      // Match subscribeNode: only wipe on terminal "dead" so transient
+      // 'connecting'/'reconnecting' don't blank the charts mid-session.
+      if (st === 'dead') {
         set((state) => ({
-          allocationCache: { ...state.allocationCache, [allocId]: { allocation: null, service: null } },
+          allocationCache: { ...state.allocationCache, [allocId]: emptyAllocationData() },
         }))
       }
     }
@@ -628,7 +637,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
         try {
           const data = JSON.parse((event as MessageEvent).data)
           scheduleSet(set, (state) => {
-            const existing = state.allocationCache[allocId] || { allocation: null, service: null }
+            const existing = state.allocationCache[allocId] || emptyAllocationData()
             return {
               allocationCache: {
                 ...state.allocationCache,
@@ -643,7 +652,7 @@ export const useClusterStore = create<ClusterStore>((set) => ({
           const data = JSON.parse((event as MessageEvent).data)
           if (!data.service) return
           scheduleSet(set, (state) => {
-            const existing = state.allocationCache[allocId] || { allocation: null, service: null }
+            const existing = state.allocationCache[allocId] || emptyAllocationData()
             return {
               allocationCache: {
                 ...state.allocationCache,
@@ -653,8 +662,41 @@ export const useClusterStore = create<ClusterStore>((set) => ({
           })
         } catch { /* ignore */ }
       })
+      es.addEventListener('metrics', (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent).data)
+          scheduleSet(set, (state) => {
+            const existing = state.allocationCache[allocId] || emptyAllocationData()
+            return {
+              allocationCache: {
+                ...state.allocationCache,
+                [allocId]: {
+                  ...existing,
+                  cpuMetrics: appendMetrics(existing.cpuMetrics, data.cpu || []),
+                  memoryMetrics: appendMetrics(existing.memoryMetrics, data.memory || []),
+                  rpsMetrics: appendMetrics(existing.rpsMetrics, data.rps || []),
+                },
+              },
+            }
+          })
+        } catch { /* ignore */ }
+      })
     }, onState)
-    return close
+    return () => {
+      close()
+      // Drop chart timeseries on unmount — only the visible page reads
+      // them; next visit rebuilds from the stream's initial frames.
+      set((state) => {
+        const existing = state.allocationCache[allocId]
+        if (!existing) return {}
+        return {
+          allocationCache: {
+            ...state.allocationCache,
+            [allocId]: { ...existing, cpuMetrics: [], memoryMetrics: [], rpsMetrics: [] },
+          },
+        }
+      })
+    }
   },
 
   updateNodeStatus: (nodeId, status) => {

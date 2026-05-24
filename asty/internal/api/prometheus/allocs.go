@@ -17,6 +17,7 @@ type allocCollector struct {
 	cpuPercent    *prometheusclient.Desc
 	memoryMB      *prometheusclient.Desc
 	diskMB        *prometheusclient.Desc
+	rps           *prometheusclient.Desc
 	restartsTotal *prometheusclient.Desc
 	uptimeSeconds *prometheusclient.Desc
 	health        *prometheusclient.Desc
@@ -35,6 +36,8 @@ func newAllocCollector(ctx Context) *allocCollector {
 			"RSS of the allocation's process, in MB.", common, nil),
 		diskMB: prometheusclient.NewDesc("asty_alloc_disk_mb",
 			"On-disk size of the service's subtree under work_dir, in MB.", common, nil),
+		rps: prometheusclient.NewDesc("asty_alloc_rps",
+			"Latest per-(node, service) RPS attributable to the allocation. Sourced from the local gateway's per-service surviving-request delta; same number as the allocation page's RPS chart.", common, nil),
 		restartsTotal: prometheusclient.NewDesc("asty_alloc_restarts_total",
 			"Number of times the agent has restarted the allocation since it was placed.", common, nil),
 		uptimeSeconds: prometheusclient.NewDesc("asty_alloc_uptime_seconds",
@@ -50,6 +53,7 @@ func (c *allocCollector) Describe(ch chan<- *prometheusclient.Desc) {
 	ch <- c.cpuPercent
 	ch <- c.memoryMB
 	ch <- c.diskMB
+	ch <- c.rps
 	ch <- c.restartsTotal
 	ch <- c.uptimeSeconds
 	ch <- c.health
@@ -76,6 +80,11 @@ func (c *allocCollector) emit(ch chan<- prometheusclient.Metric, a *types.Servic
 	g(c.cpuPercent, float64(a.CPUUsage))
 	g(c.memoryMB, float64(a.MemoryUsage))
 	g(c.diskMB, float64(a.DiskUsage))
+	var rps float64
+	if store := c.ctx.MetricsStore(); store != nil {
+		rps = store.GetLatestServiceRPS(a.NodeID, a.ServiceName)
+	}
+	g(c.rps, rps)
 	g(c.restartsTotal, float64(a.Restarts))
 
 	var uptime float64
