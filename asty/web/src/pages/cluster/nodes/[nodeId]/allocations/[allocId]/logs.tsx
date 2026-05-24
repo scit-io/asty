@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { AllocationHeader } from '@/components/allocation-header'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
 import { apiPaths } from '@/lib/routes'
@@ -17,12 +18,12 @@ export default function AllocationLogs() {
   if (!nodeId || !allocId) return null
   const label = allocation?.service_name || allocId
   return (
-    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
+    <PageShell tall>
       <AllocationHeader allocation={allocation} nodeId={nodeId} allocId={allocId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={allocationTabs(nodeId, allocId)} />
       <div className="min-h-0 flex-1">
         <LogsView title={`Logs · ${label}`} streamUrl={apiPaths.allocationLogs(nodeId, allocId)} />
       </div>
-    </div>
+    </PageShell>
   )
 }

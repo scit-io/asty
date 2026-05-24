@@ -18,6 +18,7 @@ import { formatMB, formatMHz } from '@/lib/format'
 import { toast } from 'sonner'
 import { AllocationHeader } from '@/components/allocation-header'
 import { MetricsChart } from '@/components/metrics-chart'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
@@ -76,15 +77,15 @@ export default function AllocationDetail() {
 
   if (!allocation) {
     return (
-      <div className="container mx-auto p-4 sm:p-6">
+      <PageShell bare>
         <Skeleton className="h-8 w-64 mb-4" />
         <Skeleton className="h-32 w-full" />
-      </div>
+      </PageShell>
     )
   }
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <AllocationHeader allocation={allocation} />
 
       <ResourceTabs items={allocationTabs(nodeId!, allocId!)} />
@@ -165,6 +166,6 @@ export default function AllocationDetail() {
             } />
         </div>
       </section>
-    </div>
+    </PageShell>
   )
 }

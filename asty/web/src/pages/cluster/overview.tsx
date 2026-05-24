@@ -16,6 +16,7 @@ import {
   Shield,
 } from 'lucide-react'
 import { MetricsChart } from '@/components/metrics-chart'
+import { PageShell } from '@/components/page-shell'
 import { ResourcesBlock } from '@/components/resources-block'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
@@ -83,7 +84,7 @@ export default function Cluster() {
   const healthPct = nodesTotal > 0 ? Math.round((nodesHealthy / nodesTotal) * 100) : 0
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <h2 className="text-lg font-semibold">Cluster</h2>
       <ResourceTabs items={CLUSTER_TABS} />
 
@@ -150,6 +151,6 @@ export default function Cluster() {
             value={formatCount(aggregates.nats.jsMessages)} hint="JetStream total" />
         </div>
       </section>
-    </div>
+    </PageShell>
   )
 }

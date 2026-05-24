@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { DataTable, type Column } from '@/components/data-table'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
@@ -129,7 +130,7 @@ export default function Nodes() {
   ]
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <h2 className="text-lg font-semibold">Cluster</h2>
       <ResourceTabs items={CLUSTER_TABS} />
       <Card>
@@ -154,6 +155,6 @@ export default function Nodes() {
           if (n) handleDrain(n, true)
         }}
       />
-    </div>
+    </PageShell>
   )
 }

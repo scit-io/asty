@@ -14,6 +14,7 @@ import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-r
 import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
 import { NodeHeader } from '@/components/node-header'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { DataTable, type Column } from '@/components/data-table'
 import { api } from '@/api/client'
@@ -136,7 +137,7 @@ export default function NodeAllocations() {
   ]
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       {node && <NodeHeader node={node} tail={[{ label: 'Allocations' }]} />}
       {nodeId && (
         <ResourceTabs items={nodeTabs(nodeId)} />
@@ -175,6 +176,6 @@ export default function NodeAllocations() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </PageShell>
   )
 }

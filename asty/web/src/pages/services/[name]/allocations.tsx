@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { uptimeLabel } from '@/lib/uptime'
 import { toast } from 'sonner'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { DataTable, type Column } from '@/components/data-table'
@@ -123,7 +124,7 @@ export default function ServiceAllocations() {
 
   if (!name) return null
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Allocations' }]} />
       <ResourceTabs items={serviceTabs(name)} />
       {!cached ? (
@@ -159,6 +160,6 @@ export default function ServiceAllocations() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </PageShell>
   )
 }

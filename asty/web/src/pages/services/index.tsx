@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
+import { PageShell } from '@/components/page-shell'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
 import { routes } from '@/lib/routes'
@@ -123,7 +124,7 @@ export default function Services() {
   ]
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Services</h2>
         <Card>
@@ -139,6 +140,6 @@ export default function Services() {
           </CardContent>
         </Card>
       </section>
-    </div>
+    </PageShell>
   )
 }

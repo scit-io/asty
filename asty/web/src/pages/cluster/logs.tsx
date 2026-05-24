@@ -1,4 +1,5 @@
 import { LogsView } from '@/components/logs-view'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { apiPaths } from '@/lib/routes'
@@ -8,12 +9,12 @@ import { apiPaths } from '@/lib/routes'
 // same content-negotiation rule.
 export default function ClusterLogs() {
   return (
-    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
+    <PageShell tall>
       <h2 className="text-lg font-semibold">Cluster</h2>
       <ResourceTabs items={CLUSTER_TABS} />
       <div className="min-h-0 flex-1">
         <LogsView title="Cluster events" streamUrl={apiPaths.clusterLogs} />
       </div>
-    </div>
+    </PageShell>
   )
 }

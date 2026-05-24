@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { NodeHeader } from '@/components/node-header'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/components/logs-view'
 import { apiPaths } from '@/lib/routes'
@@ -17,12 +18,12 @@ export default function NodeLogs() {
     : null)
   if (!nodeId) return null
   return (
-    <div className="container mx-auto flex h-full flex-col gap-4 overflow-hidden p-4 sm:p-6">
+    <PageShell tall>
       <NodeHeader node={node} nodeId={nodeId} tail={[{ label: 'Logs' }]} />
       <ResourceTabs items={nodeTabs(nodeId)} />
       <div className="min-h-0 flex-1">
         <LogsView title={`Logs · ${nodeId}`} streamUrl={apiPaths.nodeLogs(nodeId)} />
       </div>
-    </div>
+    </PageShell>
   )
 }

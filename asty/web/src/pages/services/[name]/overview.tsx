@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/table'
 import { toast } from 'sonner'
 import { MetricsChart } from '@/components/metrics-chart'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { Tile } from '@/components/tile'
@@ -147,7 +148,7 @@ export default function ServiceOverview() {
   if (!name) return null
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <ServiceHeader name={name} service={service} />
 
       <ResourceTabs items={serviceTabs(name)} />
@@ -336,6 +337,6 @@ export default function ServiceOverview() {
           </Card>
         </div>
       )}
-    </div>
+    </PageShell>
   )
 }

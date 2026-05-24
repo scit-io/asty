@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
 import { DataTable, type Column } from '@/components/data-table'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
@@ -76,7 +77,7 @@ export default function ServiceScalingEvents() {
 
   if (!name) return null
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Scaling events' }]} />
       <ResourceTabs items={serviceTabs(name)} />
 
@@ -99,6 +100,6 @@ export default function ServiceScalingEvents() {
           />
         </CardContent>
       </Card>
-    </div>
+    </PageShell>
   )
 }

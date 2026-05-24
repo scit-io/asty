@@ -27,6 +27,7 @@ import { MetricsChart } from '@/components/metrics-chart'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { NodeHeader } from '@/components/node-header'
 import { NodeKillDialog } from '@/components/node-kill-dialog'
+import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { Tile } from '@/components/tile'
@@ -81,10 +82,10 @@ export default function NodeDetail() {
 
   if (!node) {
     return (
-      <div className="container mx-auto p-4 sm:p-6">
+      <PageShell bare>
         <Skeleton className="h-8 w-64 mb-4" />
         <Skeleton className="h-32 w-full" />
-      </div>
+      </PageShell>
     )
   }
 
@@ -106,7 +107,7 @@ export default function NodeDetail() {
   const hasAsty = node.self_cpu_percent > 0 || node.self_memory_mb > 0 || node.self_disk_mb > 0
 
   return (
-    <div className="container mx-auto p-4 sm:p-6 space-y-4">
+    <PageShell>
       <NodeHeader node={node} />
 
       <ResourceTabs items={nodeTabs(node.id)} />
@@ -219,6 +220,6 @@ export default function NodeDetail() {
         onOpenChange={setShowKillDialog}
         onConfirm={handleKill}
       />
-    </div>
+    </PageShell>
   )
 }
