@@ -20,7 +20,7 @@ import ServiceDeploy from '@/pages/services/[name]/deploy'
 
 export default function App() {
   return (
-    <ThemeProvider defaultTheme="system" storageKey="astiui-theme">
+    <ThemeProvider defaultTheme="system" storageKey="asty-theme">
       <BrowserRouter>
         {/* Shell layout: h-screen + overflow-hidden makes the body
             non-scrolling. The <main> below owns the scroll context.
