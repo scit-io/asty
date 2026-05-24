@@ -1,25 +1,15 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Layers, Heart, Cpu, MemoryStick, Rocket } from 'lucide-react'
-import { toast } from 'sonner'
+import { Layers, Heart, Cpu, MemoryStick } from 'lucide-react'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { Tile } from '@/components/tile'
 import { ServiceConfigCard } from '@/features/services/service-config-card'
+import { ServiceDeployCard } from '@/features/services/service-deploy-card'
 import { ServiceMinCopiesCard } from '@/features/services/service-min-copies-card'
-import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
@@ -29,7 +19,9 @@ import { useClusterStore } from '@/store/cluster'
 // through one subscribeService(name) that the cluster store opens; this
 // page just reads from serviceCache[name]. The sibling tabs (Scaling
 // events / Deploy history) read from the same cache so nothing is
-// polled twice.
+// polled twice. Page-level logic is layout + the four cards
+// (Configuration / Min copies / Deploy) — each card owns its own
+// form state and handlers.
 export default function ServiceOverview() {
   const { name } = useParams<{ name: string }>()
   const { serviceCache, subscribeService, refreshService, services: allServices } = useClusterStore()
@@ -45,8 +37,6 @@ export default function ServiceOverview() {
   const deployHistory = cached?.deployHistory ?? []
   const latestDeploy = deployHistory[0] ?? null
   const githubVersions = cached?.availableVersions ?? []
-  const [version, setVersion] = useState('latest')
-  const [deploying, setDeploying] = useState(false)
 
   useEffect(() => {
     if (!name) return
@@ -59,50 +49,11 @@ export default function ServiceOverview() {
   const healthPct = allocations.length > 0 ? Math.round((healthy / allocations.length) * 100) : 0
   const liveActive = live?.status === 'running'
 
-  // Available versions for the Deploy select. Order:
-  //   1. "latest" — always first, GitHub Release alias + sensible
-  //      default that operators reach for most often.
-  //   2. GitHub Releases tags (cached server-side, falls back to
-  //      empty list in dev or when A_GITHUB_REPO is unset).
-  //   3. Versions seen in this service's deploy history.
-  //   4. Versions currently running on any allocation.
-  // Deduplicated while preserving the first appearance.
-  const availableVersions = useMemo(() => {
-    const seen = new Set<string>()
-    const out: string[] = []
-    const add = (v: string) => {
-      if (!v || seen.has(v)) return
-      seen.add(v)
-      out.push(v)
-    }
-    add('latest')
-    githubVersions.forEach(add)
-    deployHistory.forEach((r) => add(r.version))
-    allocations.forEach((a) => add(a.version))
-    return out
-  }, [githubVersions, deployHistory, allocations])
-
-  const handleDeploy = async () => {
-    if (!name || !version) return
-    setDeploying(true)
-    try {
-      await api.deploy(name, version)
-      toast.success(`Deploying ${name}@${version}`)
-      setVersion('latest')
-      await refreshService(name)
-    } catch (err) {
-      toast.error(`Deploy failed: ${err instanceof Error ? err.message : 'unknown'}`)
-    } finally {
-      setDeploying(false)
-    }
-  }
-
   if (!name) return null
 
   return (
     <PageShell>
       <ServiceHeader name={name} service={service} />
-
       <ResourceTabs items={serviceTabs(name)} />
 
       {!service ? (
@@ -148,35 +99,15 @@ export default function ServiceOverview() {
             />
           )}
 
-          <Card className={service.Type === 'service' ? 'col-span-12 lg:col-span-4' : 'col-span-12 lg:col-span-4 lg:row-span-2'}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Deploy</CardTitle>
-              <Rocket className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center gap-2 mt-2 mb-4">
-                <Select value={version} onValueChange={setVersion}>
-                  <SelectTrigger className="flex-1">
-                    <SelectValue placeholder="version tag" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableVersions.map((v) => (
-                      <SelectItem key={v} value={v}>{v}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleDeploy} disabled={deploying || !version || liveActive}>
-                  {liveActive ? 'In progress…' : deploying ? 'Deploying…' : 'Deploy'}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Rolling update per <code className="font-mono">update</code> policy
-                (optional canary → batches of <code className="font-mono">max_parallel</code>).
-                Autoscaler paused for the rollout; auto-reverts on failure if
-                <code className="font-mono"> auto_revert</code> is enabled.
-              </p>
-            </CardContent>
-          </Card>
+          <ServiceDeployCard
+            className={service.Type === 'service' ? 'col-span-12 lg:col-span-4' : 'col-span-12 lg:col-span-4 lg:row-span-2'}
+            name={name}
+            githubVersions={githubVersions}
+            deployHistory={deployHistory}
+            allocations={allocations}
+            liveActive={liveActive}
+            onChanged={() => refreshService(name)}
+          />
         </div>
       )}
     </PageShell>
