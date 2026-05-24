@@ -49,7 +49,7 @@ export default function Services() {
       },
     },
     {
-      key: 'mem', label: 'Memory per copy',
+      key: 'mem', label: 'RAM per copy',
       sort: (a, b) => (a.avg_memory_mb ?? 0) - (b.avg_memory_mb ?? 0),
       render: (s) => {
         const used = s.avg_memory_mb ?? 0

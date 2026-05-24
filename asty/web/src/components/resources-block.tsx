@@ -41,7 +41,7 @@ export function ResourcesBlock({ title, data }: ResourcesBlockProps) {
       <div className={`grid gap-3 ${colsClass[tileCount]}`}>
         <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
           usage={data.cpuUsage} total={data.cpuTotal} format={formatMHz} />
-        <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+        <Tile variant="metric" title="RAM" icon={<MemoryStick className="h-4 w-4" />}
           usage={data.memoryUsage} total={data.memoryTotal} format={formatMB} />
         {showDisk && (
           <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}

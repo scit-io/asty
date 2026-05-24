@@ -96,7 +96,7 @@ export function AllocationsTable({
       },
     },
     {
-      key: 'mem', label: 'Memory',
+      key: 'mem', label: 'RAM',
       sort: (a, b) => a.memory_usage - b.memory_usage,
       render: (a) => {
         const res = resources(a)

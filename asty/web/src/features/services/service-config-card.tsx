@@ -70,7 +70,7 @@ export function ServiceConfigCard({ runtime, autoscaler, latestDeploy, latestEve
                 autoscaler?.max_copies && autoscaler.max_copies > 0 ? autoscaler.max_copies : 'unlimited'
               } />
               <Row label="Target CPU" value={`${runtime.target_cpu ?? 0}%`} />
-              <Row label="Target Memory" value={`${runtime.target_memory ?? 0}%`} />
+              <Row label="Target RAM" value={`${runtime.target_memory ?? 0}%`} />
               <Row label="Traffic threshold" value={`${runtime.traffic_threshold ?? 0} RPS`} />
               <Row valueClass="" label="Cooldown" value={
                 <span className="inline-flex gap-1 justify-end">

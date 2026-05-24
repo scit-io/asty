@@ -113,7 +113,7 @@ export default function NodeDetail() {
             title="CPU" icon={<Cpu className="h-4 w-4" />}
             usage={node.cpu_total - node.cpu_available} total={node.cpu_total} format={formatMHz} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
             usage={node.memory_total - node.memory_available} total={node.memory_total} format={formatMB} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
@@ -126,7 +126,7 @@ export default function NodeDetail() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Node CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Node Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
+            title="Node RAM" data={memoryMetrics} color="hsl(var(--chart-2))" />
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Node RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
 

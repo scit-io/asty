@@ -76,7 +76,7 @@ export default function Nodes() {
       },
     },
     {
-      key: 'mem', label: 'Memory',
+      key: 'mem', label: 'RAM',
       sort: (a, b) => percent(a.memory_total - a.memory_available, a.memory_total) - percent(b.memory_total - b.memory_available, b.memory_total),
       render: (n) => {
         const used = n.memory_total - n.memory_available

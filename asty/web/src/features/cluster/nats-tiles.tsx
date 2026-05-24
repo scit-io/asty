@@ -38,7 +38,7 @@ export function NatsTiles({ data }: { data: NatsData }) {
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
         <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
           usage={data.cpuUsage} total={data.cpuTotal} format={formatMHz} />
-        <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+        <Tile variant="metric" title="RAM" icon={<MemoryStick className="h-4 w-4" />}
           usage={data.memoryUsage} total={data.memoryTotal} format={formatMB} />
         <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
           usage={data.diskUsage} total={data.diskTotal} format={formatMB} />

@@ -68,7 +68,7 @@ export default function ServiceOverview() {
             title="CPU budget" icon={<Cpu className="h-4 w-4" />}
             value={formatMHz(service.Resources.CPU)} hint="per allocation" />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="Memory budget" icon={<MemoryStick className="h-4 w-4" />}
+            title="RAM budget" icon={<MemoryStick className="h-4 w-4" />}
             value={formatMB(service.Resources.Memory)} hint="per allocation" />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Health" icon={<Heart className="h-4 w-4" />}
@@ -78,7 +78,7 @@ export default function ServiceOverview() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="CPU% per copy" data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Memory per copy" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" Mb" />
+            title="RAM per copy" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" Mb" />
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Running allocations" data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
 

@@ -73,7 +73,7 @@ export default function AllocationDetail() {
             title="CPU" icon={<Cpu className="h-4 w-4" />}
             usage={allocation.cpu_usage} total={cpuTotal} format={formatMHz} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
             usage={allocation.memory_usage} total={memTotal} format={formatMB} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
@@ -85,7 +85,7 @@ export default function AllocationDetail() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Allocation CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Allocation Memory" data={memoryMetrics} color="hsl(var(--chart-2))" />
+            title="Allocation RAM" data={memoryMetrics} color="hsl(var(--chart-2))" />
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Allocation RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
         </div>

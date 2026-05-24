@@ -51,7 +51,7 @@ export default function Cluster() {
             title="CPU" icon={<Cpu className="h-4 w-4" />}
             usage={aggregates.cluster.cpuUsage} total={aggregates.cluster.cpuTotal} format={formatMHz} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Memory" icon={<MemoryStick className="h-4 w-4" />}
+            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
             usage={aggregates.cluster.memoryUsage} total={aggregates.cluster.memoryTotal} format={formatMB} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
             title="Disk" icon={<HardDrive className="h-4 w-4" />}
@@ -63,7 +63,7 @@ export default function Cluster() {
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Cluster CPU" data={clusterCpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Cluster Memory" data={clusterMemoryMetrics} color="hsl(var(--chart-2))" />
+            title="Cluster RAM" data={clusterMemoryMetrics} color="hsl(var(--chart-2))" />
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Cluster RPS" data={clusterRpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
 
