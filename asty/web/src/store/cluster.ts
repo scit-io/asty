@@ -1,14 +1,8 @@
 import { create } from 'zustand'
 import { api } from '@/api/client'
 import { apiPaths } from '@/lib/routes'
-import {
-  AUTOSCALER_POLL_MS,
-  BACKOFF_BASE_MS,
-  BACKOFF_MAX_MS,
-  MAX_CHART_POINTS,
-  STORE_FLUSH_MS,
-  STREAM_MAX_RETRIES,
-} from '@/lib/constants'
+import { AUTOSCALER_POLL_MS, MAX_CHART_POINTS } from '@/lib/constants'
+import { makeScheduleSet, openStream, type ConnectionState } from '@/store/stream'
 import type {
   Node,
   ClusterStatus,
@@ -121,56 +115,6 @@ const VALID_NODE_STATUSES = new Set<Node['status']>([
   'ready', 'down', 'draining', 'drained', 'paused',
 ])
 
-// connectionState — observable lifecycle of one SSE subscription. Not
-// exported because the store no longer surfaces it: the only consumer
-// is the local onState hook each subscribeXxx uses to wipe cached
-// snapshots when the live feed drops (so the UI never paints stale
-// values).
-type connectionState = 'connecting' | 'streaming' | 'reconnecting' | 'dead'
-
-// Reusable EventSource lifecycle with exponential backoff reconnect.
-// onState fires on every transition so the store can mirror the
-// connection status into a UI-visible field.
-function openStream(
-  url: string,
-  setup: (es: EventSource) => void,
-  onState?: (state: connectionState) => void,
-): () => void {
-  let cancelled = false
-  let retryCount = 0
-  let retryTimer: ReturnType<typeof setTimeout> | null = null
-  let es: EventSource | null = null
-
-  const open = () => {
-    if (cancelled) return
-    onState?.(retryCount === 0 ? 'connecting' : 'reconnecting')
-    es = new EventSource(url)
-    setup(es)
-    es.onopen = () => {
-      retryCount = 0
-      onState?.('streaming')
-    }
-    es.onerror = () => {
-      es?.close()
-      if (cancelled) return
-      retryCount++
-      if (retryCount > STREAM_MAX_RETRIES) {
-        onState?.('dead')
-        return
-      }
-      onState?.('reconnecting')
-      retryTimer = setTimeout(open, Math.min(BACKOFF_BASE_MS * Math.pow(2, retryCount - 1), BACKOFF_MAX_MS))
-    }
-  }
-
-  open()
-  return () => {
-    cancelled = true
-    if (retryTimer) clearTimeout(retryTimer)
-    es?.close()
-  }
-}
-
 const emptyNodeData = (): NodeData => ({
   node: null, allocations: [], cpuMetrics: [], memoryMetrics: [], rpsMetrics: [],
 })
@@ -185,36 +129,10 @@ const emptyAllocationData = (): AllocationData => ({
 })
 
 export const useClusterStore = create<ClusterStore>((set) => {
-  // Pending functional updates and a one-shot timer that flushes them in
-  // a single zustand `set` call. Each per-event listener feeds an update
-  // into pendingUpdates instead of calling `set` directly — see
-  // scheduleSet below. Both live in the create() closure so each store
-  // instance owns its own batch state (HMR / tests get a clean slate;
-  // a leftover timer cannot leak into a freshly created store).
-  let pendingUpdates: Array<(s: ClusterStore) => Partial<ClusterStore>> = []
-  let flushTimer: ReturnType<typeof setTimeout> | null = null
-
-  // scheduleSet collapses N updates within STORE_FLUSH_MS into one
-  // `set` so React renders the page once per snapshot, not once per
-  // event listener. The update functions still receive the latest
-  // running state, so reducers that read+merge (e.g. appendMetrics)
-  // stay correct.
-  const scheduleSet = (fn: (s: ClusterStore) => Partial<ClusterStore>) => {
-    pendingUpdates.push(fn)
-    if (flushTimer !== null) return
-    flushTimer = setTimeout(() => {
-      flushTimer = null
-      const fns = pendingUpdates
-      pendingUpdates = []
-      set((current) => {
-        let next: ClusterStore = current
-        for (const fn of fns) {
-          next = { ...next, ...fn(next) }
-        }
-        return next
-      })
-    }, STORE_FLUSH_MS)
-  }
+  // Per-store batch scheduler. State lives inside makeScheduleSet's
+  // closure so each store instance owns its own queue — HMR / tests
+  // can re-create the store without timers leaking between instances.
+  const scheduleSet = makeScheduleSet<ClusterStore>(set)
 
   // Common handler for the compact `status` event that every stream
   // emits. Header reads clusterStatus from the store regardless of
@@ -245,7 +163,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
     allocationCache: {},
   
     subscribeCluster: () => {
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         // Leaving 'streaming' = lost the live feed. Wipe everything this
         // subscription owns: shared snapshot (nodes, services,
         // clusterStatus) and the cluster timeseries. Tiles fall back to
@@ -307,7 +225,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
     },
   
     subscribeNodes: () => {
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         if (st !== 'streaming') {
           set(() => ({ nodes: [], clusterStatus: null }))
         }
@@ -325,7 +243,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
     },
   
     subscribeServices: () => {
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         if (st !== 'streaming') {
           set(() => ({ services: [], clusterStatus: null }))
         }
@@ -351,7 +269,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
         return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, node: seed } } }
       })
   
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         // Only wipe on terminal "dead" — transient 'connecting' fires
         // on every tab switch (each page reopens its EventSource) and
         // would clear the cached node snapshot between mount and the
@@ -435,7 +353,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
     },
   
     subscribeService: (name) => {
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         // Only wipe on terminal "dead" — transient 'connecting' fires
         // on every tab switch (each page reopens its EventSource) and
         // would clear cached service/allocations between mount and the
@@ -580,7 +498,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
        // a frozen "running" pill can't linger past a long outage, and
        // refetch history once to catch the deploy's terminal state if
        // it landed while we were disconnected.
-      const onDeployState = (st: connectionState) => {
+      const onDeployState = (st: ConnectionState) => {
         if (st !== 'dead') return
         set((state) => {
           const existing = state.serviceCache[name]
@@ -635,7 +553,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
     },
   
     subscribeAllocation: (nodeId, allocId) => {
-      const onState = (st: connectionState) => {
+      const onState = (st: ConnectionState) => {
         // Match subscribeNode: only wipe on terminal "dead" so transient
         // 'connecting'/'reconnecting' don't blank the charts mid-session.
         if (st === 'dead') {
