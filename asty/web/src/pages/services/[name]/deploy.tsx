@@ -6,6 +6,7 @@ import { DataTable, type Column } from '@/components/data-table'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
+import { TimeStack } from '@/components/time-stack'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { deployStatusVariant } from '@/lib/variants'
 import { useClusterStore } from '@/store/cluster'
@@ -38,28 +39,14 @@ const historyColumns: Column<DeploymentRecord>[] = [
   {
     key: 'started', label: 'Started',
     sort: (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
-    render: (r) => {
-      const d = new Date(r.started_at)
-      return (
-        <div className="space-y-1">
-          <div className="text-sm font-medium">{d.toLocaleTimeString()}</div>
-          <div className="text-xs text-muted-foreground">{d.toLocaleDateString()}</div>
-        </div>
-      )
-    },
+    render: (r) => <TimeStack date={new Date(r.started_at)} />,
   },
   {
     key: 'completed', label: 'Completed',
     sort: (a, b) => new Date(a.completed_at ?? 0).getTime() - new Date(b.completed_at ?? 0).getTime(),
     render: (r) => {
       if (!r.completed_at) return <span className="text-sm text-muted-foreground">—</span>
-      const d = new Date(r.completed_at)
-      return (
-        <div className="space-y-1">
-          <div className="text-sm font-medium">{d.toLocaleTimeString()}</div>
-          <div className="text-xs text-muted-foreground">{d.toLocaleDateString()}</div>
-        </div>
-      )
+      return <TimeStack date={new Date(r.completed_at)} />
     },
   },
 ]

@@ -24,6 +24,7 @@ import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
+import { TimeStack } from '@/components/time-stack'
 import { Tile } from '@/components/tile'
 import { api } from '@/api/client'
 import { formatMB, formatMHz } from '@/lib/format'
@@ -249,7 +250,7 @@ export default function ServiceOverview() {
                                   {latestDeploy.status}
                                 </Badge>
                                 <span className="text-muted-foreground">·</span>
-                                <span>{d.toLocaleTimeString()} · <span className="text-muted-foreground">{d.toLocaleDateString()}</span></span>
+                                <TimeStack date={d} compact />
                               </span>
                             )
                           })() : latestEvent ? (() => {
@@ -261,7 +262,7 @@ export default function ServiceOverview() {
                                   <Badge variant="outline" className="text-[10px]">manual</Badge>
                                 )}
                                 <span className="text-muted-foreground">·</span>
-                                <span>{d.toLocaleTimeString()} · <span className="text-muted-foreground">{d.toLocaleDateString()}</span></span>
+                                <TimeStack date={d} compact />
                               </span>
                             )
                           })() : runtime.last_action ? (() => {
@@ -269,7 +270,7 @@ export default function ServiceOverview() {
                             return (
                               <span>
                                 {runtime.last_action}
-                                {d && <> · {d.toLocaleTimeString()} · <span className="text-muted-foreground">{d.toLocaleDateString()}</span></>}
+                                {d && <> · <TimeStack date={d} compact /></>}
                               </span>
                             )
                           })() : (
