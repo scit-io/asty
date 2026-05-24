@@ -24,8 +24,10 @@ import { useClusterStore } from '@/store/cluster'
 // form state and handlers.
 export default function ServiceOverview() {
   const { name } = useParams<{ name: string }>()
-  const { serviceCache, subscribeService, refreshService, services: allServices } = useClusterStore()
-  const cached = name ? serviceCache[name] : undefined
+  const subscribeService = useClusterStore((s) => s.subscribeService)
+  const refreshService = useClusterStore((s) => s.refreshService)
+  const allServices = useClusterStore((s) => s.services)
+  const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
   const service = cached?.service || null
   const allocations = cached?.allocations || []
   const cpuMetrics = cached?.cpuMetrics || []

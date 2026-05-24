@@ -59,8 +59,8 @@ const scalingEventColumns: Column<ScalingEvent>[] = [
 
 export default function ServiceScalingEvents() {
   const { name } = useParams<{ name: string }>()
-  const { serviceCache, subscribeService } = useClusterStore()
-  const cached = name ? serviceCache[name] : undefined
+  const subscribeService = useClusterStore((s) => s.subscribeService)
+  const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
   const events = cached?.scalingEvents ?? []
 
   useEffect(() => {

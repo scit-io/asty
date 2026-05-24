@@ -16,10 +16,10 @@ import { useClusterStore } from '@/store/cluster'
 // every row).
 export default function ServiceAllocations() {
   const { name } = useParams<{ name: string }>()
-  const { serviceCache, subscribeService, services } = useClusterStore()
-  const cached = name ? serviceCache[name] : undefined
+  const subscribeService = useClusterStore((s) => s.subscribeService)
+  const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
+  const res = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources : undefined)
   const allocations = cached?.allocations || []
-  const res = name ? services.find((s) => s.Name === name)?.Resources : undefined
 
   useEffect(() => {
     if (!name) return

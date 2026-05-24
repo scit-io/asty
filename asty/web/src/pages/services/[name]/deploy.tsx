@@ -56,8 +56,8 @@ const historyColumns: Column<DeploymentRecord>[] = [
 // REST load in cluster store).
 export default function ServiceDeployHistory() {
   const { name } = useParams<{ name: string }>()
-  const { serviceCache, subscribeService } = useClusterStore()
-  const cached = name ? serviceCache[name] : undefined
+  const subscribeService = useClusterStore((s) => s.subscribeService)
+  const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
   const history = cached?.deployHistory ?? []
 
   useEffect(() => {

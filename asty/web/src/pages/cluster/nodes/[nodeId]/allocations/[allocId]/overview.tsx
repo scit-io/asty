@@ -31,11 +31,11 @@ import { useClusterStore } from '@/store/cluster'
 // RPS attribution); the SPA accumulates them in the store.
 export default function AllocationDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
-  const { allocationCache, nodeCache, subscribeAllocation } = useClusterStore()
-  const cached = allocId ? allocationCache[allocId] : undefined
+  const subscribeAllocation = useClusterStore((s) => s.subscribeAllocation)
+  const cached = useClusterStore((s) => allocId ? s.allocationCache[allocId] : undefined)
+  const node = useClusterStore((s) => nodeId ? s.nodeCache[nodeId]?.node : undefined)
   const allocation = cached?.allocation || null
   const svcDef = cached?.service || null
-  const node = nodeId ? nodeCache[nodeId]?.node : undefined
   const cpuMetrics = cached?.cpuMetrics || []
   const memoryMetrics = cached?.memoryMetrics || []
   const rpsMetrics = cached?.rpsMetrics || []

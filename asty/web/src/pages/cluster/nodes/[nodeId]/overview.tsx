@@ -37,10 +37,11 @@ import { useClusterStore } from '@/store/cluster'
 export default function NodeDetail() {
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
-  const { nodeCache, nodes, subscribeNode, updateNodeStatus } = useClusterStore()
-  const cached = nodeId ? nodeCache[nodeId] : undefined
+  const subscribeNode = useClusterStore((s) => s.subscribeNode)
+  const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
+  const cached = useClusterStore((s) => nodeId ? s.nodeCache[nodeId] : undefined)
+  const isLastNode = useClusterStore((s) => s.nodes.length <= 1)
   const node = cached?.node || null
-  const isLastNode = nodes.length <= 1
   const cpuMetrics = cached?.cpuMetrics || []
   const memoryMetrics = cached?.memoryMetrics || []
   const rpsMetrics = cached?.rpsMetrics || []

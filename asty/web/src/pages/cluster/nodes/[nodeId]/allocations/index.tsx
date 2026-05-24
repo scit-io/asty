@@ -14,8 +14,9 @@ import { useClusterStore } from '@/store/cluster'
 // data source (node SSE) and the per-row resource lookup.
 export default function NodeAllocations() {
   const { nodeId } = useParams<{ nodeId: string }>()
-  const { nodeCache, subscribeNode, services } = useClusterStore()
-  const cached = nodeId ? nodeCache[nodeId] : undefined
+  const subscribeNode = useClusterStore((s) => s.subscribeNode)
+  const services = useClusterStore((s) => s.services)
+  const cached = useClusterStore((s) => nodeId ? s.nodeCache[nodeId] : undefined)
   const node = cached?.node || null
   const allocations = cached?.allocations || []
 
