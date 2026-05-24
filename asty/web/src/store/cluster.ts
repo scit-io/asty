@@ -583,29 +583,49 @@ export const useClusterStore = create<ClusterStore>((set) => {
       }
       loadVersions()
   
-      const deployES = new EventSource(`${API_PREFIX}/services/${name}/deploy`)
-      deployES.addEventListener('progress', (event) => {
-        try {
-          const rec = JSON.parse((event as MessageEvent).data) as DeploymentRecord
-          set((state) => {
-            const existing = state.serviceCache[name] || emptyServiceData()
-            return {
-              serviceCache: {
-                ...state.serviceCache,
-                [name]: { ...existing, liveDeploy: rec.status === 'running' ? rec : null },
-              },
-            }
-          })
-          if (rec.status !== 'running') loadHistory()
-        } catch { /* ignore malformed */ }
-      })
-  
+      // Deploy progress feed — same reconnect lifecycle as the main
+       // service SSE above. On terminal 'dead' we clear liveDeploy so
+       // a frozen "running" pill can't linger past a long outage, and
+       // refetch history once to catch the deploy's terminal state if
+       // it landed while we were disconnected.
+      const onDeployState = (st: connectionState) => {
+        if (st !== 'dead') return
+        set((state) => {
+          const existing = state.serviceCache[name]
+          if (!existing) return {}
+          return {
+            serviceCache: {
+              ...state.serviceCache,
+              [name]: { ...existing, liveDeploy: null },
+            },
+          }
+        })
+        loadHistory()
+      }
+      const closeDeploy = openStream(`${API_PREFIX}/services/${name}/deploy`, (es) => {
+        es.addEventListener('progress', (event) => {
+          try {
+            const rec = JSON.parse((event as MessageEvent).data) as DeploymentRecord
+            set((state) => {
+              const existing = state.serviceCache[name] || emptyServiceData()
+              return {
+                serviceCache: {
+                  ...state.serviceCache,
+                  [name]: { ...existing, liveDeploy: rec.status === 'running' ? rec : null },
+                },
+              }
+            })
+            if (rec.status !== 'running') loadHistory()
+          } catch { /* ignore malformed */ }
+        })
+      }, onDeployState)
+
       return () => {
         close()
         autoCancelled = true
         if (autoTimer) clearTimeout(autoTimer)
         historyCancelled = true
-        deployES.close()
+        closeDeploy()
         // Same rule as subscribeNode — only the chart timeseries gets
         // freed; the service snapshot + autoscaler + deploy caches stay
         // for the next page open so re-entry is instant.
