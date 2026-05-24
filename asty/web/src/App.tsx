@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
-import { ThemeProvider } from '@/components/theme-provider'
+import { ThemeProvider, useTheme } from '@/components/theme-provider'
 import { Header } from '@/components/header'
 import { LoadingBlock } from '@/components/loading-block'
 import { Toaster } from 'sonner'
@@ -24,6 +24,11 @@ const ServiceOverview = lazy(() => import('@/pages/services/[name]/overview'))
 const ServiceAllocations = lazy(() => import('@/pages/services/[name]/allocations'))
 const ServiceAutoscaler = lazy(() => import('@/pages/services/[name]/autoscaler'))
 const ServiceDeploy = lazy(() => import('@/pages/services/[name]/deploy'))
+
+function ThemedToaster() {
+  const { theme } = useTheme()
+  return <Toaster position="top-right" theme={theme} />
+}
 
 export default function App() {
   return (
@@ -63,7 +68,7 @@ export default function App() {
             </Suspense>
           </main>
         </div>
-        <Toaster position="top-right" />
+        <ThemedToaster />
       </BrowserRouter>
     </ThemeProvider>
   )
