@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -21,6 +20,7 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
 import { useAllocationActions } from '@/features/allocations/use-allocation-actions'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { allocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -41,10 +41,7 @@ export default function AllocationDetail() {
   const rpsMetrics = cached?.rpsMetrics || []
   const { act, pending } = useAllocationActions()
 
-  useEffect(() => {
-    if (!nodeId || !allocId) return
-    return subscribeAllocation(nodeId, allocId)
-  }, [nodeId, allocId, subscribeAllocation])
+  useSubscribe(subscribeAllocation, nodeId, allocId)
 
   const cpuTotal = svcDef?.Resources.CPU ?? 100
   const memTotal = svcDef?.Resources.Memory ?? 0

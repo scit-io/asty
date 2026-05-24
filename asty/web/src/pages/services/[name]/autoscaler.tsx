@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -7,6 +6,7 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { TimeStack } from '@/components/time-stack'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 import type { ScalingEvent } from '@/types'
@@ -63,10 +63,7 @@ export default function ServiceScalingEvents() {
   const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
   const events = cached?.scalingEvents ?? []
 
-  useEffect(() => {
-    if (!name) return
-    return subscribeService(name)
-  }, [name, subscribeService])
+  useSubscribe(subscribeService, name)
 
   if (!name) return null
   return (

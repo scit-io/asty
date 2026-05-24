@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
@@ -28,6 +28,7 @@ import { Tile } from '@/components/tile'
 import { NatsTiles } from '@/features/cluster/nats-tiles'
 import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -48,10 +49,7 @@ export default function NodeDetail() {
   const [showDrainDialog, setShowDrainDialog] = useState(false)
   const [showKillDialog, setShowKillDialog] = useState(false)
 
-  useEffect(() => {
-    if (!nodeId) return
-    return subscribeNode(nodeId)
-  }, [nodeId, subscribeNode])
+  useSubscribe(subscribeNode, nodeId)
 
   const handleDrain = async (enable: boolean) => {
     if (!nodeId) return

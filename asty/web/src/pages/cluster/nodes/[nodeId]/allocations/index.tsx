@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -6,6 +5,7 @@ import { NodeHeader } from '@/components/node-header'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { AllocationsTable } from '@/features/allocations/allocations-table'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -20,10 +20,7 @@ export default function NodeAllocations() {
   const node = cached?.node || null
   const allocations = cached?.allocations || []
 
-  useEffect(() => {
-    if (!nodeId) return
-    return subscribeNode(nodeId)
-  }, [nodeId, subscribeNode])
+  useSubscribe(subscribeNode, nodeId)
 
   return (
     <PageShell>

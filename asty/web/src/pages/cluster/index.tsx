@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import {
   Activity,
   Boxes,
@@ -17,6 +16,7 @@ import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { Tile } from '@/components/tile'
 import { NatsTiles } from '@/features/cluster/nats-tiles'
 import { formatMB, formatMHz } from '@/lib/format'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { useClusterStore } from '@/store/cluster'
 import { useClusterAggregates, useServicesActiveCount } from '@/store/selectors'
 
@@ -34,7 +34,7 @@ export default function Cluster() {
   const aggregates = useClusterAggregates()
   const servicesActive = useServicesActiveCount()
 
-  useEffect(() => subscribeCluster(), [subscribeCluster])
+  useSubscribe(subscribeCluster)
 
   const nodesHealthy = clusterStatus?.cluster.nodes_healthy ?? 0
   const nodesTotal = clusterStatus?.cluster.nodes_total ?? 0

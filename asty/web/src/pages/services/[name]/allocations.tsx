@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -6,6 +5,7 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { AllocationsTable } from '@/features/allocations/allocations-table'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -21,10 +21,7 @@ export default function ServiceAllocations() {
   const res = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources : undefined)
   const allocations = cached?.allocations || []
 
-  useEffect(() => {
-    if (!name) return
-    return subscribeService(name)
-  }, [name, subscribeService])
+  useSubscribe(subscribeService, name)
 
   if (!name) return null
   return (

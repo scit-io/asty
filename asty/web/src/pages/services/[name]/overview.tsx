@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Layers, Heart, Cpu, MemoryStick } from 'lucide-react'
@@ -11,6 +11,7 @@ import { ServiceConfigCard } from '@/features/services/service-config-card'
 import { ServiceDeployCard } from '@/features/services/service-deploy-card'
 import { ServiceMinCopiesCard } from '@/features/services/service-min-copies-card'
 import { formatMB, formatMHz } from '@/lib/format'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -40,10 +41,7 @@ export default function ServiceOverview() {
   const latestDeploy = deployHistory[0] ?? null
   const githubVersions = cached?.availableVersions ?? []
 
-  useEffect(() => {
-    if (!name) return
-    return subscribeService(name)
-  }, [name, subscribeService])
+  useSubscribe(subscribeService, name)
 
   const runtime = useMemo(() => allServices.find((s) => s.Name === name) || null, [name, allServices])
   const running = allocations.filter((a) => a.status === 'running').length

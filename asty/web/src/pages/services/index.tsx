@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -8,6 +7,7 @@ import { UsageCell } from '@/components/usage-cell'
 import { Cpu, MemoryStick } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
 import { routes } from '@/lib/routes'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { useClusterStore } from '@/store/cluster'
 import type { ServiceDefinition } from '@/types'
 
@@ -19,7 +19,7 @@ export default function Services() {
   const subscribeServices = useClusterStore((s) => s.subscribeServices)
   const services = useClusterStore((s) => s.services)
 
-  useEffect(() => subscribeServices(), [subscribeServices])
+  useSubscribe(subscribeServices)
 
   const columns: Column<ServiceDefinition>[] = [
     {

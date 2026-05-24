@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -14,6 +14,7 @@ import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
 import { formatMB, formatMHz } from '@/lib/format'
 import { nodeStatusSwitchClass } from '@/lib/node-status'
+import { useSubscribe } from '@/lib/use-subscribe'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
 import { toast } from 'sonner'
@@ -37,7 +38,7 @@ export default function Nodes() {
   // user cancels) and avoids forking the wording.
   const [drainTarget, setDrainTarget] = useState<Node | null>(null)
 
-  useEffect(() => subscribeNodes(), [subscribeNodes])
+  useSubscribe(subscribeNodes)
 
   const handleDrain = async (n: Node, enable: boolean) => {
     setPending((p) => ({ ...p, [n.id]: true }))
