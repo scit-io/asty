@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
+import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
 import { componentStyle, formatTime, levelStyle, parseEvent } from '@/components/logs-format'
 import type { LogEvent } from '@/types'
 
@@ -48,9 +49,22 @@ type Level = (typeof LEVELS)[number]
 // it to a structured row renderer so levels are colour-coded, the
 // component is chipped, error chains stand out, and remaining
 // structured fields appear as small key=value tags.
+// StreamState mirrors the per-resource SSE lifecycle in store/cluster.ts
+// so the badge truthfully reflects whether new lines can still arrive:
+//   streaming    — connected, frames flowing.
+//   reconnecting — transient drop, exponential backoff scheduled.
+//   dead         — STREAM_MAX_RETRIES exhausted; the visible buffer is
+//                  the last known state, no new lines will arrive
+//                  until the operator clicks the badge to reconnect.
+type StreamState = 'streaming' | 'reconnecting' | 'dead'
+
 export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: LogsViewProps) {
   const [events, setEvents] = useState<LogEvent[]>([])
-  const [streaming, setStreaming] = useState(false)
+  const [streamState, setStreamState] = useState<StreamState>('reconnecting')
+  // reconnectKey increments when the operator clicks the dead-state
+  // badge — it's a useEffect dep, so bumping it forces the EventSource
+  // to be reopened with a fresh retryCount = 0.
+  const [reconnectKey, setReconnectKey] = useState(0)
   const [filter, setFilter] = useState<Level | 'all'>('all')
   const [tailing, setTailing] = useState(true)
   // unseen counts log lines that arrived after the user scrolled up.
@@ -102,10 +116,11 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
 
     const open = () => {
       if (cancelled) return
+      setStreamState('reconnecting')
       es = new EventSource(streamUrl)
       es.onopen = () => {
         retryCount = 0
-        setStreaming(true)
+        setStreamState('streaming')
       }
       es.onmessage = (event) => {
         pendingRef.current.push(parseEvent(event.data))
@@ -113,10 +128,19 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
       }
       es.onerror = () => {
         es?.close()
-        setStreaming(false)
         if (cancelled) return
         retryCount++
-        retryTimer = setTimeout(open, Math.min(3000 * Math.pow(2, retryCount - 1), 60000))
+        // Give up after STREAM_MAX_RETRIES (~10 min outage with the
+        // backoff ceiling) — matches the per-resource SSE lifecycle in
+        // store/cluster.ts so a permanently broken backend can't have
+        // the browser hammering it forever. The badge flips to 'dead'
+        // and exposes a click-to-reconnect affordance.
+        if (retryCount > STREAM_MAX_RETRIES) {
+          setStreamState('dead')
+          return
+        }
+        setStreamState('reconnecting')
+        retryTimer = setTimeout(open, Math.min(BACKOFF_BASE_MS * Math.pow(2, retryCount - 1), BACKOFF_MAX_MS))
       }
     }
 
@@ -128,7 +152,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
       pendingRef.current = []
       es?.close()
     }
-  }, [streamUrl, maxLines])
+  }, [streamUrl, maxLines, reconnectKey])
 
   const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget
@@ -164,7 +188,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
             <TailButton unseen={unseen} onClick={resumeTail} />
           )}
           <LevelFilter value={filter} onChange={setFilter} />
-          <StreamStatus streaming={streaming} />
+          <StreamStatus state={streamState} onReconnect={() => setReconnectKey((k) => k + 1)} />
         </div>
       </CardHeader>
       <CardContent className="flex min-h-0 flex-1 flex-col">
@@ -229,12 +253,13 @@ function tailStyle(unseen: number) {
   }
 }
 
-// StreamStatus draws the SSE-connection badge. The component-level
-// `streaming` state flips on EventSource onopen / onerror — green for
-// a live tail with a pulsing dot, amber for the exponential-backoff
-// reconnect window.
-function StreamStatus({ streaming }: { streaming: boolean }) {
-  if (streaming) {
+// StreamStatus draws the SSE-connection badge. Three states match
+// the per-resource SSE lifecycle in the store: streaming (green,
+// pulsing dot), reconnecting (amber, transient backoff window), and
+// dead (rose, terminal after STREAM_MAX_RETRIES — clickable to
+// trigger a fresh connection attempt).
+function StreamStatus({ state, onReconnect }: { state: StreamState; onReconnect: () => void }) {
+  if (state === 'streaming') {
     return (
       <Badge
         variant="success"
@@ -248,14 +273,27 @@ function StreamStatus({ streaming }: { streaming: boolean }) {
       </Badge>
     )
   }
+  if (state === 'reconnecting') {
+    return (
+      <Badge
+        variant="warning"
+        className="gap-1.5 border border-amber-500/40 bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
+      >
+        <span className="inline-flex h-2 w-2 rounded-full bg-amber-500" />
+        reconnecting
+      </Badge>
+    )
+  }
   return (
-    <Badge
-      variant="warning"
-      className="gap-1.5 border border-amber-500/40 bg-amber-500/15 text-amber-700 hover:bg-amber-500/20 dark:text-amber-300"
+    <button
+      type="button"
+      onClick={onReconnect}
+      title="Reconnect"
+      className="inline-flex h-6 cursor-pointer items-center gap-1.5 rounded-full border border-rose-500/40 bg-rose-500/15 px-2.5 py-0.5 text-xs font-semibold text-rose-700 transition-colors hover:bg-rose-500/25 dark:text-rose-300"
     >
-      <span className="inline-flex h-2 w-2 rounded-full bg-amber-500" />
-      reconnecting
-    </Badge>
+      <span className="inline-flex h-2 w-2 rounded-full bg-rose-500" />
+      disconnected · retry
+    </button>
   )
 }
 

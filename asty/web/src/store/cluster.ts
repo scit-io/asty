@@ -1,6 +1,14 @@
 import { create } from 'zustand'
 import { api } from '@/api/client'
 import { apiPaths } from '@/lib/routes'
+import {
+  AUTOSCALER_POLL_MS,
+  BACKOFF_BASE_MS,
+  BACKOFF_MAX_MS,
+  MAX_CHART_POINTS,
+  STORE_FLUSH_MS,
+  STREAM_MAX_RETRIES,
+} from '@/lib/constants'
 import type {
   Node,
   ClusterStatus,
@@ -23,18 +31,6 @@ interface AutoscalerInfo {
   max_copies: number
   deploy_in_progress: boolean
 }
-
-// Max chart points kept in memory per series (5min at 5s = 60 points).
-const MAX_CHART_POINTS = 60
-
-// STORE_FLUSH_MS bounds how often SSE-driven updates land in zustand.
-// The backend already debounces snapshots at 500 ms, but a single
-// snapshot fans out as multiple event types ('status', 'nodes',
-// 'services', 'metrics', …) — without batching those would be N
-// separate setState calls and N re-renders per snapshot. 100 ms keeps
-// updates feeling live (10 fps) while collapsing each snapshot into
-// one render burst regardless of how many event listeners fire for it.
-const STORE_FLUSH_MS = 100
 
 function appendMetrics(existing: MetricPoint[], incoming: MetricPoint[]): MetricPoint[] {
   if (!incoming.length) return existing
@@ -132,11 +128,6 @@ const VALID_NODE_STATUSES = new Set<Node['status']>([
 // values).
 type connectionState = 'connecting' | 'streaming' | 'reconnecting' | 'dead'
 
-// Max reconnect attempts before the stream is declared dead. With the
-// exponential backoff below (max 60 s), 10 attempts cover ~10 minutes
-// of outage — past that we stop hammering the server.
-const STREAM_MAX_RETRIES = 10
-
 // Reusable EventSource lifecycle with exponential backoff reconnect.
 // onState fires on every transition so the store can mirror the
 // connection status into a UI-visible field.
@@ -168,7 +159,7 @@ function openStream(
         return
       }
       onState?.('reconnecting')
-      retryTimer = setTimeout(open, Math.min(3000 * Math.pow(2, retryCount - 1), 60000))
+      retryTimer = setTimeout(open, Math.min(BACKOFF_BASE_MS * Math.pow(2, retryCount - 1), BACKOFF_MAX_MS))
     }
   }
 
@@ -539,7 +530,7 @@ export const useClusterStore = create<ClusterStore>((set) => {
             }
           })
         } catch { /* keep current */ }
-        if (!autoCancelled) autoTimer = setTimeout(pollAutoscaler, 15000)
+        if (!autoCancelled) autoTimer = setTimeout(pollAutoscaler, AUTOSCALER_POLL_MS)
       }
       pollAutoscaler()
   
