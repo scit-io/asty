@@ -3,7 +3,7 @@ import { ThemeProvider } from '@/components/theme-provider'
 import { Header } from '@/components/header'
 import { Toaster } from 'sonner'
 
-import ClusterOverview from '@/pages/cluster/overview'
+import ClusterOverview from '@/pages/cluster'
 import ClusterLogs from '@/pages/cluster/logs'
 import Nodes from '@/pages/cluster/nodes'
 import NodeOverview from '@/pages/cluster/nodes/[nodeId]/overview'
