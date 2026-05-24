@@ -2,7 +2,7 @@ import { Tile } from '@/components/tile'
 import { formatMB, formatMHz } from '@/lib/format'
 import { Cpu, MemoryStick, HardDrive, Activity } from 'lucide-react'
 
-interface Resource {
+interface ResourcesBlockData {
   cpuUsage: number
   cpuTotal: number
   memoryUsage: number  // MB
@@ -14,7 +14,7 @@ interface Resource {
 
 interface ResourcesBlockProps {
   title?: string
-  data: Resource
+  data: ResourcesBlockData
 }
 
 // colsClass keeps the grid column count in sync with the number of

@@ -1,4 +1,4 @@
-import { LogsView } from '@/components/logs-view'
+import { LogsView } from '@/features/logs'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
