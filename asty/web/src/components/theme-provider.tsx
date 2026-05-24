@@ -27,17 +27,24 @@ export function ThemeProvider({
 
   useEffect(() => {
     const root = window.document.documentElement
-    root.classList.remove("light", "dark")
+    const mql = window.matchMedia("(prefers-color-scheme: dark)")
 
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
-        ? "dark"
-        : "light"
-      root.classList.add(systemTheme)
-      return
+    const apply = () => {
+      root.classList.remove("light", "dark")
+      if (theme === "system") {
+        root.classList.add(mql.matches ? "dark" : "light")
+      } else {
+        root.classList.add(theme)
+      }
     }
+    apply()
 
-    root.classList.add(theme)
+    // Track OS theme flips while the page is open — only meaningful
+    // when the operator picked `system`; for an explicit light/dark
+    // choice the listener fires but apply() ignores mql.matches.
+    if (theme !== "system") return
+    mql.addEventListener("change", apply)
+    return () => mql.removeEventListener("change", apply)
   }, [theme])
 
   const value = {
