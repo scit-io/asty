@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,13 +12,12 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { uptimeLabel } from '@/lib/uptime'
-import { toast } from 'sonner'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { UsageCell } from '@/components/usage-cell'
 import { DataTable, type Column } from '@/components/data-table'
-import { api } from '@/api/client'
+import { useAllocationActions } from '@/features/allocations/use-allocation-actions'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
@@ -36,31 +35,13 @@ export default function ServiceAllocations() {
   const { serviceCache, subscribeService, services } = useClusterStore()
   const cached = name ? serviceCache[name] : undefined
   const allocations = cached?.allocations || []
-  const [pending, setPending] = useState<Record<string, boolean>>({})
+  const { act, pending } = useAllocationActions()
   const res = name ? services.find((s) => s.Name === name)?.Resources : undefined
 
   useEffect(() => {
     if (!name) return
     return subscribeService(name)
   }, [name, subscribeService])
-
-  const act = async (kind: 'restart' | 'stop', a: Allocation) => {
-    setPending((p) => ({ ...p, [a.id]: true }))
-    try {
-      await (kind === 'restart' ? api.restartAllocation(a.node_id, a.id) : api.stopAllocation(a.node_id, a.id))
-      toast.success(`${kind === 'restart' ? 'Restarted' : 'Stopped'} ${a.id.slice(0, 8)}`)
-      // Stop deletes the slot; the reconciler may backfill on a
-      // different node. Send the operator to the nodes list so they
-      // can spot where the replacement landed.
-      if (kind === 'stop') {
-        navigate(routes.nodes)
-      }
-    } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
-    } finally {
-      setPending((p) => ({ ...p, [a.id]: false }))
-    }
-  }
 
   const columns: Column<Allocation>[] = [
     { key: 'id', label: 'Allocation', render: (a) => <span className="font-mono text-xs">{a.id.slice(0, 12)}</span> },

@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useEffect } from 'react'
+import { useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
@@ -15,14 +15,12 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Activity, Clock, Cpu, HardDrive, MemoryStick, RefreshCw, RotateCw, StopCircle, Tag, Wrench } from 'lucide-react'
 import { formatMB, formatMHz } from '@/lib/format'
-import { toast } from 'sonner'
 import { AllocationHeader } from '@/components/allocation-header'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
-import { api } from '@/api/client'
-import { routes } from '@/lib/routes'
+import { useAllocationActions } from '@/features/allocations/use-allocation-actions'
 import { allocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
@@ -33,7 +31,6 @@ import { useClusterStore } from '@/store/cluster'
 // RPS attribution); the SPA accumulates them in the store.
 export default function AllocationDetail() {
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
-  const navigate = useNavigate()
   const { allocationCache, nodeCache, subscribeAllocation } = useClusterStore()
   const cached = allocId ? allocationCache[allocId] : undefined
   const allocation = cached?.allocation || null
@@ -42,7 +39,7 @@ export default function AllocationDetail() {
   const cpuMetrics = cached?.cpuMetrics || []
   const memoryMetrics = cached?.memoryMetrics || []
   const rpsMetrics = cached?.rpsMetrics || []
-  const [busy, setBusy] = useState(false)
+  const { act, pending } = useAllocationActions()
 
   useEffect(() => {
     if (!nodeId || !allocId) return
@@ -55,25 +52,7 @@ export default function AllocationDetail() {
   const rps = rpsMetrics.length ? rpsMetrics[rpsMetrics.length - 1].value : 0
   const uptimeStartedAt = allocation?.status === 'running' ? allocation.started_at : ''
   const diskUnit = node?.disk_type === 'ssd' || node?.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''
-
-  const act = async (kind: 'restart' | 'stop') => {
-    if (!nodeId || !allocId) return
-    setBusy(true)
-    try {
-      await (kind === 'restart' ? api.restartAllocation(nodeId, allocId) : api.stopAllocation(nodeId, allocId))
-      toast.success(`${kind === 'restart' ? 'Restarted' : 'Stopped'} allocation`)
-      // Stop deletes this alloc; the page would 404 on next render.
-      // Send the operator to the nodes list so they can find where
-      // the reconciler placed the replacement copy.
-      if (kind === 'stop') {
-        navigate(routes.nodes)
-      }
-    } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const busy = allocation ? !!pending[allocation.id] : false
 
   if (!allocation) {
     return (
@@ -141,7 +120,7 @@ export default function AllocationDetail() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => act('restart')}>Restart</AlertDialogAction>
+                      <AlertDialogAction onClick={() => act('restart', allocation)}>Restart</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
@@ -158,7 +137,7 @@ export default function AllocationDetail() {
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => act('stop')}>Stop</AlertDialogAction>
+                      <AlertDialogAction onClick={() => act('stop', allocation)}>Stop</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
