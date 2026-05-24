@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { useParams } from 'react-router-dom'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingBlock } from '@/components/loading-block'
 import { Layers, Heart, Cpu, MemoryStick } from 'lucide-react'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
@@ -57,7 +57,7 @@ export default function ServiceOverview() {
       <ResourceTabs items={serviceTabs(name)} />
 
       {!service ? (
-        <Skeleton className="h-32 w-full" />
+        <LoadingBlock />
       ) : (
         <div className="grid grid-cols-12 gap-3">
           <Tile className="col-span-6 lg:col-span-3" variant="stat"

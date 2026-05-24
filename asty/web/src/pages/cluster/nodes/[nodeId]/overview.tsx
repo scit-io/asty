@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingBlock } from '@/components/loading-block'
 import {
   Activity,
   Clock,
@@ -78,7 +79,7 @@ export default function NodeDetail() {
     return (
       <PageShell bare>
         <Skeleton className="h-8 w-64 mb-4" />
-        <Skeleton className="h-32 w-full" />
+        <LoadingBlock />
       </PageShell>
     )
   }

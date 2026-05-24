@@ -1,6 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingBlock } from '@/components/loading-block'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
@@ -29,7 +29,7 @@ export default function ServiceAllocations() {
       <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Allocations' }]} />
       <ResourceTabs items={serviceTabs(name)} />
       {!cached ? (
-        <Skeleton className="h-32 w-full" />
+        <LoadingBlock />
       ) : (
         <Card>
           <CardContent className="pt-6">

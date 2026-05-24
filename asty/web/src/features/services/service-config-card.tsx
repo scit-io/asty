@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Skeleton } from '@/components/ui/skeleton'
+import { LoadingBlock } from '@/components/loading-block'
 import { Settings2 } from 'lucide-react'
 import { Table, TableBody, TableCell, TableRow } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
@@ -51,7 +51,7 @@ export function ServiceConfigCard({ runtime, autoscaler, latestDeploy, latestEve
       </CardHeader>
       <CardContent>
         {!runtime ? (
-          <Skeleton className="h-32 w-full" />
+          <LoadingBlock />
         ) : (
           <Table>
             <TableBody>
