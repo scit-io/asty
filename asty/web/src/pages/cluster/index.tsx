@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect } from 'react'
 import {
   Activity,
   Boxes,
@@ -18,6 +18,7 @@ import { Tile } from '@/components/tile'
 import { NatsTiles } from '@/features/cluster/nats-tiles'
 import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
+import { useClusterAggregates, useServicesActiveCount } from '@/store/selectors'
 
 // Cluster overview — the model's top page. Three concentric layers:
 // the 4 base resource tiles, the 4 status tiles, and the Asty + NATS
@@ -25,55 +26,16 @@ import { useClusterStore } from '@/store/cluster'
 // have moved to /nodes and /logs respectively.
 export default function Cluster() {
   const subscribeCluster = useClusterStore((s) => s.subscribeCluster)
-  const nodes = useClusterStore((s) => s.nodes)
-  const services = useClusterStore((s) => s.services)
+  const servicesTotal = useClusterStore((s) => s.services.length)
   const clusterStatus = useClusterStore((s) => s.clusterStatus)
   const clusterCpuMetrics = useClusterStore((s) => s.clusterCpuMetrics)
   const clusterMemoryMetrics = useClusterStore((s) => s.clusterMemoryMetrics)
   const clusterRpsMetrics = useClusterStore((s) => s.clusterRpsMetrics)
+  const aggregates = useClusterAggregates()
+  const servicesActive = useServicesActiveCount()
 
   useEffect(() => subscribeCluster(), [subscribeCluster])
 
-  const aggregates = useMemo(() => {
-    let cpuT = 0, cpuA = 0, memT = 0, memA = 0, diskT = 0, diskA = 0
-    let selfCPU = 0, selfMem = 0, selfDisk = 0
-    let natsCPU = 0, natsMem = 0, natsConn = 0, natsDisk = 0
-    let natsSubs = 0, natsSlow = 0, natsIn = 0, natsOut = 0, natsJSMsgs = 0
-    for (const n of nodes) {
-      cpuT += n.cpu_total
-      cpuA += n.cpu_available
-      memT += n.memory_total
-      memA += n.memory_available
-      diskT += n.disk_total
-      diskA += n.disk_available
-      selfCPU += n.self_cpu_percent
-      selfMem += n.self_memory_mb
-      selfDisk += n.self_disk_mb
-      natsCPU += n.nats_cpu_percent
-      natsMem += n.nats_memory_mb
-      natsConn += n.nats_connections
-      natsDisk += n.nats_disk_mb
-      natsSubs += n.nats_subscriptions
-      natsSlow += n.nats_slow_consumers
-      natsIn += n.nats_in_msgs
-      natsOut += n.nats_out_msgs
-      natsJSMsgs += n.nats_jetstream_messages
-    }
-    const lastRps = clusterRpsMetrics.length ? clusterRpsMetrics[clusterRpsMetrics.length - 1].value : 0
-    return {
-      cluster: { cpuUsage: cpuT - cpuA, cpuTotal: cpuT, memoryUsage: memT - memA, memoryTotal: memT, diskUsage: diskT - diskA, diskTotal: diskT, rps: lastRps },
-      asty:    { cpuUsage: selfCPU, cpuTotal: 100 * nodes.length, memoryUsage: selfMem, memoryTotal: memT, diskUsage: selfDisk, diskTotal: diskT },
-      nats:    {
-        cpuUsage: natsCPU, cpuTotal: 100 * nodes.length,
-        memoryUsage: natsMem, memoryTotal: memT,
-        diskUsage: natsDisk, diskTotal: diskT,
-        connections: natsConn, subscriptions: natsSubs, slow: natsSlow,
-        inMsgs: natsIn, outMsgs: natsOut, jsMessages: natsJSMsgs,
-      },
-    }
-  }, [nodes, clusterRpsMetrics])
-
-  const services_active = services.filter((s) => (s.current_copies ?? 0) > 0).length
   const nodesHealthy = clusterStatus?.cluster.nodes_healthy ?? 0
   const nodesTotal = clusterStatus?.cluster.nodes_total ?? 0
   const healthPct = nodesTotal > 0 ? Math.round((nodesHealthy / nodesTotal) * 100) : 0
@@ -110,7 +72,7 @@ export default function Cluster() {
             value={`${nodesHealthy} / ${nodesTotal}`} hint="active / total" />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title="Services" icon={<Boxes className="h-4 w-4" />}
-            value={`${services_active} / ${services.length}`} hint="active / loaded" />
+            value={`${servicesActive} / ${servicesTotal}`} hint="active / loaded" />
           <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm" mono
             title="Leader" icon={<Shield className="h-4 w-4" />}
             value={clusterStatus?.cluster.leader || '—'}
