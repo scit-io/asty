@@ -9,6 +9,7 @@ import {
   Clock,
   Cpu,
   HardDrive,
+  HardDriveDownload,
   Layers,
   MemoryStick,
   Signal,
@@ -109,19 +110,27 @@ export default function NodeDetail() {
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={node.cpu_total - node.cpu_available} total={node.cpu_total} format={formatMHz} />
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
-            usage={node.memory_total - node.memory_available} total={node.memory_total} format={formatMB} />
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Disk" icon={<HardDrive className="h-4 w-4" />}
-            usage={node.disk_total - node.disk_available} total={node.disk_total}
-            unit={diskUnit} format={formatMB} />
-          <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
-            title="RPS" icon={<Activity className="h-4 w-4" />}
-            value={Math.round(rps)} hint="Requests per second" />
+          {/* Resource tiles — five cards in their own subgrid; 12-col
+              can't divide by 5 cleanly, so the row owns its own
+              grid-cols-5 at lg. */}
+          <div className="col-span-12 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <Tile variant="metric"
+              title="CPU" icon={<Cpu className="h-4 w-4" />}
+              usage={node.cpu_total - node.cpu_available} total={node.cpu_total} format={formatMHz} />
+            <Tile variant="metric"
+              title="RAM" icon={<MemoryStick className="h-4 w-4" />}
+              usage={node.memory_total - node.memory_available} total={node.memory_total} format={formatMB} />
+            <Tile variant="metric"
+              title="Swap" icon={<HardDriveDownload className="h-4 w-4" />}
+              usage={node.swap_total - node.swap_available} total={node.swap_total} format={formatMB} />
+            <Tile variant="metric"
+              title="Disk" icon={<HardDrive className="h-4 w-4" />}
+              usage={node.disk_total - node.disk_available} total={node.disk_total}
+              unit={diskUnit} format={formatMB} />
+            <Tile variant="stat" bar
+              title="RPS" icon={<Activity className="h-4 w-4" />}
+              value={Math.round(rps)} hint="Requests per second" />
+          </div>
 
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Node CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />

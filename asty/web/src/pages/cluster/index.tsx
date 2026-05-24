@@ -4,6 +4,7 @@ import {
   Cpu,
   HardDrive,
   Heart,
+  HardDriveDownload,
   MemoryStick,
   Server,
   Shield,
@@ -47,18 +48,26 @@ export default function Cluster() {
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={aggregates.cluster.cpuUsage} total={aggregates.cluster.cpuTotal} format={formatMHz} />
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
-            usage={aggregates.cluster.memoryUsage} total={aggregates.cluster.memoryTotal} format={formatMB} />
-          <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Disk" icon={<HardDrive className="h-4 w-4" />}
-            usage={aggregates.cluster.diskUsage} total={aggregates.cluster.diskTotal} format={formatMB} />
-          <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
-            title="RPS" icon={<Activity className="h-4 w-4" />}
-            value={Math.round(aggregates.cluster.rps)} hint="Requests per second" />
+          {/* Resource tiles — five cards (CPU / RAM / Swap / Disk /
+              RPS) in their own subgrid so 5-up at lg keeps each tile
+              the same width. 12-col can't divide by 5 cleanly. */}
+          <div className="col-span-12 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <Tile variant="metric"
+              title="CPU" icon={<Cpu className="h-4 w-4" />}
+              usage={aggregates.cluster.cpuUsage} total={aggregates.cluster.cpuTotal} format={formatMHz} />
+            <Tile variant="metric"
+              title="RAM" icon={<MemoryStick className="h-4 w-4" />}
+              usage={aggregates.cluster.memoryUsage} total={aggregates.cluster.memoryTotal} format={formatMB} />
+            <Tile variant="metric"
+              title="Swap" icon={<HardDriveDownload className="h-4 w-4" />}
+              usage={aggregates.cluster.swapUsage} total={aggregates.cluster.swapTotal} format={formatMB} />
+            <Tile variant="metric"
+              title="Disk" icon={<HardDrive className="h-4 w-4" />}
+              usage={aggregates.cluster.diskUsage} total={aggregates.cluster.diskTotal} format={formatMB} />
+            <Tile variant="stat" bar
+              title="RPS" icon={<Activity className="h-4 w-4" />}
+              value={Math.round(aggregates.cluster.rps)} hint="Requests per second" />
+          </div>
 
           <MetricsChart className="col-span-12 md:col-span-4"
             title="Cluster CPU" data={clusterCpuMetrics} color="hsl(var(--chart-1))" />

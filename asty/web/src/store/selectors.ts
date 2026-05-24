@@ -12,6 +12,8 @@ export interface ClusterAggregates {
     cpuTotal: number
     memoryUsage: number
     memoryTotal: number
+    swapUsage: number
+    swapTotal: number
     diskUsage: number
     diskTotal: number
     rps: number
@@ -42,6 +44,7 @@ export interface ClusterAggregates {
 
 function computeClusterAggregates(nodes: Node[], rpsMetrics: MetricPoint[]): ClusterAggregates {
   let cpuT = 0, cpuA = 0, memT = 0, memA = 0, diskT = 0, diskA = 0
+  let swapT = 0, swapA = 0
   let selfCPU = 0, selfMem = 0, selfDisk = 0
   let natsCPU = 0, natsMem = 0, natsConn = 0, natsDisk = 0
   let natsSubs = 0, natsSlow = 0, natsIn = 0, natsOut = 0, natsJSMsgs = 0
@@ -50,6 +53,8 @@ function computeClusterAggregates(nodes: Node[], rpsMetrics: MetricPoint[]): Clu
     cpuA += n.cpu_available
     memT += n.memory_total
     memA += n.memory_available
+    swapT += n.swap_total
+    swapA += n.swap_available
     diskT += n.disk_total
     diskA += n.disk_available
     selfCPU += n.self_cpu_percent
@@ -70,6 +75,7 @@ function computeClusterAggregates(nodes: Node[], rpsMetrics: MetricPoint[]): Clu
     cluster: {
       cpuUsage: cpuT - cpuA, cpuTotal: cpuT,
       memoryUsage: memT - memA, memoryTotal: memT,
+      swapUsage: swapT - swapA, swapTotal: swapT,
       diskUsage: diskT - diskA, diskTotal: diskT,
       rps: lastRps,
     },
