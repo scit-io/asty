@@ -1,17 +1,11 @@
 import { useEffect, useMemo } from 'react'
 import {
   Activity,
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   Boxes,
   Cpu,
-  Database,
   HardDrive,
   Heart,
   MemoryStick,
-  Plug,
-  Radio,
   Server,
   Shield,
 } from 'lucide-react'
@@ -21,7 +15,8 @@ import { ResourcesBlock } from '@/components/resources-block'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { CLUSTER_TABS } from '@/pages/cluster/tabs'
 import { Tile } from '@/components/tile'
-import { formatCount, formatMB, formatMHz } from '@/lib/format'
+import { NatsTiles } from '@/features/cluster/nats-tiles'
+import { formatMB, formatMHz } from '@/lib/format'
 import { useClusterStore } from '@/store/cluster'
 
 // Cluster overview — the model's top page. Three concentric layers:
@@ -128,29 +123,7 @@ export default function Cluster() {
 
       <ResourcesBlock title="Asty" data={aggregates.asty} />
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">NATS</h2>
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-          <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={aggregates.nats.cpuUsage} total={aggregates.nats.cpuTotal} format={formatMHz} />
-          <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-            usage={aggregates.nats.memoryUsage} total={aggregates.nats.memoryTotal} format={formatMB} />
-          <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
-            usage={aggregates.nats.diskUsage} total={aggregates.nats.diskTotal} format={formatMB} />
-          <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
-            value={aggregates.nats.connections} hint="current clients" />
-          <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
-            value={aggregates.nats.subscriptions} hint="active subjects" />
-          <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
-            value={aggregates.nats.slow} hint="lifetime count" />
-          <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
-            value={formatCount(aggregates.nats.inMsgs)} hint="since NATS start" />
-          <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
-            value={formatCount(aggregates.nats.outMsgs)} hint="since NATS start" />
-          <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
-            value={formatCount(aggregates.nats.jsMessages)} hint="JetStream total" />
-        </div>
-      </section>
+      <NatsTiles data={aggregates.nats} />
     </PageShell>
   )
 }

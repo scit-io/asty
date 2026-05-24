@@ -5,23 +5,17 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Activity,
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
   Clock,
   Cpu,
-  Database,
   HardDrive,
   Layers,
   MemoryStick,
-  Plug,
-  Radio,
   Signal,
   Skull,
   Wrench,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { formatCount, formatMB, formatMHz } from '@/lib/format'
+import { formatMB, formatMHz } from '@/lib/format'
 import { nodeStatusSwitchClass } from '@/lib/node-status'
 import { MetricsChart } from '@/components/metrics-chart'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
@@ -31,6 +25,7 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ResourcesBlock } from '@/components/resources-block'
 import { Tile } from '@/components/tile'
+import { NatsTiles } from '@/features/cluster/nats-tiles'
 import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
 import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
@@ -183,29 +178,17 @@ export default function NodeDetail() {
           }} />
       )}
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">NATS</h2>
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-          <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
-            usage={node.nats_cpu_percent} total={100} format={formatMHz} />
-          <Tile variant="metric" title="Memory" icon={<MemoryStick className="h-4 w-4" />}
-            usage={node.nats_memory_mb} total={node.memory_total} format={formatMB} />
-          <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
-            usage={node.nats_disk_mb} total={node.disk_total} format={formatMB} />
-          <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
-            value={node.nats_connections} hint="current clients" />
-          <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
-            value={node.nats_subscriptions} hint="active subjects" />
-          <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
-            value={node.nats_slow_consumers} hint="lifetime count" />
-          <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
-            value={formatCount(node.nats_in_msgs)} hint="since NATS start" />
-          <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
-            value={formatCount(node.nats_out_msgs)} hint="since NATS start" />
-          <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
-            value={formatCount(node.nats_jetstream_messages)} hint="JetStream total" />
-        </div>
-      </section>
+      <NatsTiles data={{
+        cpuUsage: node.nats_cpu_percent, cpuTotal: 100,
+        memoryUsage: node.nats_memory_mb, memoryTotal: node.memory_total,
+        diskUsage: node.nats_disk_mb, diskTotal: node.disk_total,
+        connections: node.nats_connections,
+        subscriptions: node.nats_subscriptions,
+        slow: node.nats_slow_consumers,
+        inMsgs: node.nats_in_msgs,
+        outMsgs: node.nats_out_msgs,
+        jsMessages: node.nats_jetstream_messages,
+      }} />
 
       <NodeDrainDialog
         open={showDrainDialog}
