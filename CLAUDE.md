@@ -285,11 +285,15 @@ Autoscaler monitors (`ops/autoscaler/scale_up.go`):
    (default 5) over a 60s window (`trafficWindow`) → scale up onto the
    ready node that has traffic but no local copy.
 2. Resource pressure on an existing copy: `CPUUsage` (%) > `TargetCPU`
-   (default 75) **OR** `MemoryUsage` (MB) > `TargetMemory` (default 75).
-   The CPU check is "over 75%" as expected; the memory check is "over
-   75 MB" — `MemoryUsage` is stored in MB (`types/allocation.go:47`),
-   so `TargetMemory=75` is a literal 75 MB floor, not a percent, despite
-   the symmetric naming with `TargetCPU`.
+   (default 75) **OR** the allocation's `MemoryUsage` (MB) translated
+   to a percentage of its service's declared `Resources.Memory` exceeds
+   `TargetMemory` (default 75). Both checks read as "over 75 % of
+   budget" — `TargetMemory` is a **percent of the per-copy memory
+   limit**, not a literal MB floor. The actual comparison
+   (`scale_up.go:115`) is
+   `(MemoryUsage * 100 / svc.Resources.Memory) > TargetMemory`;
+   services that didn't declare `Resources.Memory` skip the memory
+   check entirely.
 3. Scheduler's `PickCandidates` (incl. DC proximity matrix) chooses the
    target node for the new copy.
 
@@ -403,15 +407,17 @@ routes) coordinates a node drain via the small `DrainDeps` interface
   node), so the agent gets a stop, the manager waits for the
   allocation to hit `AllocStopped`/`AllocFailed` (budget
   `kill_timeout + 10s`), then deletes the KV record.
-- **Regular allocations** are processed **sequentially** in the order
-  returned by `collectAllocs` — `run.go:39` is a plain `for ... range`
-  with no per-alloc goroutine. For each: `SelectNearestForReplacement`
-  picks a target (or falls back to letting the controller place it),
-  `waitForHealthyOnNode` / `waitForHealthyReplacement` blocks up to
-  `drainHealthDeadline = 2m`, and only then does `finalizeMigration`
-  (Stop + wait + delete on the source) run — that last step *is* in a
-  goroutine, so finalize is parallel across already-placed
-  replacements.
+- **Regular allocations** are processed in **bounded-parallel
+  goroutines** (`run.go:66-89`): one goroutine per alloc, gated by a
+  `chan struct{}` semaphore sized `maxConcurrentMigrations` so the
+  scheduler and NATS aren't drowned by a large drain. Per alloc:
+  `placeReplacement` picks a target (or falls back to letting the
+  controller place it), `waitForHealthyOnNode` /
+  `waitForHealthyReplacement` blocks up to `drainHealthDeadline = 2m`,
+  then `finalizeMigration` (Stop + wait + delete on the source). When
+  no peer is ready at all (single-node teardown), regulars are
+  promoted into the system-alloc path (`run.go:44-47`) and dismantled
+  without waiting for replacements.
 - After all goroutines join, `completeNodeDrain` CAS's the node to
   `NodeDrained` and publishes a final status event on
   `asty.v1.drain.progress` (NATS subject, JSON), which `streamHub`
@@ -663,8 +669,10 @@ same routes. URLs match the navigation hierarchy 1:1:
 
 `/health` stays at the root for kube-probes. The dashboard prefix
 comes from `cfg.Dashboard.Prefix`; the SPA reads the matching
-`API_PREFIX` from `asty/web/src/api/client.ts` — change both in
-lockstep when re-configuring.
+`API_PREFIX` from `asty/web/src/lib/routes.ts` — change both in
+lockstep when re-configuring. Every SPA URL — backend endpoint or
+react-router target — flows through that file's `routes` /
+`apiPaths` exports.
 
 The dashboard listener (and therefore `/metrics` when shared) is
 served by **every** server in the cluster, not just the leader.
@@ -1104,10 +1112,18 @@ source of truth for what the supervised nats-server runs with; the
 `asty -mode nats-conf` subcommand prints the same output to stdout
 for offline inspection.
 
-**File-size rule**: every Go file is under 200 lines. Only one
-documented exception: `ops/reconciler/workqueue.go` (214 — a cohesive
-k8s-style data structure that doesn't benefit from splitting). CI
-fails the build on any new file over the cap.
+**File-size rule**: 200-line guideline per Go file — coding rule,
+not a CI gate (the Makefile's `layer-check` enforces the env-read
+boundary, not file size). Current snapshot has six files over
+the cap that should be considered for splitting on the next pass:
+
+  `ops/deployer/history.go`        270
+  `ops/deployer/deployer.go`       250
+  `api/dashboard/services.go`      235
+  `server/snapshot.go`             234
+  `ops/drainer/manager.go`         224
+  `ops/reconciler/workqueue.go`    214  (k8s-style data structure,
+                                         the original documented exception)
 
 **Status enums**: allocation lifecycle (`AllocPending`, `AllocStarting`,
 `AllocRunning`, `AllocRestarting`, `AllocStopping`, `AllocStopped`,
