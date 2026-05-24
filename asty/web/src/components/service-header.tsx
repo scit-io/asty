@@ -30,7 +30,7 @@ export function ServiceHeader({ service, name, tail = [] }: ServiceHeaderProps) 
     ...tail,
   ]
   return (
-    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-2">
       <Breadcrumbs items={crumbs} />
       <div className="flex items-center gap-3">
         <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
