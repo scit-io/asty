@@ -1,3 +1,4 @@
+import { useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
-import { DataTable, type Column } from '@/components/data-table'
+import { DataTable, type CellSpec, type Column } from '@/components/data-table'
 import { UsageCell } from '@/components/usage-cell'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
@@ -30,33 +31,56 @@ interface AllocationsTableProps {
   // resources(a) returns the service's resource limits for that
   // allocation. On node scope: lookup by a.service_name. On service
   // scope: same value for every row — pages that know it pass a
-  // closure that ignores the arg.
+  // closure that ignores the arg. Caller should stabilise this
+  // reference (useCallback / useRef) so the columns memo below stays
+  // stable across SSE flushes.
   resources: (a: Allocation) => Resources | undefined
   emptyMessage: string
   searchPlaceholder: string
 }
 
 // AllocationsTable powers both the per-node and per-service alloc
-// list pages. DataTable wraps the search + sort + pagination; the
-// columns + row actions stay one source of truth. Hover-row actions
-// open a restart/stop dropdown wired through useAllocationActions.
+// list pages. Each column declares its `deps` — the values its render
+// reads from `row` plus any outer state — and DataTable's CellMemo
+// skips renders when those values are unchanged. No per-cell
+// components: the universal mechanism in DataTable covers every
+// table the same way.
 export function AllocationsTable({
   rows, scope, resources, emptyMessage, searchPlaceholder,
 }: AllocationsTableProps) {
   const navigate = useNavigate()
   const { act, pending } = useAllocationActions()
 
-  const columns: Column<Allocation>[] = [
+  // act() needs the full alloc but the action cell only sees its id —
+  // read the live row from a ref so the wrappers stay stable.
+  const rowsRef = useRef(rows)
+  rowsRef.current = rows
+  const onRestart = useCallback((id: string) => {
+    const a = rowsRef.current.find((x) => x.id === id)
+    if (a) act('restart', a)
+  }, [act])
+  const onStop = useCallback((id: string) => {
+    const a = rowsRef.current.find((x) => x.id === id)
+    if (a) act('stop', a)
+  }, [act])
+  const onRowClick = useCallback(
+    (a: Allocation) => navigate(routes.allocation(a.node_id, a.id)),
+    [navigate],
+  )
+
+  const columns = useMemo<Column<Allocation>[]>(() => [
     ...(scope === 'service'
       ? [
         {
           key: 'id', label: 'Allocation',
           render: (a: Allocation) => <span className="font-mono text-xs">{a.id.slice(0, 12)}</span>,
+          deps: (a: Allocation) => [a.id],
         },
         {
           key: 'node', label: 'Node',
           sort: (a: Allocation, b: Allocation) => a.node_id.localeCompare(b.node_id),
           render: (a: Allocation) => <span className="font-mono font-medium">{a.node_id}</span>,
+          deps: (a: Allocation) => [a.node_id],
         },
       ]
       : [
@@ -64,22 +88,26 @@ export function AllocationsTable({
           key: 'service', label: 'Service',
           sort: (a: Allocation, b: Allocation) => a.service_name.localeCompare(b.service_name),
           render: (a: Allocation) => <span className="font-medium">{a.service_name}</span>,
+          deps: (a: Allocation) => [a.service_name],
         },
       ]),
     {
       key: 'status', label: 'Status',
       sort: (a, b) => a.status.localeCompare(b.status),
       render: (a) => <Badge variant={allocStatusVariant(a.status)}>{a.status}</Badge>,
+      deps: (a) => [a.status],
     },
     ...(scope === 'node'
       ? [{
         key: 'version', label: 'Version',
         render: (a: Allocation) => <span className="font-mono text-xs">{a.version || '—'}</span>,
+        deps: (a: Allocation) => [a.version],
       }]
       : []),
     {
       key: 'health', label: 'Health',
       render: (a) => <Badge variant={allocHealthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
+      deps: (a) => [a.health_status],
     },
     {
       key: 'cpu', label: 'CPU',
@@ -94,6 +122,7 @@ export function AllocationsTable({
           />
         )
       },
+      deps: (a) => [a.cpu_usage, resources(a)?.CPU],
     },
     {
       key: 'mem', label: 'RAM',
@@ -109,56 +138,71 @@ export function AllocationsTable({
           />
         )
       },
+      deps: (a) => [a.memory_usage, resources(a)?.Memory],
     },
     {
       key: 'disk', label: 'Disk',
       sort: (a, b) => a.disk_usage - b.disk_usage,
       render: (a) => <span className="text-sm">{formatMB(a.disk_usage)}</span>,
+      deps: (a) => [a.disk_usage],
     },
     {
       key: 'restarts', label: 'Restarts',
       sort: (a, b) => a.restarts - b.restarts,
       render: (a) => a.restarts,
+      deps: (a) => [a.restarts],
     },
     {
       key: 'uptime', label: 'Uptime',
       render: (a) => <span className="text-sm">{uptimeLabel(a.started_at, a.status)}</span>,
+      deps: (a) => [a.started_at, a.status],
     },
-  ]
+  ], [scope, resources])
+
+  const search = useMemo(() => ({
+    placeholder: searchPlaceholder,
+    match: (a: Allocation, q: string) => {
+      const needle = q.toLowerCase()
+      return scope === 'service'
+        ? a.node_id.toLowerCase().includes(needle)
+        : a.service_name.toLowerCase().includes(needle)
+    },
+  }), [scope, searchPlaceholder])
+
+  const rowKey = useCallback((a: Allocation) => a.id, [])
+  // Actions column — Radix DropdownMenu, the heaviest cell. Its deps
+  // are the alloc id (to identify the row) and the pending flag for
+  // that id (drives disabled state on the trigger).
+  const actions = useMemo<CellSpec<Allocation>>(() => ({
+    render: (a) => (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="sm" disabled={pending[a.id]}>
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem onClick={() => onRestart(a.id)}>
+            <RotateCw className="h-4 w-4 mr-2" /> Restart
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onStop(a.id)} className="text-destructive">
+            <StopCircle className="h-4 w-4 mr-2" /> Stop
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    ),
+    deps: (a) => [a.id, pending[a.id]],
+  }), [pending, onRestart, onStop])
 
   return (
     <DataTable
       rows={rows}
       columns={columns}
-      search={{
-        placeholder: searchPlaceholder,
-        match: (a, q) => {
-          const needle = q.toLowerCase()
-          return scope === 'service'
-            ? a.node_id.toLowerCase().includes(needle)
-            : a.service_name.toLowerCase().includes(needle)
-        },
-      }}
-      onRowClick={(a) => navigate(routes.allocation(a.node_id, a.id))}
-      rowKey={(a) => a.id}
+      search={search}
+      onRowClick={onRowClick}
+      rowKey={rowKey}
       emptyMessage={emptyMessage}
-      actions={(a) => (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" disabled={pending[a.id]}>
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => act('restart', a)}>
-              <RotateCw className="h-4 w-4 mr-2" /> Restart
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => act('stop', a)} className="text-destructive">
-              <StopCircle className="h-4 w-4 mr-2" /> Stop
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      actions={actions}
     />
   )
 }

@@ -1,3 +1,4 @@
+import { useCallback, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { LoadingBlock } from '@/components/loading-block'
@@ -8,6 +9,7 @@ import { AllocationsTable } from '@/features/allocations/allocations-table'
 import { useSubscribe } from '@/lib/use-subscribe'
 import { serviceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
+import type { ServiceDefinition } from '@/types'
 
 // All allocations for a single service, regardless of node.
 // AllocationsTable handles search / sort / pagination + per-row
@@ -18,7 +20,19 @@ export default function ServiceAllocations() {
   const { name } = useParams<{ name: string }>()
   const subscribeService = useClusterStore((s) => s.subscribeService)
   const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
-  const res = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources : undefined)
+  // Subscribe to CPU and Memory as primitives so the selector returns
+  // referentially stable values across SSE flushes (JSON.parse rebuilds
+  // the Resources object every tick, but the numbers inside rarely
+  // move). Reconstitute via useMemo so the `resources` callback below
+  // is stable too — that is what lets AllocationsTable's memo'd
+  // columns and per-cell memo actually skip work.
+  const cpuLimit = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources?.CPU : undefined)
+  const memLimit = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources?.Memory : undefined)
+  const res = useMemo<ServiceDefinition['Resources'] | undefined>(
+    () => (cpuLimit !== undefined && memLimit !== undefined ? { CPU: cpuLimit, Memory: memLimit } : undefined),
+    [cpuLimit, memLimit],
+  )
+  const resources = useCallback(() => res, [res])
   const allocations = cached?.allocations || []
 
   useSubscribe(subscribeService, name)
@@ -36,7 +50,7 @@ export default function ServiceAllocations() {
             <AllocationsTable
               rows={allocations}
               scope="service"
-              resources={() => res}
+              resources={resources}
               emptyMessage="No allocations for this service."
               searchPlaceholder="Search by node…"
             />

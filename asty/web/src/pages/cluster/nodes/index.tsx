@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent } from '@/components/ui/card'
@@ -22,49 +22,73 @@ import { nodeStatusVariant } from '@/lib/variants'
 
 const percent = (used: number, total: number) => total > 0 ? Math.round((used / total) * 100) : 0
 
-// Nodes list page (/nodes). DataTable handles search/sort/pagination;
-// per-row Drain toggle calls api.drainNode and optimistically updates
-// the store so the switch reflects the new state before the SSE
-// catches up.
+// Nodes list page (/nodes). DataTable handles search / sort /
+// pagination + memoisation. Each column declares its `deps` so
+// DataTable can skip the cell render when those values are unchanged
+// — an SSE tick that only moves nats_in_msgs (not displayed) costs
+// zero re-renders downstream.
 export default function Nodes() {
   const navigate = useNavigate()
   const subscribeNodes = useClusterStore((s) => s.subscribeNodes)
   const nodes = useClusterStore((s) => s.nodes)
   const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
   const [pending, setPending] = useState<Record<string, boolean>>({})
-  // drainTarget is the node id awaiting drain confirmation. The
-  // detail page's dialog is reused verbatim — opening it on a
-  // toggle-on keeps the row's switch optimistic (snaps back if the
-  // user cancels) and avoids forking the wording.
-  const [drainTarget, setDrainTarget] = useState<Node | null>(null)
+  const [drainTargetId, setDrainTargetId] = useState<string | null>(null)
 
   useSubscribe(subscribeNodes)
 
-  const handleDrain = async (n: Node, enable: boolean) => {
-    setPending((p) => ({ ...p, [n.id]: true }))
+  const handleDrain = useCallback(async (id: string, enable: boolean) => {
+    setPending((p) => ({ ...p, [id]: true }))
     try {
-      await api.drainNode(n.id, enable)
-      updateNodeStatus(n.id, enable ? 'draining' : 'ready')
-      toast.success(`${enable ? 'Draining' : 'Resuming'} ${n.id}`)
+      await api.drainNode(id, enable)
+      updateNodeStatus(id, enable ? 'draining' : 'ready')
+      toast.success(`${enable ? 'Draining' : 'Resuming'} ${id}`)
     } catch (err) {
       toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
     } finally {
-      setPending((p) => ({ ...p, [n.id]: false }))
+      setPending((p) => ({ ...p, [id]: false }))
     }
-  }
+  }, [updateNodeStatus])
 
-  const columns: Column<Node>[] = [
+  const onRowClick = useCallback((n: Node) => navigate(routes.node(n.id)), [navigate])
+  const rowKey = useCallback((n: Node) => n.id, [])
+  const onDialogChange = useCallback((open: boolean) => { if (!open) setDrainTargetId(null) }, [])
+  const onDialogConfirm = useCallback(() => {
+    setDrainTargetId((id) => {
+      if (id) handleDrain(id, true)
+      return null
+    })
+  }, [handleDrain])
+
+  // Memo so DataTable's searchEl cache survives SSE flushes — the
+  // page wouldn't otherwise pass a stable `search` reference.
+  const search = useMemo(() => ({
+    placeholder: 'Search by ID or IP…',
+    match: (n: Node, q: string) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q),
+  }), [])
+
+  const columns = useMemo<Column<Node>[]>(() => [
     {
       key: 'id', label: 'Node',
       sort: (a, b) => a.id.localeCompare(b.id),
       render: (n) => <span className="font-mono font-medium">{n.id}</span>,
+      deps: (n) => [n.id],
     },
-    { key: 'dc', label: 'DC', render: (n) => n.datacenter },
-    { key: 'ip', label: 'IP', render: (n) => <span className="font-mono text-sm">{n.ip || '—'}</span> },
+    {
+      key: 'dc', label: 'DC',
+      render: (n) => n.datacenter,
+      deps: (n) => [n.datacenter],
+    },
+    {
+      key: 'ip', label: 'IP',
+      render: (n) => <span className="font-mono text-sm">{n.ip || '—'}</span>,
+      deps: (n) => [n.ip],
+    },
     {
       key: 'status', label: 'Status',
       sort: (a, b) => a.status.localeCompare(b.status),
       render: (n) => <Badge variant={nodeStatusVariant(n.status)}>{n.status}</Badge>,
+      deps: (n) => [n.status],
     },
     {
       key: 'cpu', label: 'CPU',
@@ -74,6 +98,7 @@ export default function Nodes() {
         const pct = percent(used, n.cpu_total)
         return <UsageCell icon={Cpu} primary={`${pct}%`} secondary={`${formatMHz(used)} / ${formatMHz(n.cpu_total)}`} />
       },
+      deps: (n) => [n.cpu_total, n.cpu_available],
     },
     {
       key: 'mem', label: 'RAM',
@@ -83,11 +108,13 @@ export default function Nodes() {
         const pct = percent(used, n.memory_total)
         return <UsageCell icon={MemoryStick} primary={`${pct}%`} secondary={`${formatMB(used)} / ${formatMB(n.memory_total)}`} />
       },
+      deps: (n) => [n.memory_total, n.memory_available],
     },
     {
       key: 'allocs', label: 'Allocations', className: 'text-right',
       sort: (a, b) => a.allocations_running - b.allocations_running,
       render: (n) => <span className="text-sm"><b>{n.allocations_running}</b> / {n.allocations_planned}</span>,
+      deps: (n) => [n.allocations_running, n.allocations_planned],
     },
     {
       key: 'drain', label: 'Drain',
@@ -96,12 +123,15 @@ export default function Nodes() {
           checked={n.status === 'draining' || n.status === 'drained'}
           disabled={pending[n.id]}
           className={nodeStatusSwitchClass(n.status)}
-          onCheckedChange={(checked) => checked ? setDrainTarget(n) : handleDrain(n, false)}
+          onCheckedChange={(checked) => checked ? setDrainTargetId(n.id) : handleDrain(n.id, false)}
           onClick={(e) => e.stopPropagation()}
         />
       ),
+      // Closes over `pending` and `handleDrain` — both stable per
+      // render, but pending[n.id] varies per row and per user action.
+      deps: (n) => [n.status, pending[n.id]],
     },
-  ]
+  ], [pending, handleDrain])
 
   return (
     <PageShell>
@@ -112,22 +142,18 @@ export default function Nodes() {
           <DataTable
             rows={nodes}
             columns={columns}
-            search={{ placeholder: 'Search by ID or IP…', match: (n, q) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q) }}
-            onRowClick={(n) => navigate(routes.node(n.id))}
-            rowKey={(n) => n.id}
+            search={search}
+            onRowClick={onRowClick}
+            rowKey={rowKey}
             emptyMessage="No nodes registered yet."
           />
         </CardContent>
       </Card>
       <NodeDrainDialog
-        open={drainTarget !== null}
-        nodeId={drainTarget?.id ?? ''}
-        onOpenChange={(open) => { if (!open) setDrainTarget(null) }}
-        onConfirm={() => {
-          const n = drainTarget
-          setDrainTarget(null)
-          if (n) handleDrain(n, true)
-        }}
+        open={drainTargetId !== null}
+        nodeId={drainTargetId ?? ''}
+        onOpenChange={onDialogChange}
+        onConfirm={onDialogConfirm}
       />
     </PageShell>
   )

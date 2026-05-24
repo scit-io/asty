@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { cn } from '@/lib/utils'
 import { componentStyle, formatTime, levelStyle } from './format'
 import type { LogEvent } from '@/types'
@@ -5,7 +6,11 @@ import type { LogEvent } from '@/types'
 // LogRow renders a single event. Raw stdout frames (no level/message,
 // just `line`) render as a thin, full-width text row to keep them
 // distinguishable from structured agent/server entries.
-export function LogRow({ ev }: { ev: LogEvent }) {
+// Memo'd on the `ev` reference: LogsView assigns a stable id per event
+// and never mutates the parsed object, so default shallow compare
+// skips the render for every already-mounted row. Only the freshly-
+// appended rows from the current flush actually execute their body.
+export const LogRow = memo(function LogRow({ ev }: { ev: LogEvent }) {
   const ts = ev.timestamp ?? ev.time
   if (ev.line && !ev.level && !ev.message) {
     return (
@@ -34,7 +39,7 @@ export function LogRow({ ev }: { ev: LogEvent }) {
       <FieldChips fields={ev.fields} />
     </div>
   )
-}
+})
 
 function ComponentChip({ name }: { name: string }) {
   return (

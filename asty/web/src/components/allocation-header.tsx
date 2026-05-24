@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { Skeleton } from '@/components/ui/skeleton'
 import { routes } from '@/lib/routes'
 import type { Allocation } from '@/types'
 
@@ -19,6 +20,13 @@ const statusDot = (s?: Allocation['status']): string => {
     case 'stopped':
     default: return 'bg-gray-400'
   }
+}
+
+// nameSlot returns the service name when known, or a Skeleton sized
+// via className. Same pattern in two slots (breadcrumb leaf and H1) —
+// one helper keeps them in lockstep.
+function nameSlot(name: string | undefined, className: string) {
+  return name ?? <Skeleton className={`inline-block align-middle ${className}`} />
 }
 
 interface AllocationHeaderProps {
@@ -40,24 +48,29 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
   const nid = allocation?.node_id ?? nodeId
   const aid = allocation?.id ?? allocId
   if (!nid || !aid) return null
-  const title = allocation?.service_name ?? aid
-  const base: Crumb[] = [
-    { label: 'Cluster', to: routes.cluster },
-    { label: 'Nodes', to: routes.nodes },
-    { label: nid, to: routes.node(nid) },
-    { label: 'Allocations', to: routes.nodeAllocations(nid) },
+  // service_name is what the user reads — never fall back to aid
+  // here. On a cold deep-link both slots render a Skeleton; the SSE
+  // landing replaces it without flashing the raw id first.
+  const name = allocation?.service_name
+  const crumbs: Crumb[] = [
+    { label: 'Cluster', to: routes.cluster, key: 'cluster' },
+    { label: 'Nodes', to: routes.nodes, key: 'nodes' },
+    { label: nid, to: routes.node(nid), key: 'node' },
+    { label: 'Allocations', to: routes.nodeAllocations(nid), key: 'allocs' },
+    {
+      label: nameSlot(name, 'h-5 w-24'),
+      to: tail.length === 0 ? undefined : routes.allocation(nid, aid),
+      key: 'leaf',
+    },
+    ...tail,
   ]
-  const leaf: Crumb = tail.length === 0
-    ? { label: title }
-    : { label: title, to: routes.allocation(nid, aid) }
-  const crumbs: Crumb[] = [...base, leaf, ...tail]
 
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-8">
       <Breadcrumbs items={crumbs} />
       <div className="space-y-2 w-full sm:w-auto">
         <div className="flex items-center gap-3 sm:gap-4 justify-end">
-          <h1 className="text-2xl sm:text-3xl font-bold">{title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">{nameSlot(name, 'h-8 w-40')}</h1>
           {allocation && (
             <TooltipProvider>
               <Tooltip>

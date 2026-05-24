@@ -1,7 +1,8 @@
 import { apiPaths } from '@/lib/routes'
 import { openStream, type ConnectionState } from '@/store/stream'
-import { appendMetrics, emptyNodeData } from '../helpers'
+import { appendMetrics, emptyNodeData, stableMerge } from '../helpers'
 import type { ClusterStore, SliceDeps } from '../types'
+import type { Allocation, Node } from '@/types'
 
 // Nodes slice — owns the nodes list and the per-node cache. Provides
 // two subscribe* fns: list (subscribeNodes) and detail (subscribeNode),
@@ -25,7 +26,8 @@ export function createNodesSlice({ set, scheduleSet, attachStatusHandler }: Slic
         es.addEventListener('nodes', (event) => {
           try {
             const data = JSON.parse((event as MessageEvent).data)
-            scheduleSet(() => ({ nodes: data.nodes || [] }))
+            const incoming: Node[] = data.nodes || []
+            scheduleSet((state) => ({ nodes: stableMerge(state.nodes, incoming, (n) => n.id) }))
           } catch { /* ignore */ }
         })
       }, onState)
@@ -80,9 +82,12 @@ export function createNodesSlice({ set, scheduleSet, attachStatusHandler }: Slic
         es.addEventListener('allocations', (event) => {
           try {
             const data = JSON.parse((event as MessageEvent).data)
+            const incoming: Allocation[] = data.allocations || []
             scheduleSet((state) => {
               const existing = state.nodeCache[nodeId] || emptyNodeData()
-              return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, allocations: data.allocations || [] } } }
+              const merged = stableMerge(existing.allocations, incoming, (a) => a.id)
+              if (merged === existing.allocations) return {}
+              return { nodeCache: { ...state.nodeCache, [nodeId]: { ...existing, allocations: merged } } }
             })
           } catch { /* ignore */ }
         })

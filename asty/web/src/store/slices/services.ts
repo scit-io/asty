@@ -2,8 +2,9 @@ import { api } from '@/api/client'
 import { apiPaths } from '@/lib/routes'
 import { openStream, type ConnectionState } from '@/store/stream'
 import type { DeploymentsResponse } from '@/types'
-import { appendMetrics, emptyServiceData } from '../helpers'
+import { appendMetrics, emptyServiceData, stableMerge } from '../helpers'
 import type { ClusterStore, SliceDeps } from '../types'
+import type { Allocation } from '@/types'
 import {
   startAutoscalerPoller,
   subscribeDeployProgress,
@@ -72,6 +73,8 @@ export function createServicesSlice({ set, scheduleSet, attachStatusHandler }: S
                   ? state.services.map((s) => s.Name === name ? data.service : s)
                   : state.services.concat(data.service))
                 : state.services
+              const incoming: Allocation[] = data.allocations || []
+              const mergedAllocs = stableMerge(existing.allocations, incoming, (a) => a.id)
               return {
                 services: updatedServices,
                 serviceCache: {
@@ -79,7 +82,7 @@ export function createServicesSlice({ set, scheduleSet, attachStatusHandler }: S
                   [name]: {
                     ...existing,
                     service: data.service || null,
-                    allocations: data.allocations || [],
+                    allocations: mergedAllocs,
                   },
                 },
               }

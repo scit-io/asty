@@ -1,3 +1,4 @@
+import { useCallback, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { LoadingBlock } from '@/components/loading-block'
@@ -8,6 +9,7 @@ import { AllocationsTable } from '@/features/allocations/allocations-table'
 import { useSubscribe } from '@/lib/use-subscribe'
 import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
+import type { Allocation } from '@/types'
 
 // Per-node allocations list. AllocationsTable owns search / sort /
 // pagination + per-row restart/stop actions; this page just wires the
@@ -22,6 +24,17 @@ export default function NodeAllocations() {
 
   useSubscribe(subscribeNode, nodeId)
 
+  // Ref so the resources callback can read the latest services list
+  // without listing `services` as a useCallback dep (services ref
+  // changes every SSE flush — making it a dep would re-create the
+  // callback each tick and invalidate the table's memo'd columns).
+  const servicesRef = useRef(services)
+  servicesRef.current = services
+  const resources = useCallback(
+    (a: Allocation) => servicesRef.current.find((s) => s.Name === a.service_name)?.Resources,
+    [],
+  )
+
   return (
     <PageShell>
       {node && <NodeHeader node={node} tail={[{ label: 'Allocations' }]} />}
@@ -35,7 +48,7 @@ export default function NodeAllocations() {
             <AllocationsTable
               rows={allocations}
               scope="node"
-              resources={(a) => services.find((s) => s.Name === a.service_name)?.Resources}
+              resources={resources}
               emptyMessage="No allocations on this node."
               searchPlaceholder="Search by service name…"
             />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
 import { parseEvent } from './format'
@@ -19,8 +20,8 @@ interface LogsViewProps {
 
 // DEFAULT_MAX matches the server-side ring buffer (logBufferLines=1000)
 // so the UI's window is the same as the history endpoint can serve.
-// Each row is a small flex container — 1000 of them is comfortable for
-// any modern browser.
+// Virtualisation keeps only the visible slice mounted, so 1000 is
+// just the upper bound on the in-memory buffer — never the DOM size.
 const DEFAULT_MAX = 1000
 
 // FLUSH_MS bounds how often incoming SSE frames are applied to React
@@ -36,13 +37,40 @@ const FLUSH_MS = 150
 // without the stream yanking them back.
 const SCROLL_STICKY_PX = 40
 
+// ROW_ESTIMATE_PX — initial guess for row height before each rendered
+// row is actually measured. A small underestimate is harmless: virtual
+// items are remeasured via ResizeObserver on mount, the virtual total
+// size adjusts, and the scrollbar settles. Most rows land at 20-24px;
+// error/fields rows expand to 32-48px and are measured the same way.
+const ROW_ESTIMATE_PX = 22
+
+// LogEntry pairs each parsed event with a monotonic id that becomes
+// the React key. Stable ids let memo'd LogRow skip every row that's
+// already on screen on each flush, and let the virtualiser keep
+// element identity across scrolls.
+interface LogEntry {
+  id: number
+  ev: LogEvent
+}
+
+// Module-level counter, shared across LogsView instances. Wraparound
+// at 2^53 is hypothetical for any real session.
+let entryCounter = 0
+
 // LogsView is the single component every page uses to stream logs. It
 // owns one EventSource, parses each SSE frame as a LogEvent, and hands
 // it to a structured row renderer so levels are colour-coded, the
 // component is chipped, error chains stand out, and remaining
 // structured fields appear as small key=value tags.
+//
+// Only the rows currently visible in the viewport are mounted —
+// @tanstack/react-virtual translates scroll offset into the
+// (start, end) slice it actually renders, plus a small overscan for
+// smooth scrolling. The container's scrollHeight is the virtual total
+// from getTotalSize() so the native scrollbar behaves identically to
+// a fully-mounted list.
 export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: LogsViewProps) {
-  const [events, setEvents] = useState<LogEvent[]>([])
+  const [entries, setEntries] = useState<LogEntry[]>([])
   const [streamState, setStreamState] = useState<StreamState>('reconnecting')
   // reconnectKey increments when the operator clicks the dead-state
   // badge — it's a useEffect dep, so bumping it forces the EventSource
@@ -55,14 +83,27 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
   // reader has drifted — and to colour-code the urgency.
   const [unseen, setUnseen] = useState(0)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  const pendingRef = useRef<LogEvent[]>([])
+  const pendingRef = useRef<LogEntry[]>([])
   const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const tailingRef = useRef(true)
 
   // Keep a ref mirror of `tailing` so the scroll-flush logic inside
-  // setEvents reads the latest value without re-creating the effect.
+  // the SSE effect reads the latest value without re-creating the
+  // effect on every toggle.
   useEffect(() => { tailingRef.current = tailing }, [tailing])
+
+  const visible = useMemo(() => {
+    if (filter === 'all') return entries
+    return entries.filter((e) => (e.ev.level ?? '').toLowerCase() === filter)
+  }, [entries, filter])
+
+  const virtualizer = useVirtualizer({
+    count: visible.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ROW_ESTIMATE_PX,
+    overscan: 10,
+    getItemKey: (i) => visible[i].id,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -75,7 +116,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
       const batch = pendingRef.current
       if (batch.length === 0) return
       pendingRef.current = []
-      setEvents((prev) => {
+      setEntries((prev) => {
         const combined = prev.concat(batch)
         return combined.length > maxLines
           ? combined.slice(combined.length - maxLines)
@@ -84,7 +125,13 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
       if (tailingRef.current) {
         // One scroll per flush, not per event — keeps the work flat
         // when bursts arrive faster than the renderer can keep up.
-        requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: 'auto' }))
+        // Native scrollTop on the container (whose scrollHeight = the
+        // virtualiser's total) snaps to the tail without depending on
+        // a DOM sentinel.
+        requestAnimationFrame(() => {
+          const el = scrollRef.current
+          if (el) el.scrollTop = el.scrollHeight
+        })
       } else {
         // Reader is scrolled up — count what they're missing so the
         // tail button can light up amber/rose with the backlog size.
@@ -106,7 +153,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
         setStreamState('streaming')
       }
       es.onmessage = (event) => {
-        pendingRef.current.push(parseEvent(event.data))
+        pendingRef.current.push({ id: ++entryCounter, ev: parseEvent(event.data) })
         scheduleFlush()
       }
       es.onerror = () => {
@@ -151,13 +198,14 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
   const resumeTail = () => {
     setTailing(true)
     setUnseen(0)
-    requestAnimationFrame(() => endRef.current?.scrollIntoView({ behavior: 'smooth' }))
+    requestAnimationFrame(() => {
+      const el = scrollRef.current
+      if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    })
   }
 
-  const visible = useMemo(() => {
-    if (filter === 'all') return events
-    return events.filter((e) => (e.level ?? '').toLowerCase() === filter)
-  }, [events, filter])
+  const virtualItems = virtualizer.getVirtualItems()
+  const totalSize = virtualizer.getTotalSize()
 
   return (
     <Card className="flex h-full min-h-0 flex-col">
@@ -165,7 +213,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
         <CardTitle className="text-base">{title}</CardTitle>
         <div className="flex items-center gap-2">
           <span className="text-[11px] tabular-nums text-muted-foreground">
-            {visible.length}{filter === 'all' ? '' : ` / ${events.length}`} · max {maxLines}
+            {visible.length}{filter === 'all' ? '' : ` / ${entries.length}`} · max {maxLines}
           </span>
           {!tailing && (
             <TailButton unseen={unseen} onClick={resumeTail} />
@@ -183,9 +231,24 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
           {visible.length === 0 ? (
             <div className="p-2 text-muted-foreground">No log lines yet…</div>
           ) : (
-            visible.map((e, i) => <LogRow key={i} ev={e} />)
+            // height MUST be inline — virtualiser computes it from
+            // measured/estimated row sizes and it changes every render.
+            <div className="relative w-full" style={{ height: totalSize }}>
+              {virtualItems.map((item) => (
+                <div
+                  key={item.key}
+                  ref={virtualizer.measureElement}
+                  data-index={item.index}
+                  className="absolute top-0 left-0 w-full"
+                  // transform MUST be inline — recomputed per scroll
+                  // from the row's virtual start offset.
+                  style={{ transform: `translateY(${item.start}px)` }}
+                >
+                  <LogRow ev={visible[item.index].ev} />
+                </div>
+              ))}
+            </div>
           )}
-          <div ref={endRef} />
         </div>
       </CardContent>
     </Card>

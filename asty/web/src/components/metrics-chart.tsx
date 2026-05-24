@@ -39,6 +39,12 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
   const plotRef = useRef<uPlot | null>(null)
   const colorRef = useRef(color)
   colorRef.current = color
+  // dataRef so createPlot can read the live array without listing
+  // `data` as a useCallback dep. Without this the plot would be
+  // destroyed and re-instantiated on every SSE flush (~10/s); with
+  // it the live update path is the `setData` effect below.
+  const dataRef = useRef(data)
+  dataRef.current = data
 
   const createPlot = useCallback(() => {
     if (!containerRef.current) return
@@ -103,19 +109,25 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
       ],
     }
 
-    const timestamps = data.map(p => p.timestamp)
-    const values = data.map(p => Math.round(p.value * 10) / 10)
+    const timestamps = dataRef.current.map(p => p.timestamp)
+    const values = dataRef.current.map(p => Math.round(p.value * 10) / 10)
 
     plotRef.current = new uPlot(opts, [timestamps, values], containerRef.current)
-  }, [data, unit])
+  }, [unit])
 
+  // Init/teardown the plot only when the container actually exists.
+  // `hasData` is the boolean transition empty→non-empty (caused by the
+  // conditional render below); after that, the `setData` effect owns
+  // every subsequent update.
+  const hasData = data.length > 0
   useEffect(() => {
+    if (!hasData) return
     createPlot()
     return () => {
       plotRef.current?.destroy()
       plotRef.current = null
     }
-  }, [createPlot])
+  }, [hasData, createPlot])
 
   useEffect(() => {
     if (!plotRef.current || data.length === 0) return

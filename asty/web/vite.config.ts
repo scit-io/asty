@@ -10,6 +10,25 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Vendor split: per-route chunks come from React.lazy in App.tsx;
+    // here we only carve up node_modules. React + router go in one
+    // chunk (always needed), Radix primitives in another (heaviest
+    // single group), uplot stays alone, everything else lands in a
+    // generic vendor chunk.
+    rolldownOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+          if (id.includes('react-router')) return 'react'
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) return 'react'
+          if (id.includes('@radix-ui')) return 'radix'
+          if (id.includes('uplot')) return 'charts'
+          return 'vendor'
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       // Dashboard listener (REST + SSE) — default :7060 with prefix

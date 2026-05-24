@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { isValidElement, memo, type ReactElement, type ReactNode } from 'react'
 import { formatDistanceToNow } from 'date-fns'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -102,7 +102,48 @@ function Bottom(props: TileProps): ReactNode {
   }
 }
 
-export function Tile(props: TileProps) {
+// iconEqual compares two icon-prop ReactNodes structurally: same React
+// component type + same className. Call sites use a fresh JSX element
+// per render (`icon={<Cpu className="h-4 w-4" />}`), so default
+// referential equality always fails. The shape we care about — which
+// glyph and what size — is captured by (type, className).
+function iconEqual(a: ReactNode | undefined, b: ReactNode | undefined): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  if (!isValidElement(a) || !isValidElement(b)) return false
+  const ea = a as ReactElement<{ className?: string }>
+  const eb = b as ReactElement<{ className?: string }>
+  return ea.type === eb.type && ea.props.className === eb.props.className
+}
+
+function tilePropsEqual(prev: TileProps, next: TileProps): boolean {
+  if (prev.variant !== next.variant) return false
+  if (prev.title !== next.title) return false
+  if (prev.className !== next.className) return false
+  if (!iconEqual(prev.icon, next.icon)) return false
+  switch (prev.variant) {
+    case 'metric': {
+      const n = next as Extract<TileProps, { variant: 'metric' }>
+      return prev.usage === n.usage && prev.total === n.total
+        && prev.format === n.format && prev.unit === n.unit
+    }
+    case 'stat': {
+      const n = next as Extract<TileProps, { variant: 'stat' }>
+      return prev.value === n.value && prev.hint === n.hint
+        && prev.size === n.size && prev.mono === n.mono && prev.bar === n.bar
+    }
+    case 'timestamp': {
+      const n = next as Extract<TileProps, { variant: 'timestamp' }>
+      return prev.timestamp === n.timestamp
+    }
+    case 'actions':
+      // actions is fresh JSX per render at every call site — skipping
+      // would require a structural diff we don't have. Re-render.
+      return false
+  }
+}
+
+export const Tile = memo(function Tile(props: TileProps) {
   return (
     <Card className={`flex flex-col${props.className ? ' ' + props.className : ''}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -117,4 +158,4 @@ export function Tile(props: TileProps) {
       </CardContent>
     </Card>
   )
-}
+}, tilePropsEqual)

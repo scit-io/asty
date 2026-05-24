@@ -1,7 +1,8 @@
 import { apiPaths } from '@/lib/routes'
 import { openStream, type ConnectionState } from '@/store/stream'
-import { appendMetrics, VALID_NODE_STATUSES } from '../helpers'
+import { appendMetrics, stableMerge, VALID_NODE_STATUSES } from '../helpers'
 import type { ClusterStore, Scheduler, SliceDeps } from '../types'
+import type { Node } from '@/types'
 
 // makeStatusHandler builds the common 'status'-event listener every
 // stream's setup invokes. It lives in the cluster slice because the
@@ -61,7 +62,8 @@ export function createClusterSlice({ set, scheduleSet, attachStatusHandler }: Sl
         es.addEventListener('nodes', (event) => {
           try {
             const data = JSON.parse((event as MessageEvent).data)
-            scheduleSet(() => ({ nodes: data.nodes || [] }))
+            const incoming: Node[] = data.nodes || []
+            scheduleSet((state) => ({ nodes: stableMerge(state.nodes, incoming, (n) => n.id) }))
           } catch { /* ignore */ }
         })
         es.addEventListener('services', (event) => {
