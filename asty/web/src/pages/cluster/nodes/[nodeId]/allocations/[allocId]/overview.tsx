@@ -21,8 +21,9 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { Tile } from '@/components/tile'
 import { useAllocationActions } from '@/features/allocations/use-allocation-actions'
+import { useT } from '@/lib/i18n'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { allocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
+import { useAllocationTabs } from '@/pages/cluster/nodes/[nodeId]/allocations/[allocId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Allocation Overview (/nodes/:id/allocations/:allocId) — first tab
@@ -31,7 +32,9 @@ import { useClusterStore } from '@/store/cluster'
 // allocation's process metrics + the gateway's per-(node, service)
 // RPS attribution); the SPA accumulates them in the store.
 export default function AllocationDetail() {
+  const t = useT()
   const { nodeId, allocId } = useParams<{ nodeId: string; allocId: string }>()
+  const tabs = useAllocationTabs(nodeId ?? '', allocId ?? '')
   const subscribeAllocation = useClusterStore((s) => s.subscribeAllocation)
   const cached = useClusterStore((s) => allocId ? s.allocationCache[allocId] : undefined)
   const node = useClusterStore((s) => nodeId ? s.nodeCache[nodeId]?.node : undefined)
@@ -65,77 +68,84 @@ export default function AllocationDetail() {
     <PageShell>
       <AllocationHeader allocation={allocation} />
 
-      <ResourceTabs items={allocationTabs(nodeId!, allocId!)} />
+      <ResourceTabs items={tabs} />
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="CPU" icon={<Cpu className="h-4 w-4" />}
+            title={t('tile.cpu')} icon={<Cpu className="h-4 w-4" />}
             usage={allocation.cpu_usage} total={cpuTotal} format={formatMHz} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="RAM" icon={<MemoryStick className="h-4 w-4" />}
+            title={t('tile.ram')} icon={<MemoryStick className="h-4 w-4" />}
             usage={allocation.memory_usage} total={memTotal} format={formatMB} />
           <Tile className="col-span-6 lg:col-span-3" variant="metric"
-            title="Disk" icon={<HardDrive className="h-4 w-4" />}
+            title={t('tile.disk')} icon={<HardDrive className="h-4 w-4" />}
             usage={allocation.disk_usage} total={diskTotal} unit={diskUnit} format={formatMB} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat" bar
-            title="RPS" icon={<Activity className="h-4 w-4" />}
-            value={Math.round(rps)} hint="Requests per second" />
+            title={t('tile.rps')} icon={<Activity className="h-4 w-4" />}
+            value={Math.round(rps)} hint={t('common.requests_per_second')} />
 
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Allocation CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
+            title={t('chart.allocation_cpu')} data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Allocation RAM" data={memoryMetrics} color="hsl(var(--chart-2))" />
+            title={t('chart.allocation_ram')} data={memoryMetrics} color="hsl(var(--chart-2))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Allocation RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
+            title={t('chart.allocation_rps')} data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <Tile variant="stat" size="sm" title="Version" icon={<Tag className="h-4 w-4" />}
+          <Tile variant="stat" size="sm" title={t('tile.version')} icon={<Tag className="h-4 w-4" />}
             value={allocation.version || '—'}
-            hint={`PID: ${allocation.pid || '—'}`} />
+            hint={t('tile.hint.pid', { pid: allocation.pid || '—' })} />
 
-          <Tile variant="timestamp" title="Uptime" icon={<Clock className="h-4 w-4" />}
+          <Tile variant="timestamp" title={t('tile.uptime')} icon={<Clock className="h-4 w-4" />}
             timestamp={uptimeStartedAt} />
 
-          <Tile variant="stat" title="Restarts" icon={<RefreshCw className="h-4 w-4" />}
+          <Tile variant="stat" title={t('tile.restarts')} icon={<RefreshCw className="h-4 w-4" />}
             value={allocation.restarts}
-            hint={`${allocation.consecutive_failures} consecutive failures`} />
+            hint={t('tile.hint.consecutive_failures', { n: allocation.consecutive_failures })} />
 
-          <Tile variant="actions" title="Maintenance" icon={<Wrench className="h-4 w-4" />}
+          <Tile variant="actions" title={t('tile.maintenance')} icon={<Wrench className="h-4 w-4" />}
             actions={
-              <div className="flex justify-between w-full">
+              // gap-2 + flex-1 + min-w-0 on each Button so long labels
+              // (e.g. "Перезапустить" / "Остановить") truncate with an
+              // ellipsis instead of overflowing the narrow card. The
+              // icon keeps its shrink-0 from Button's base styles; the
+              // text span owns `truncate` so only the label shortens.
+              <div className="flex gap-2 w-full">
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="outline" disabled={busy}>
-                      <RotateCw className="h-4 w-4" /> Restart
+                    <Button variant="outline" disabled={busy} className="flex-1 min-w-0">
+                      <RotateCw className="h-4 w-4" />
+                      <span className="truncate">{t('alloc.action.restart')}</span>
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Restart {allocation.service_name}?</AlertDialogTitle>
-                      <AlertDialogDescription>The agent will SIGTERM the process and start it again with the same version.</AlertDialogDescription>
+                      <AlertDialogTitle>{t('alloc.restart.title', { service: allocation.service_name })}</AlertDialogTitle>
+                      <AlertDialogDescription>{t('alloc.restart.description')}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => act('restart', allocation)}>Restart</AlertDialogAction>
+                      <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => act('restart', allocation)}>{t('alloc.action.restart')}</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button variant="destructive" disabled={busy}>
-                      <StopCircle className="h-4 w-4" /> Stop
+                    <Button variant="destructive" disabled={busy} className="flex-1 min-w-0">
+                      <StopCircle className="h-4 w-4" />
+                      <span className="truncate">{t('alloc.action.stop')}</span>
                     </Button>
                   </AlertDialogTrigger>
                   <AlertDialogContent>
                     <AlertDialogHeader>
-                      <AlertDialogTitle>Stop {allocation.service_name}?</AlertDialogTitle>
-                      <AlertDialogDescription>The allocation will be terminated and will not auto-restart.</AlertDialogDescription>
+                      <AlertDialogTitle>{t('alloc.stop.title', { service: allocation.service_name })}</AlertDialogTitle>
+                      <AlertDialogDescription>{t('alloc.stop.description')}</AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => act('stop', allocation)}>Stop</AlertDialogAction>
+                      <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+                      <AlertDialogAction onClick={() => act('stop', allocation)}>{t('alloc.action.stop')}</AlertDialogAction>
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>

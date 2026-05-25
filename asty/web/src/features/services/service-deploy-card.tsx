@@ -11,6 +11,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { api } from '@/api/client'
+import { useT } from '@/lib/i18n'
+import { toastError } from '@/lib/toast'
 import type { Allocation, DeploymentRecord } from '@/types'
 
 interface ServiceDeployCardProps {
@@ -41,6 +43,7 @@ interface ServiceDeployCardProps {
 export function ServiceDeployCard({
   name, githubVersions, deployHistory, allocations, liveActive, onChanged, className,
 }: ServiceDeployCardProps) {
+  const t = useT()
   const [version, setVersion] = useState('latest')
   const [deploying, setDeploying] = useState(false)
 
@@ -71,11 +74,11 @@ export function ServiceDeployCard({
     setDeploying(true)
     try {
       await api.deploy(name, version)
-      toast.success(`Deploying ${name}@${version}`)
+      toast.success(t('toast.deploying', { service: name, version }))
       setVersion('latest')
       await onChanged()
     } catch (err) {
-      toast.error(`Deploy failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t, 'toast.deploy_failed')
     } finally {
       setDeploying(false)
     }
@@ -84,14 +87,14 @@ export function ServiceDeployCard({
   return (
     <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">Deploy</CardTitle>
+        <CardTitle className="text-sm font-medium">{t('svc.deploy.title')}</CardTitle>
         <Rocket className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 mt-2 mb-4">
           <Select value={version} onValueChange={setVersion}>
             <SelectTrigger className="flex-1">
-              <SelectValue placeholder="version tag" />
+              <SelectValue placeholder={t('svc.deploy.version_placeholder')} />
             </SelectTrigger>
             <SelectContent>
               {availableVersions.map((v) => (
@@ -100,15 +103,10 @@ export function ServiceDeployCard({
             </SelectContent>
           </Select>
           <Button onClick={handleDeploy} disabled={deploying || !version || liveActive}>
-            {liveActive ? 'In progress…' : deploying ? 'Deploying…' : 'Deploy'}
+            {liveActive ? t('svc.deploy.button_inflight') : deploying ? t('svc.deploy.button_dispatching') : t('svc.deploy.button')}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Rolling update per <code className="font-mono">update</code> policy
-          (optional canary → batches of <code className="font-mono">max_parallel</code>).
-          Autoscaler paused for the rollout; auto-reverts on failure if
-          <code className="font-mono"> auto_revert</code> is enabled.
-        </p>
+        <p className="text-xs text-muted-foreground">{t('svc.deploy.help')}</p>
       </CardContent>
     </Card>
   )

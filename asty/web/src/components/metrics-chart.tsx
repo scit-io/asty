@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useCallback } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useT } from '@/lib/i18n'
 import type { MetricPoint } from '@/types'
 
 interface MetricsChartProps {
@@ -35,6 +36,7 @@ function getThemeColors() {
 }
 
 export const MetricsChart = memo(function MetricsChart({ title, data, color = 'hsl(var(--chart-1))', unit = '%', className }: MetricsChartProps) {
+  const t = useT()
   const containerRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const colorRef = useRef(color)
@@ -172,7 +174,7 @@ export const MetricsChart = memo(function MetricsChart({ title, data, color = 'h
       <CardContent>
         {data.length === 0 ? (
           <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-            No data yet
+            {t('chart.no_data')}
           </div>
         ) : (
           <div ref={containerRef} className="h-32 w-full [&_.u-wrap]:bg-transparent!" />

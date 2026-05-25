@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { api } from '@/api/client'
+import { useT } from '@/lib/i18n'
+import { toastError } from '@/lib/toast'
 
 interface ServiceMinCopiesCardProps {
   name: string
@@ -24,6 +26,7 @@ interface ServiceMinCopiesCardProps {
 // services have no autoscale dimension. Posts to /scale; the
 // autoscaler is the consumer of the new floor.
 export function ServiceMinCopiesCard({ name, currentCopies, onChanged, className }: ServiceMinCopiesCardProps) {
+  const t = useT()
   const [scaleTo, setScaleTo] = useState('')
   const [scaling, setScaling] = useState(false)
   const initialized = useRef(false)
@@ -39,16 +42,16 @@ export function ServiceMinCopiesCard({ name, currentCopies, onChanged, className
     if (!scaleTo) return
     const n = parseInt(scaleTo, 10)
     if (Number.isNaN(n) || n < 0) {
-      toast.error('Enter a non-negative integer')
+      toast.error(t('toast.scale_invalid'))
       return
     }
     setScaling(true)
     try {
       await api.scaleService(name, n)
-      toast.success(`Set ${name} floor to ${n}`)
+      toast.success(t('toast.scale_set', { service: name, n }))
       await onChanged()
     } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t)
     } finally {
       setScaling(false)
     }
@@ -57,22 +60,19 @@ export function ServiceMinCopiesCard({ name, currentCopies, onChanged, className
   return (
     <Card className={className}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium">Min copies</CardTitle>
+        <CardTitle className="text-sm font-medium">{t('svc.scale.title')}</CardTitle>
         <Scaling className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent className="space-y-2">
         <div className="flex items-center gap-2 mt-2 mb-4">
           <Input className="flex-1" type="number" min={0}
-            placeholder="copies" value={scaleTo}
+            placeholder={t('svc.scale.placeholder')} value={scaleTo}
             onChange={(e) => setScaleTo(e.target.value)} />
           <Button onClick={handleScale} disabled={scaling || !scaleTo}>
-            {scaling ? 'Saving…' : 'Set floor'}
+            {scaling ? t('svc.scale.button_saving') : t('svc.scale.button')}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground">
-          Per-service floor. Autoscaler can grow above; lowering stops
-          excess copies immediately.
-        </p>
+        <p className="text-xs text-muted-foreground">{t('svc.scale.help')}</p>
       </CardContent>
     </Card>
   )

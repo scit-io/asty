@@ -6,8 +6,9 @@ import { NodeHeader } from '@/components/node-header'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { AllocationsTable } from '@/features/allocations/allocations-table'
+import { useT } from '@/lib/i18n'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
+import { useNodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 import type { Allocation } from '@/types'
 
@@ -15,7 +16,9 @@ import type { Allocation } from '@/types'
 // pagination + per-row restart/stop actions; this page just wires the
 // data source (node SSE) and the per-row resource lookup.
 export default function NodeAllocations() {
+  const t = useT()
   const { nodeId } = useParams<{ nodeId: string }>()
+  const tabs = useNodeTabs(nodeId ?? '')
   const subscribeNode = useClusterStore((s) => s.subscribeNode)
   const services = useClusterStore((s) => s.services)
   const cached = useClusterStore((s) => nodeId ? s.nodeCache[nodeId] : undefined)
@@ -37,8 +40,8 @@ export default function NodeAllocations() {
 
   return (
     <PageShell>
-      {node && <NodeHeader node={node} tail={[{ label: 'Allocations' }]} />}
-      {nodeId && <ResourceTabs items={nodeTabs(nodeId)} />}
+      {node && <NodeHeader node={node} tail={[{ label: t('tabs.allocations') }]} />}
+      {nodeId && <ResourceTabs items={tabs} />}
 
       {!cached ? (
         <LoadingBlock />
@@ -49,8 +52,8 @@ export default function NodeAllocations() {
               rows={allocations}
               scope="node"
               resources={resources}
-              emptyMessage="No allocations on this node."
-              searchPlaceholder="Search by service name…"
+              emptyMessage={t('allocs.empty.node')}
+              searchPlaceholder={t('allocs.search.by_service')}
             />
           </CardContent>
         </Card>

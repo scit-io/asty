@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
 import { routes } from '@/lib/routes'
+import { useT, serviceTypeKey } from '@/lib/i18n'
 import type { ServiceDefinition } from '@/types'
 
 interface ServiceHeaderProps {
@@ -22,8 +23,9 @@ interface ServiceHeaderProps {
 // inside /services/{name}: breadcrumbs left, service name big title +
 // type Badge right.
 export function ServiceHeader({ service, name, tail = [] }: ServiceHeaderProps) {
+  const t = useT()
   const crumbs: Crumb[] = [
-    { label: 'Services', to: routes.services },
+    { label: t('section.services'), to: routes.services },
     tail.length === 0
       ? { label: name }
       : { label: name, to: routes.service(name) },
@@ -34,7 +36,7 @@ export function ServiceHeader({ service, name, tail = [] }: ServiceHeaderProps) 
       <Breadcrumbs items={crumbs} />
       <div className="flex items-center gap-3">
         <h1 className="text-2xl sm:text-3xl font-bold">{name}</h1>
-        {service && <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>{service.Type}</Badge>}
+        {service && <Badge variant={service.Type === 'system' ? 'secondary' : 'default'}>{t(serviceTypeKey(service.Type))}</Badge>}
       </div>
     </div>
   )

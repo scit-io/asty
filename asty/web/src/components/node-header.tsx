@@ -6,6 +6,7 @@ import {
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
 import { routes } from '@/lib/routes'
+import { useT, nodeStatusKey } from '@/lib/i18n'
 import type { Node } from '@/types'
 
 // statusDot picks the colour pellet by node lifecycle. Matches the
@@ -39,11 +40,12 @@ interface NodeHeaderProps {
 // inside /nodes/{id}: breadcrumbs left, node-id big title + status
 // dot + ip / datacenter line right-aligned.
 export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
+  const t = useT()
   const id = node?.id ?? nodeId
   if (!id) return null
   const crumbs: Crumb[] = [
-    { label: 'Cluster', to: routes.cluster },
-    { label: 'Nodes', to: routes.nodes },
+    { label: t('section.cluster'), to: routes.cluster },
+    { label: t('tabs.nodes'), to: routes.nodes },
     tail.length === 0
       ? { label: id }
       : { label: id, to: routes.node(id) },
@@ -63,7 +65,7 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
                   <div className={`w-3 h-3 rounded-full ${statusDot(node.status)}`} />
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="capitalize">{node.status}</p>
+                  <p className="capitalize">{t(nodeStatusKey(node.status))}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

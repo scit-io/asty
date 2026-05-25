@@ -11,8 +11,9 @@ import { ServiceConfigCard } from '@/features/services/service-config-card'
 import { ServiceDeployCard } from '@/features/services/service-deploy-card'
 import { ServiceMinCopiesCard } from '@/features/services/service-min-copies-card'
 import { formatMB, formatMHz } from '@/lib/format'
+import { useT } from '@/lib/i18n'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { serviceTabs } from '@/pages/services/[name]/tabs'
+import { useServiceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Service Overview (/services/:name). All per-service data —
@@ -24,7 +25,9 @@ import { useClusterStore } from '@/store/cluster'
 // (Configuration / Min copies / Deploy) — each card owns its own
 // form state and handlers.
 export default function ServiceOverview() {
+  const t = useT()
   const { name } = useParams<{ name: string }>()
+  const tabs = useServiceTabs(name ?? '')
   const subscribeService = useClusterStore((s) => s.subscribeService)
   const refreshService = useClusterStore((s) => s.refreshService)
   const allServices = useClusterStore((s) => s.services)
@@ -54,33 +57,35 @@ export default function ServiceOverview() {
   return (
     <PageShell>
       <ServiceHeader name={name} service={service} />
-      <ResourceTabs items={serviceTabs(name)} />
+      <ResourceTabs items={tabs} />
 
       {!service ? (
         <LoadingBlock />
       ) : (
         <div className="grid grid-cols-12 gap-3">
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="Copies" icon={<Layers className="h-4 w-4" />}
+            title={t('tile.copies')} icon={<Layers className="h-4 w-4" />}
             value={`${running} / ${allocations.length}`}
-            hint={service.Type === 'service' && runtime?.min_copies !== undefined ? `min ${runtime.min_copies}` : 'running / total'} />
+            hint={service.Type === 'service' && runtime?.min_copies !== undefined
+              ? t('tile.hint.min_copies', { n: runtime.min_copies })
+              : t('tile.hint.running_total')} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="CPU budget" icon={<Cpu className="h-4 w-4" />}
-            value={formatMHz(service.Resources.CPU)} hint="per allocation" />
+            title={t('tile.cpu_budget')} icon={<Cpu className="h-4 w-4" />}
+            value={formatMHz(service.Resources.CPU)} hint={t('common.per_allocation')} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="RAM budget" icon={<MemoryStick className="h-4 w-4" />}
-            value={formatMB(service.Resources.Memory)} hint="per allocation" />
+            title={t('tile.ram_budget')} icon={<MemoryStick className="h-4 w-4" />}
+            value={formatMB(service.Resources.Memory)} hint={t('common.per_allocation')} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="Health" icon={<Heart className="h-4 w-4" />}
+            title={t('tile.health')} icon={<Heart className="h-4 w-4" />}
             value={`${healthPct}%`}
-            hint={`${healthy} of ${allocations.length} healthy`} />
+            hint={t('tile.hint.x_of_y_healthy', { healthy, total: allocations.length })} />
 
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="CPU% per copy" data={cpuMetrics} color="hsl(var(--chart-1))" />
+            title={t('chart.cpu_per_copy')} data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="RAM per copy" data={memoryMetrics} color="hsl(var(--chart-2))" unit=" Mb" />
+            title={t('chart.ram_per_copy')} data={memoryMetrics} color="hsl(var(--chart-2))" unit={t('unit.mb_axis')} />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Running allocations" data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
+            title={t('chart.running_allocations')} data={allocCountMetrics} color="hsl(var(--chart-3))" unit="" />
 
           <ServiceConfigCard
             className="col-span-12 lg:col-span-8 lg:row-span-2"

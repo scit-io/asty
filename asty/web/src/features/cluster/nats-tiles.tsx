@@ -11,6 +11,7 @@ import {
 } from 'lucide-react'
 import { Tile } from '@/components/tile'
 import { formatCount, formatMB, formatMHz } from '@/lib/format'
+import { useT } from '@/lib/i18n'
 
 export interface NatsData {
   cpuUsage: number
@@ -32,28 +33,29 @@ export interface NatsData {
 // (one node's stats). Layout and copy stay byte-identical; only the
 // data source differs.
 export function NatsTiles({ data }: { data: NatsData }) {
+  const t = useT()
   return (
     <section className="space-y-3">
-      <h2 className="text-lg font-semibold">NATS</h2>
+      <h2 className="text-lg font-semibold">{t('nats.title')}</h2>
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-3">
-        <Tile variant="metric" title="CPU" icon={<Cpu className="h-4 w-4" />}
+        <Tile variant="metric" title={t('tile.cpu')} icon={<Cpu className="h-4 w-4" />}
           usage={data.cpuUsage} total={data.cpuTotal} format={formatMHz} />
-        <Tile variant="metric" title="RAM" icon={<MemoryStick className="h-4 w-4" />}
+        <Tile variant="metric" title={t('tile.ram')} icon={<MemoryStick className="h-4 w-4" />}
           usage={data.memoryUsage} total={data.memoryTotal} format={formatMB} />
-        <Tile variant="metric" title="Disk" icon={<HardDrive className="h-4 w-4" />}
+        <Tile variant="metric" title={t('tile.disk')} icon={<HardDrive className="h-4 w-4" />}
           usage={data.diskUsage} total={data.diskTotal} format={formatMB} />
-        <Tile variant="stat" title="Connections" icon={<Plug className="h-4 w-4" />}
-          value={data.connections} hint="current clients" />
-        <Tile variant="stat" title="Subscriptions" icon={<Radio className="h-4 w-4" />}
-          value={data.subscriptions} hint="active subjects" />
-        <Tile variant="stat" title="Slow Consumers" icon={<AlertTriangle className="h-4 w-4" />}
-          value={data.slow} hint="lifetime count" />
-        <Tile variant="stat" title="Incoming Messages" icon={<ArrowDown className="h-4 w-4" />}
-          value={formatCount(data.inMsgs)} hint="since NATS start" />
-        <Tile variant="stat" title="Outgoing Messages" icon={<ArrowUp className="h-4 w-4" />}
-          value={formatCount(data.outMsgs)} hint="since NATS start" />
-        <Tile variant="stat" title="JetStream Messages" icon={<Database className="h-4 w-4" />}
-          value={formatCount(data.jsMessages)} hint="JetStream total" />
+        <Tile variant="stat" title={t('nats.connections')} icon={<Plug className="h-4 w-4" />}
+          value={data.connections} hint={t('nats.hint.current_clients')} />
+        <Tile variant="stat" title={t('nats.subscriptions')} icon={<Radio className="h-4 w-4" />}
+          value={data.subscriptions} hint={t('nats.hint.active_subjects')} />
+        <Tile variant="stat" title={t('nats.slow_consumers')} icon={<AlertTriangle className="h-4 w-4" />}
+          value={data.slow} hint={t('nats.hint.lifetime_count')} />
+        <Tile variant="stat" title={t('nats.incoming_messages')} icon={<ArrowDown className="h-4 w-4" />}
+          value={formatCount(data.inMsgs)} hint={t('nats.hint.since_start')} />
+        <Tile variant="stat" title={t('nats.outgoing_messages')} icon={<ArrowUp className="h-4 w-4" />}
+          value={formatCount(data.outMsgs)} hint={t('nats.hint.since_start')} />
+        <Tile variant="stat" title={t('nats.jetstream_messages')} icon={<Database className="h-4 w-4" />}
+          value={formatCount(data.jsMessages)} hint={t('nats.hint.jetstream_total')} />
       </div>
     </section>
   )

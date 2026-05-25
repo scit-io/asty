@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
 import { ThemeProvider, useTheme } from '@/components/theme-provider'
+import { LocaleProvider } from '@/lib/i18n'
 import { Header } from '@/components/header'
 import { LoadingBlock } from '@/components/loading-block'
 import { Toaster } from 'sonner'
@@ -33,6 +34,7 @@ function ThemedToaster() {
 export default function App() {
   return (
     <ThemeProvider defaultTheme="system" storageKey="asty-theme">
+      <LocaleProvider storageKey="asty-locale">
       <BrowserRouter>
         {/* Shell layout: h-screen + overflow-hidden makes the body
             non-scrolling. The <main> below owns the scroll context.
@@ -70,6 +72,7 @@ export default function App() {
         </div>
         <ThemedToaster />
       </BrowserRouter>
+      </LocaleProvider>
     </ThemeProvider>
   )
 }

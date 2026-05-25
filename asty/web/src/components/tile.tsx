@@ -1,6 +1,8 @@
 import { isValidElement, memo, type ReactElement, type ReactNode } from 'react'
-import { formatDistanceToNow } from 'date-fns'
+import { formatDistanceToNow, type Locale as DateFnsLocale } from 'date-fns'
+import { ru as dateFnsRu } from 'date-fns/locale/ru'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { useLocale } from '@/lib/i18n'
 
 // Tile is THE dashboard card. CardContent is built bottom-up: the
 // Bottom block holds the lowest text (hint, or bar+hint for metric)
@@ -43,7 +45,14 @@ function Hint({ children }: { children: ReactNode }) {
   return <p className="text-xs text-muted-foreground leading-none">{children}</p>
 }
 
-function Top(props: TileProps): ReactNode {
+// dateFnsLocaleFor maps the app's locale tag to a date-fns Locale.
+// 'en' returns undefined → date-fns falls back to its built-in
+// English without an explicit import.
+function dateFnsLocaleFor(locale: string): DateFnsLocale | undefined {
+  return locale === 'ru' ? dateFnsRu : undefined
+}
+
+function Top(props: TileProps, dateLocale: DateFnsLocale | undefined): ReactNode {
   switch (props.variant) {
     case 'metric': {
       const pct = props.total > 0 ? Math.min(100, (props.usage / props.total) * 100) : 0
@@ -60,7 +69,7 @@ function Top(props: TileProps): ReactNode {
       const valid = !!props.timestamp && !props.timestamp.startsWith('0001-')
       return (
         <div className="text-sm font-bold mb-2">
-          {valid ? formatDistanceToNow(new Date(props.timestamp!), { addSuffix: true }) : '—'}
+          {valid ? formatDistanceToNow(new Date(props.timestamp!), { addSuffix: true, locale: dateLocale }) : '—'}
         </div>
       )
     }
@@ -95,7 +104,14 @@ function Bottom(props: TileProps): ReactNode {
       )
     case 'timestamp': {
       const valid = !!props.timestamp && !props.timestamp.startsWith('0001-')
-      return valid ? <Hint>{new Date(props.timestamp!).toLocaleString()}</Hint> : null
+      // Always render time before date (e.g. "04:25:41, 25.05.2026"
+      // instead of the locale default "25.05.2026, 04:25:41"). The
+      // exact-time line sits under a relative-time headline; reading
+      // hours-minutes-seconds matters more than the date, so it
+      // leads.
+      if (!valid) return null
+      const d = new Date(props.timestamp!)
+      return <Hint>{`${d.toLocaleTimeString()}, ${d.toLocaleDateString()}`}</Hint>
     }
     case 'actions':
       return props.hint != null ? <Hint>{props.hint}</Hint> : null
@@ -144,6 +160,13 @@ function tilePropsEqual(prev: TileProps, next: TileProps): boolean {
 }
 
 export const Tile = memo(function Tile(props: TileProps) {
+  // Read the app locale here (not in Top/Bottom) so the memo wrapper
+  // still owns identity. tilePropsEqual ignores locale, but every
+  // Tile title is t-derived — when locale flips, title differs and
+  // the memo invalidates, this body re-runs, and the date-fns locale
+  // we pass to Top is fresh.
+  const { locale } = useLocale()
+  const dateLocale = dateFnsLocaleFor(locale)
   return (
     <Card className={`flex flex-col${props.className ? ' ' + props.className : ''}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -152,7 +175,7 @@ export const Tile = memo(function Tile(props: TileProps) {
       </CardHeader>
       <CardContent className="flex-1 flex flex-col">
         <div className="flex-1 flex flex-col justify-end">
-          <Top {...props} />
+          {Top(props, dateLocale)}
         </div>
         <Bottom {...props} />
       </CardContent>

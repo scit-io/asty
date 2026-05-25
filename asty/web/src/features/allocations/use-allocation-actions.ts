@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
+import { useT } from '@/lib/i18n'
+import { toastError } from '@/lib/toast'
 import type { Allocation } from '@/types'
 
 // AllocLite — the minimal subset of an Allocation the hook needs.
@@ -21,6 +23,7 @@ type AllocLite = Pick<Allocation, 'id' | 'node_id' | 'service_name'>
 //   - pending: { [allocId]: boolean }. Pages with multiple rows index
 //     by allocation id; single-alloc callers read pending[a.id].
 export function useAllocationActions() {
+  const t = useT()
   const navigate = useNavigate()
   const [pending, setPending] = useState<Record<string, boolean>>({})
 
@@ -30,14 +33,14 @@ export function useAllocationActions() {
       await (kind === 'restart'
         ? api.restartAllocation(a.node_id, a.id)
         : api.stopAllocation(a.node_id, a.id))
-      toast.success(`${kind === 'restart' ? 'Restarted' : 'Stopped'} ${a.service_name}`)
+      toast.success(t(kind === 'restart' ? 'toast.restarted' : 'toast.stopped', { service: a.service_name }))
       if (kind === 'stop') navigate(routes.nodes)
     } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t)
     } finally {
       setPending((p) => ({ ...p, [a.id]: false }))
     }
-  }, [navigate])
+  }, [navigate, t])
 
   return { act, pending }
 }

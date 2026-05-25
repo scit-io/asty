@@ -30,16 +30,20 @@ import { Tile } from '@/components/tile'
 import { NatsTiles } from '@/features/cluster/nats-tiles'
 import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
+import { useT, nodeStatusKey } from '@/lib/i18n'
+import { toastError } from '@/lib/toast'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
+import { useNodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Node Overview (/nodes/:id) — first tab of the node section.
 // Maintenance section (drain switch) + Asty/NATS sub-blocks land
 // here; allocations and logs moved to their own routes.
 export default function NodeDetail() {
+  const t = useT()
   const { nodeId } = useParams<{ nodeId: string }>()
   const navigate = useNavigate()
+  const tabs = useNodeTabs(nodeId ?? '')
   const subscribeNode = useClusterStore((s) => s.subscribeNode)
   const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
   const cached = useClusterStore((s) => nodeId ? s.nodeCache[nodeId] : undefined)
@@ -58,9 +62,9 @@ export default function NodeDetail() {
     try {
       await api.drainNode(nodeId, enable)
       updateNodeStatus(nodeId, enable ? 'draining' : 'ready')
-      toast.success(enable ? 'Draining node' : 'Node resumed')
+      toast.success(t(enable ? 'toast.drain_started' : 'toast.drain_resumed'))
     } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t)
     }
   }
 
@@ -68,10 +72,10 @@ export default function NodeDetail() {
     if (!nodeId) return
     try {
       await api.killNode(nodeId, nodeId)
-      toast.success(`Node ${nodeId} killed`)
+      toast.success(t('toast.kill_success', { id: nodeId }))
       navigate(routes.nodes)
     } catch (err) {
-      toast.error(`Kill failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t, 'toast.kill_failed')
       throw err
     }
   }
@@ -88,10 +92,10 @@ export default function NodeDetail() {
   const rps = rpsMetrics.length ? rpsMetrics[rpsMetrics.length - 1].value : 0
   const draining = node.status === 'draining' || node.status === 'drained'
   const diskUnit = node.disk_type === 'ssd' || node.disk_type === 'hdd' ? node.disk_type.toUpperCase() : ''
-  const drainHint = node.status === 'ready' ? 'Normal'
-    : node.status === 'draining' ? 'Migrating…'
-    : node.status === 'drained' ? 'Drained'
-    : node.status
+  const drainHint = node.status === 'ready' ? t('drain.normal')
+    : node.status === 'draining' ? t('drain.migrating')
+    : node.status === 'drained' ? t('drain.drained')
+    : t(nodeStatusKey(node.status))
 
   // hasAsty gates only the agent sub-block — Asty is always present on
   // a running agent, but we still hold rendering until at least one
@@ -106,7 +110,7 @@ export default function NodeDetail() {
     <PageShell>
       <NodeHeader node={node} />
 
-      <ResourceTabs items={nodeTabs(node.id)} />
+      <ResourceTabs items={tabs} />
 
       <section className="space-y-3">
         <div className="grid grid-cols-12 gap-3">
@@ -115,47 +119,51 @@ export default function NodeDetail() {
               grid-cols-5 at lg. */}
           <div className="col-span-12 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
             <Tile variant="metric"
-              title="CPU" icon={<Cpu className="h-4 w-4" />}
+              title={t('tile.cpu')} icon={<Cpu className="h-4 w-4" />}
               usage={node.cpu_total - node.cpu_available} total={node.cpu_total} format={formatMHz} />
             <Tile variant="metric"
-              title="RAM" icon={<MemoryStick className="h-4 w-4" />}
+              title={t('tile.ram')} icon={<MemoryStick className="h-4 w-4" />}
               usage={node.memory_total - node.memory_available} total={node.memory_total} format={formatMB} />
             <Tile variant="metric"
-              title="Swap" icon={<HardDriveDownload className="h-4 w-4" />}
+              title={t('tile.swap')} icon={<HardDriveDownload className="h-4 w-4" />}
               usage={node.swap_total - node.swap_available} total={node.swap_total} format={formatMB} />
             <Tile variant="metric"
-              title="Disk" icon={<HardDrive className="h-4 w-4" />}
+              title={t('tile.disk')} icon={<HardDrive className="h-4 w-4" />}
               usage={node.disk_total - node.disk_available} total={node.disk_total}
               unit={diskUnit} format={formatMB} />
             <Tile variant="stat" bar
-              title="RPS" icon={<Activity className="h-4 w-4" />}
-              value={Math.round(rps)} hint="Requests per second" />
+              title={t('tile.rps')} icon={<Activity className="h-4 w-4" />}
+              value={Math.round(rps)} hint={t('common.requests_per_second')} />
           </div>
 
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Node CPU" data={cpuMetrics} color="hsl(var(--chart-1))" />
+            title={t('chart.node_cpu')} data={cpuMetrics} color="hsl(var(--chart-1))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Node RAM" data={memoryMetrics} color="hsl(var(--chart-2))" />
+            title={t('chart.node_ram')} data={memoryMetrics} color="hsl(var(--chart-2))" />
           <MetricsChart className="col-span-12 md:col-span-4"
-            title="Node RPS" data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
+            title={t('chart.node_rps')} data={rpsMetrics} color="hsl(var(--chart-3))" unit=" rps" />
 
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
-            title="Allocations" icon={<Layers className="h-4 w-4" />}
-            value={`${node.allocations_running} / ${node.allocations_planned}`} hint="running / planned" />
+            title={t('tile.allocations')} icon={<Layers className="h-4 w-4" />}
+            value={`${node.allocations_running} / ${node.allocations_planned}`} hint={t('tile.hint.running_planned')} />
           <Tile className="col-span-6 lg:col-span-3" variant="timestamp"
-            title="Started At" icon={<Clock className="h-4 w-4" />}
+            title={t('tile.started_at')} icon={<Clock className="h-4 w-4" />}
             timestamp={node.created_at} />
           <Tile className="col-span-6 lg:col-span-3" variant="timestamp"
-            title="Last Heartbeat" icon={<Signal className="h-4 w-4" />}
+            title={t('tile.last_heartbeat')} icon={<Signal className="h-4 w-4" />}
             timestamp={node.last_seen} />
           <Tile className="col-span-6 lg:col-span-3" variant="actions"
-            title="Maintenance" icon={<Wrench className="h-4 w-4" />}
+            title={t('tile.maintenance')} icon={<Wrench className="h-4 w-4" />}
             actions={
               <div className="flex items-center justify-between w-full">
                 <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold">Drain</span>
+                  <div className="flex items-center gap-2 mb-1">
+                    <label htmlFor="drain-switch" className="text-sm font-bold cursor-pointer">
+                      {t('drain.dialog.confirm')}
+                    </label>
                     <Switch
+                      id="drain-switch"
+                      size="sm"
                       checked={draining}
                       className={nodeStatusSwitchClass(node.status)}
                       onCheckedChange={(checked) => checked ? setShowDrainDialog(true) : handleDrain(false)}
@@ -168,10 +176,10 @@ export default function NodeDetail() {
                   variant="destructive"
                   size="sm"
                   onClick={() => setShowKillDialog(true)}
-                  title="Abrupt decommission — use Drain for routine operations"
+                  title={t('kill.tooltip')}
                 >
                   <Skull />
-                  Kill
+                  {t('kill.button')}
                 </Button>
               </div>
             } />

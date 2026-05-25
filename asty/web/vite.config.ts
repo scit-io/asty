@@ -36,10 +36,6 @@ export default defineConfig({
       // A_DASHBOARD_PREFIX defaults; if you change them on the
       // backend, mirror here.
       '/dashboard': 'http://localhost:7060',
-      // Prometheus exposition shares the same listener by default.
-      '/metrics': 'http://localhost:7060',
-      // Health probe.
-      '/health': 'http://localhost:7060',
     }
   }
 })

@@ -1,4 +1,6 @@
+import { useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { LocaleToggle } from '@/components/locale-toggle'
 import { ThemeToggle } from '@/components/theme-toggle'
 import {
   NavigationMenu,
@@ -10,8 +12,9 @@ import {
 } from '@/components/ui/navigation-menu'
 import { cn } from '@/lib/utils'
 import { routes } from '@/lib/routes'
-import { CLUSTER_TABS } from '@/pages/cluster/tabs'
-import { SERVICES_TABS } from '@/pages/services/tabs'
+import { useClusterTabs } from '@/pages/cluster/tabs'
+import { useServicesTabs } from '@/pages/services/tabs'
+import { useT } from '@/lib/i18n'
 import type { TabItem } from '@/components/resource-tabs'
 import logo from '@/assets/img/logo.svg'
 
@@ -19,20 +22,22 @@ import logo from '@/assets/img/logo.svg'
 // dropdowns listing their static child pages. Dynamic pages
 // (/nodes/:id, /services/:name, etc.) are reached from list views;
 // they don't appear in the global header. Each section reads its
-// tabs from the section's own tabs.ts file — the same list the
+// tabs from the section's own tabs hook — the same list the
 // page-shell ResourceTabs row renders inside the section's pages.
 interface Section {
   label: string
   pages: TabItem[]
 }
 
-const SECTIONS: Section[] = [
-  { label: 'Cluster', pages: CLUSTER_TABS },
-  { label: 'Services', pages: SERVICES_TABS },
-]
-
 export function Header() {
   const location = useLocation()
+  const t = useT()
+  const clusterTabs = useClusterTabs()
+  const servicesTabs = useServicesTabs()
+  const SECTIONS = useMemo<Section[]>(() => [
+    { label: t('section.cluster'), pages: clusterTabs },
+    { label: t('section.services'), pages: servicesTabs },
+  ], [t, clusterTabs, servicesTabs])
 
   const isActiveSection = (section: Section) =>
     section.pages.some((p) =>
@@ -108,7 +113,10 @@ export function Header() {
             </NavigationMenuList>
           </NavigationMenu>
         </div>
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <LocaleToggle />
+          <ThemeToggle />
+        </div>
       </div>
     </header>
   )

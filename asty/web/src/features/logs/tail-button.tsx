@@ -1,4 +1,5 @@
 import { cn } from '@/lib/utils'
+import { useT } from '@/lib/i18n'
 
 // TailButton brings the reader back to the live edge. Three visual
 // states, all tied to how far the reader has drifted:
@@ -8,6 +9,7 @@ import { cn } from '@/lib/utils'
 // Reaching the bottom by scroll also resets unseen via onScroll, so
 // the colour escalates only when the reader is actively behind.
 export function TailButton({ unseen, onClick }: { unseen: number; onClick: () => void }) {
+  const t = useT()
   const { tone, dot } = tailStyle(unseen)
   return (
     <button
@@ -19,7 +21,7 @@ export function TailButton({ unseen, onClick }: { unseen: number; onClick: () =>
       )}
     >
       {dot && <span className={dot} />}
-      <span>tail ↓</span>
+      <span>{t('logs.tail')}</span>
       {unseen > 0 && <span className="font-semibold tabular-nums">+{unseen > 999 ? '999+' : unseen}</span>}
     </button>
   )

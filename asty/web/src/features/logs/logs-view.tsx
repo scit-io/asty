@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
+import { useT } from '@/lib/i18n'
 import { parseEvent } from './format'
 import { LevelFilter, type LevelFilterValue } from './level-filter'
 import { LogRow } from './log-row'
@@ -69,7 +70,9 @@ let entryCounter = 0
 // smooth scrolling. The container's scrollHeight is the virtual total
 // from getTotalSize() so the native scrollbar behaves identically to
 // a fully-mounted list.
-export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: LogsViewProps) {
+export function LogsView({ streamUrl, title, maxLines = DEFAULT_MAX }: LogsViewProps) {
+  const t = useT()
+  const resolvedTitle = title ?? t('logs.title')
   const [entries, setEntries] = useState<LogEntry[]>([])
   const [streamState, setStreamState] = useState<StreamState>('reconnecting')
   // reconnectKey increments when the operator clicks the dead-state
@@ -210,10 +213,12 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
   return (
     <Card className="flex h-full min-h-0 flex-col">
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">{title}</CardTitle>
+        <CardTitle className="text-base">{resolvedTitle}</CardTitle>
         <div className="flex items-center gap-2">
           <span className="text-[11px] tabular-nums text-muted-foreground">
-            {visible.length}{filter === 'all' ? '' : ` / ${entries.length}`} · max {maxLines}
+            {filter === 'all'
+              ? t('logs.counter.max', { visible: visible.length, max: maxLines })
+              : t('logs.counter.max_filtered', { visible: visible.length, total: entries.length, max: maxLines })}
           </span>
           {!tailing && (
             <TailButton unseen={unseen} onClick={resumeTail} />
@@ -229,7 +234,7 @@ export function LogsView({ streamUrl, title = 'Logs', maxLines = DEFAULT_MAX }: 
           className="flex-1 min-h-0 overflow-x-hidden overflow-y-auto rounded-md border bg-muted/40 p-2 font-mono text-xs"
         >
           {visible.length === 0 ? (
-            <div className="p-2 text-muted-foreground">No log lines yet…</div>
+            <div className="p-2 text-muted-foreground">{t('logs.empty')}</div>
           ) : (
             // height MUST be inline — virtualiser computes it from
             // measured/estimated row sizes and it changes every render.

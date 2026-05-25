@@ -8,12 +8,14 @@ import { DataTable, type Column } from '@/components/data-table'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { UsageCell } from '@/components/usage-cell'
-import { CLUSTER_TABS } from '@/pages/cluster/tabs'
+import { useClusterTabs } from '@/pages/cluster/tabs'
 import { NodeDrainDialog } from '@/components/node-drain-dialog'
 import { api } from '@/api/client'
 import { routes } from '@/lib/routes'
 import { formatMB, formatMHz } from '@/lib/format'
 import { nodeStatusSwitchClass } from '@/lib/node-status'
+import { useT, nodeStatusKey } from '@/lib/i18n'
+import { toastError } from '@/lib/toast'
 import { useSubscribe } from '@/lib/use-subscribe'
 import { useClusterStore } from '@/store/cluster'
 import type { Node } from '@/types'
@@ -28,6 +30,8 @@ const percent = (used: number, total: number) => total > 0 ? Math.round((used / 
 // — an SSE tick that only moves nats_in_msgs (not displayed) costs
 // zero re-renders downstream.
 export default function Nodes() {
+  const t = useT()
+  const tabs = useClusterTabs()
   const navigate = useNavigate()
   const subscribeNodes = useClusterStore((s) => s.subscribeNodes)
   const nodes = useClusterStore((s) => s.nodes)
@@ -42,13 +46,13 @@ export default function Nodes() {
     try {
       await api.drainNode(id, enable)
       updateNodeStatus(id, enable ? 'draining' : 'ready')
-      toast.success(`${enable ? 'Draining' : 'Resuming'} ${id}`)
+      toast.success(t(enable ? 'toast.draining' : 'toast.resuming', { id }))
     } catch (err) {
-      toast.error(`Failed: ${err instanceof Error ? err.message : 'unknown'}`)
+      toastError(err, t)
     } finally {
       setPending((p) => ({ ...p, [id]: false }))
     }
-  }, [updateNodeStatus])
+  }, [updateNodeStatus, t])
 
   const onRowClick = useCallback((n: Node) => navigate(routes.node(n.id)), [navigate])
   const rowKey = useCallback((n: Node) => n.id, [])
@@ -63,35 +67,35 @@ export default function Nodes() {
   // Memo so DataTable's searchEl cache survives SSE flushes — the
   // page wouldn't otherwise pass a stable `search` reference.
   const search = useMemo(() => ({
-    placeholder: 'Search by ID or IP…',
+    placeholder: t('nodes.search_placeholder'),
     match: (n: Node, q: string) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q),
-  }), [])
+  }), [t])
 
   const columns = useMemo<Column<Node>[]>(() => [
     {
-      key: 'id', label: 'Node',
+      key: 'id', label: t('nodes.col.node'),
       sort: (a, b) => a.id.localeCompare(b.id),
       render: (n) => <span className="font-mono font-medium">{n.id}</span>,
       deps: (n) => [n.id],
     },
     {
-      key: 'dc', label: 'DC',
+      key: 'dc', label: t('nodes.col.dc'),
       render: (n) => n.datacenter,
       deps: (n) => [n.datacenter],
     },
     {
-      key: 'ip', label: 'IP',
+      key: 'ip', label: t('nodes.col.ip'),
       render: (n) => <span className="font-mono text-sm">{n.ip || '—'}</span>,
       deps: (n) => [n.ip],
     },
     {
-      key: 'status', label: 'Status',
+      key: 'status', label: t('nodes.col.status'),
       sort: (a, b) => a.status.localeCompare(b.status),
-      render: (n) => <Badge variant={nodeStatusVariant(n.status)}>{n.status}</Badge>,
+      render: (n) => <Badge variant={nodeStatusVariant(n.status)}>{t(nodeStatusKey(n.status))}</Badge>,
       deps: (n) => [n.status],
     },
     {
-      key: 'cpu', label: 'CPU',
+      key: 'cpu', label: t('nodes.col.cpu'),
       sort: (a, b) => percent(a.cpu_total - a.cpu_available, a.cpu_total) - percent(b.cpu_total - b.cpu_available, b.cpu_total),
       render: (n) => {
         const used = n.cpu_total - n.cpu_available
@@ -101,7 +105,7 @@ export default function Nodes() {
       deps: (n) => [n.cpu_total, n.cpu_available],
     },
     {
-      key: 'mem', label: 'RAM',
+      key: 'mem', label: t('nodes.col.ram'),
       sort: (a, b) => percent(a.memory_total - a.memory_available, a.memory_total) - percent(b.memory_total - b.memory_available, b.memory_total),
       render: (n) => {
         const used = n.memory_total - n.memory_available
@@ -111,13 +115,13 @@ export default function Nodes() {
       deps: (n) => [n.memory_total, n.memory_available],
     },
     {
-      key: 'allocs', label: 'Allocations', className: 'text-right',
+      key: 'allocs', label: t('nodes.col.allocations'), className: 'text-right',
       sort: (a, b) => a.allocations_running - b.allocations_running,
       render: (n) => <span className="text-sm"><b>{n.allocations_running}</b> / {n.allocations_planned}</span>,
       deps: (n) => [n.allocations_running, n.allocations_planned],
     },
     {
-      key: 'drain', label: 'Drain',
+      key: 'drain', label: t('nodes.col.drain'),
       render: (n) => (
         <Switch
           checked={n.status === 'draining' || n.status === 'drained'}
@@ -131,12 +135,12 @@ export default function Nodes() {
       // render, but pending[n.id] varies per row and per user action.
       deps: (n) => [n.status, pending[n.id]],
     },
-  ], [pending, handleDrain])
+  ], [t, pending, handleDrain])
 
   return (
     <PageShell>
-      <h2 className="text-lg font-semibold">Cluster</h2>
-      <ResourceTabs items={CLUSTER_TABS} />
+      <h2 className="text-lg font-semibold">{t('section.cluster')}</h2>
+      <ResourceTabs items={tabs} />
       <Card>
         <CardContent className="pt-6">
           <DataTable
@@ -145,7 +149,7 @@ export default function Nodes() {
             search={search}
             onRowClick={onRowClick}
             rowKey={rowKey}
-            emptyMessage="No nodes registered yet."
+            emptyMessage={t('nodes.empty')}
           />
         </CardContent>
       </Card>

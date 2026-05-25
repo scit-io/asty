@@ -6,8 +6,9 @@ import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { ServiceHeader } from '@/components/service-header'
 import { AllocationsTable } from '@/features/allocations/allocations-table'
+import { useT } from '@/lib/i18n'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { serviceTabs } from '@/pages/services/[name]/tabs'
+import { useServiceTabs } from '@/pages/services/[name]/tabs'
 import { useClusterStore } from '@/store/cluster'
 import type { ServiceDefinition } from '@/types'
 
@@ -17,7 +18,9 @@ import type { ServiceDefinition } from '@/types'
 // (per-service SSE) and a fixed resource lookup (same service for
 // every row).
 export default function ServiceAllocations() {
+  const t = useT()
   const { name } = useParams<{ name: string }>()
+  const tabs = useServiceTabs(name ?? '')
   const subscribeService = useClusterStore((s) => s.subscribeService)
   const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
   // Subscribe to CPU and Memory as primitives so the selector returns
@@ -40,8 +43,8 @@ export default function ServiceAllocations() {
   if (!name) return null
   return (
     <PageShell>
-      <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: 'Allocations' }]} />
-      <ResourceTabs items={serviceTabs(name)} />
+      <ServiceHeader name={name} service={cached?.service ?? null} tail={[{ label: t('tabs.allocations') }]} />
+      <ResourceTabs items={tabs} />
       {!cached ? (
         <LoadingBlock />
       ) : (
@@ -51,8 +54,8 @@ export default function ServiceAllocations() {
               rows={allocations}
               scope="service"
               resources={resources}
-              emptyMessage="No allocations for this service."
-              searchPlaceholder="Search by node…"
+              emptyMessage={t('allocs.empty.service')}
+              searchPlaceholder={t('allocs.search.by_node')}
             />
           </CardContent>
         </Card>

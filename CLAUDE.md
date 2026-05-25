@@ -25,6 +25,8 @@ The project consists of two main parts:
 2. **Demo services** (`demo/`) — microservices that Asty deploys (xauth, xhttp, xws). Use `nats.go/micro` directly, no platform SDK. Demo frontend in `demo/web/` (React + Vite). **These services, together with `deploy/{dev,prod}/`, `Makefile`'s `build-demo` target, and the coding-rule examples that reference them, are intentional customer-facing boilerplate.** The buyer of the platform removes them when shipping their own services. Mentions of demo names outside `asty/` are by design, not findings.
 
 **Monitoring:** Asty's admin surface lives at `:7060` by default — dashboard REST + SSE at `/dashboard/v1/`, Prometheus exposition at `/metrics` (same listener), liveness at `/health`. Web UI (`asty/web/`) connects to it for cluster monitoring. Both port and prefix are configurable per surface (see Observability §).
+
+**Web UI status:** feature-complete. The SPA in `asty/web/` covers every dashboard surface (cluster overview, nodes, services, allocations, logs, deploy, manual scale, drain/kill), wires every published SSE stream, and ships full EN/RU localisation with OS-detected default and persisted choice. Refactor history is in `.audit/13:51_24-05-26.md` (status: COMPLETE).
 **Demo frontend:** `demo/web/` is a small React app that exercises the demo services (auth, CRUD, WebSocket) via the gateway.
 
 ## Toolchain & dependencies
@@ -832,8 +834,8 @@ WITH the `cluster{}` block pinned — the surviving cluster stays
 clustered even down to one node.
 
 **Web UI in dev**: `cd asty/web && npm run dev` starts Vite on
-`localhost:5173` and proxies `/dashboard`, `/metrics`, `/health` to
-`localhost:7060`. The SPA reads `VITE_ASTY_TOKEN` at build time;
+`localhost:5173` and proxies `/dashboard` to `localhost:7060`. The
+SPA reads `VITE_ASTY_TOKEN` at build time;
 `asty/web/.env.development` ships a default that matches
 `deploy/dev/.env` `A_TOKEN` so writes (drain, scale, deploy, …)
 authenticate cleanly. For production builds (`npm run build`),

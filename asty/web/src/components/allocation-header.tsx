@@ -7,6 +7,7 @@ import {
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
 import { Skeleton } from '@/components/ui/skeleton'
 import { routes } from '@/lib/routes'
+import { useT, allocStatusKey } from '@/lib/i18n'
 import type { Allocation } from '@/types'
 
 // statusDot mirrors the allocation status palette used by the table
@@ -45,6 +46,7 @@ interface AllocationHeaderProps {
 // page inside /nodes/{id}/allocations/{allocId}: breadcrumbs left,
 // service-name big title + status dot + allocation id right-aligned.
 export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: AllocationHeaderProps) {
+  const t = useT()
   const nid = allocation?.node_id ?? nodeId
   const aid = allocation?.id ?? allocId
   if (!nid || !aid) return null
@@ -53,10 +55,10 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
   // landing replaces it without flashing the raw id first.
   const name = allocation?.service_name
   const crumbs: Crumb[] = [
-    { label: 'Cluster', to: routes.cluster, key: 'cluster' },
-    { label: 'Nodes', to: routes.nodes, key: 'nodes' },
+    { label: t('section.cluster'), to: routes.cluster, key: 'cluster' },
+    { label: t('tabs.nodes'), to: routes.nodes, key: 'nodes' },
     { label: nid, to: routes.node(nid), key: 'node' },
-    { label: 'Allocations', to: routes.nodeAllocations(nid), key: 'allocs' },
+    { label: t('tabs.allocations'), to: routes.nodeAllocations(nid), key: 'allocs' },
     {
       label: nameSlot(name, 'h-5 w-24'),
       to: tail.length === 0 ? undefined : routes.allocation(nid, aid),
@@ -78,7 +80,7 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
                   <div className={`w-3 h-3 rounded-full ${statusDot(allocation.status)}`} />
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p className="capitalize">{allocation.status}</p>
+                  <p className="capitalize">{t(allocStatusKey(allocation.status))}</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

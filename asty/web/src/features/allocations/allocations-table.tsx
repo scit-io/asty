@@ -14,6 +14,7 @@ import { UsageCell } from '@/components/usage-cell'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
 import { uptimeLabel } from '@/lib/uptime'
+import { useT, allocStatusKey, allocHealthKey } from '@/lib/i18n'
 import { allocHealthVariant, allocStatusVariant } from '@/lib/variants'
 import { useAllocationActions } from './use-allocation-actions'
 import type { Allocation, ServiceDefinition } from '@/types'
@@ -48,6 +49,7 @@ interface AllocationsTableProps {
 export function AllocationsTable({
   rows, scope, resources, emptyMessage, searchPlaceholder,
 }: AllocationsTableProps) {
+  const t = useT()
   const navigate = useNavigate()
   const { act, pending } = useAllocationActions()
 
@@ -72,12 +74,12 @@ export function AllocationsTable({
     ...(scope === 'service'
       ? [
         {
-          key: 'id', label: 'Allocation',
+          key: 'id', label: t('allocs.col.allocation'),
           render: (a: Allocation) => <span className="font-mono text-xs">{a.id.slice(0, 12)}</span>,
           deps: (a: Allocation) => [a.id],
         },
         {
-          key: 'node', label: 'Node',
+          key: 'node', label: t('allocs.col.node'),
           sort: (a: Allocation, b: Allocation) => a.node_id.localeCompare(b.node_id),
           render: (a: Allocation) => <span className="font-mono font-medium">{a.node_id}</span>,
           deps: (a: Allocation) => [a.node_id],
@@ -85,32 +87,32 @@ export function AllocationsTable({
       ]
       : [
         {
-          key: 'service', label: 'Service',
+          key: 'service', label: t('allocs.col.service'),
           sort: (a: Allocation, b: Allocation) => a.service_name.localeCompare(b.service_name),
           render: (a: Allocation) => <span className="font-medium">{a.service_name}</span>,
           deps: (a: Allocation) => [a.service_name],
         },
       ]),
     {
-      key: 'status', label: 'Status',
+      key: 'status', label: t('allocs.col.status'),
       sort: (a, b) => a.status.localeCompare(b.status),
-      render: (a) => <Badge variant={allocStatusVariant(a.status)}>{a.status}</Badge>,
+      render: (a) => <Badge variant={allocStatusVariant(a.status)}>{t(allocStatusKey(a.status))}</Badge>,
       deps: (a) => [a.status],
     },
     ...(scope === 'node'
       ? [{
-        key: 'version', label: 'Version',
+        key: 'version', label: t('allocs.col.version'),
         render: (a: Allocation) => <span className="font-mono text-xs">{a.version || '—'}</span>,
         deps: (a: Allocation) => [a.version],
       }]
       : []),
     {
-      key: 'health', label: 'Health',
-      render: (a) => <Badge variant={allocHealthVariant(a.health_status)}>{a.health_status || 'unknown'}</Badge>,
+      key: 'health', label: t('allocs.col.health'),
+      render: (a) => <Badge variant={allocHealthVariant(a.health_status)}>{t(allocHealthKey(a.health_status))}</Badge>,
       deps: (a) => [a.health_status],
     },
     {
-      key: 'cpu', label: 'CPU',
+      key: 'cpu', label: t('allocs.col.cpu'),
       sort: (a, b) => a.cpu_usage - b.cpu_usage,
       render: (a) => {
         const res = resources(a)
@@ -125,7 +127,7 @@ export function AllocationsTable({
       deps: (a) => [a.cpu_usage, resources(a)?.CPU],
     },
     {
-      key: 'mem', label: 'RAM',
+      key: 'mem', label: t('allocs.col.ram'),
       sort: (a, b) => a.memory_usage - b.memory_usage,
       render: (a) => {
         const res = resources(a)
@@ -141,23 +143,27 @@ export function AllocationsTable({
       deps: (a) => [a.memory_usage, resources(a)?.Memory],
     },
     {
-      key: 'disk', label: 'Disk',
+      key: 'disk', label: t('allocs.col.disk'),
       sort: (a, b) => a.disk_usage - b.disk_usage,
       render: (a) => <span className="text-sm">{formatMB(a.disk_usage)}</span>,
       deps: (a) => [a.disk_usage],
     },
     {
-      key: 'restarts', label: 'Restarts',
+      key: 'restarts', label: t('allocs.col.restarts'),
       sort: (a, b) => a.restarts - b.restarts,
       render: (a) => a.restarts,
       deps: (a) => [a.restarts],
     },
     {
-      key: 'uptime', label: 'Uptime',
+      key: 'uptime', label: t('allocs.col.uptime'),
       render: (a) => <span className="text-sm">{uptimeLabel(a.started_at, a.status)}</span>,
-      deps: (a) => [a.started_at, a.status],
+      // `t` participates in deps so a locale flip invalidates the
+      // cell memo — uptime's wire fields don't change on SSE ticks,
+      // so without this the unit suffix (s/m/h/d ↔ с/м/ч/д) would
+      // stay frozen at the previous locale.
+      deps: (a) => [a.started_at, a.status, t],
     },
-  ], [scope, resources])
+  ], [scope, resources, t])
 
   const search = useMemo(() => ({
     placeholder: searchPlaceholder,
@@ -183,16 +189,16 @@ export function AllocationsTable({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => onRestart(a.id)}>
-            <RotateCw className="h-4 w-4 mr-2" /> Restart
+            <RotateCw className="h-4 w-4 mr-2" /> {t('alloc.action.restart')}
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => onStop(a.id)} className="text-destructive">
-            <StopCircle className="h-4 w-4 mr-2" /> Stop
+            <StopCircle className="h-4 w-4 mr-2" /> {t('alloc.action.stop')}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     ),
     deps: (a) => [a.id, pending[a.id]],
-  }), [pending, onRestart, onStop])
+  }), [pending, onRestart, onStop, t])
 
   return (
     <DataTable

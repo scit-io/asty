@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ArrowDown, ArrowUp, ArrowUpDown, Search } from 'lucide-react'
+import { useT } from '@/lib/i18n'
 
 export interface Column<T> {
   key: string
@@ -157,9 +158,11 @@ export function DataTable<T>({
   pageSizes = DEFAULT_PAGE_SIZES,
   onRowClick,
   actions,
-  emptyMessage = 'No rows.',
+  emptyMessage,
   rowKey,
 }: DataTableProps<T>) {
+  const t = useT()
+  const empty = emptyMessage ?? t('common.no_rows')
   const [query, setQuery] = useState('')
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -256,8 +259,8 @@ export function DataTable<T>({
   const paginationEl = useMemo(() => (
     <div className="flex items-center justify-between text-sm">
       <div className="text-muted-foreground">
-        {sorted.length} row{sorted.length === 1 ? '' : 's'}
-        {query && ` (filtered from ${rows.length})`}
+        {t(sorted.length === 1 ? 'common.row_one' : 'common.row_other', { count: sorted.length })}
+        {query && ` ${t('common.filtered_from', { n: rows.length })}`}
       </div>
       <div className="flex items-center gap-3">
         <Select value={String(pageSize)} onValueChange={onPageSizeChange}>
@@ -271,19 +274,19 @@ export function DataTable<T>({
           </SelectContent>
         </Select>
         <span className="text-muted-foreground">
-          Page {safePage + 1} / {totalPages}
+          {t('common.page', { current: safePage + 1, total: totalPages })}
         </span>
         <div className="flex gap-1">
           <Button variant="outline" size="sm" disabled={safePage === 0} onClick={onPrev}>
-            Prev
+            {t('common.prev')}
           </Button>
           <Button variant="outline" size="sm" disabled={safePage >= totalPages - 1} onClick={onNext}>
-            Next
+            {t('common.next')}
           </Button>
         </div>
       </div>
     </div>
-  ), [sorted.length, rows.length, query, pageSize, pageSizes, safePage, totalPages, onPageSizeChange, onPrev, onNext])
+  ), [t, sorted.length, rows.length, query, pageSize, pageSizes, safePage, totalPages, onPageSizeChange, onPrev, onNext])
 
   return (
     <div className="space-y-3">
@@ -296,7 +299,7 @@ export function DataTable<T>({
             {visible.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={columns.length + (actions ? 1 : 0)} className="text-center text-muted-foreground py-8">
-                  {emptyMessage}
+                  {empty}
                 </TableCell>
               </TableRow>
             ) : (

@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { TimeStack } from '@/components/time-stack'
+import { useT, deployStatusKey } from '@/lib/i18n'
 import type { DeploymentRecord, ScalingEvent, ServiceDefinition } from '@/types'
 
 interface ServiceLastActionCellProps {
@@ -18,6 +19,7 @@ interface ServiceLastActionCellProps {
 // chosen by recency. Each branch shows the action + an optional
 // badge + a TimeStack in compact form.
 export function ServiceLastActionCell({ latestDeploy, latestEvent, runtime }: ServiceLastActionCellProps) {
+  const t = useT()
   const deployTs = latestDeploy ? new Date(latestDeploy.started_at).getTime() : 0
   const eventTs = latestEvent ? latestEvent.timestamp * 1000 : 0
 
@@ -28,8 +30,8 @@ export function ServiceLastActionCell({ latestDeploy, latestEvent, runtime }: Se
       : latestDeploy.status === 'reverted' ? 'secondary' : 'default'
     return (
       <span className="inline-flex items-center gap-2 justify-end">
-        <span>deploy <span className="font-mono">{latestDeploy.version}</span></span>
-        <Badge variant={variant} className="text-[10px]">{latestDeploy.status}</Badge>
+        <span>{t('action.deploy')} <span className="font-mono">{latestDeploy.version}</span></span>
+        <Badge variant={variant} className="text-[10px]">{t(deployStatusKey(latestDeploy.status))}</Badge>
         <span className="text-muted-foreground">·</span>
         <TimeStack date={d} compact />
       </span>
@@ -40,9 +42,9 @@ export function ServiceLastActionCell({ latestDeploy, latestEvent, runtime }: Se
     const d = new Date(latestEvent.timestamp * 1000)
     return (
       <span className="inline-flex items-center gap-2 justify-end">
-        <span>{latestEvent.action === 'scale_up' ? 'scale up' : 'scale down'}</span>
+        <span>{latestEvent.action === 'scale_up' ? t('action.scale_up_short') : t('action.scale_down_short')}</span>
         {latestEvent.reason?.startsWith('manual:') && (
-          <Badge variant="outline" className="text-[10px]">manual</Badge>
+          <Badge variant="outline" className="text-[10px]">{t('action.manual')}</Badge>
         )}
         <span className="text-muted-foreground">·</span>
         <TimeStack date={d} compact />

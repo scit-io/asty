@@ -12,6 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
+import { useT } from '@/lib/i18n'
 
 interface NodeKillDialogProps {
   open: boolean
@@ -24,11 +25,17 @@ interface NodeKillDialogProps {
   onConfirm: () => Promise<void>
 }
 
+// SENTINEL substitutes for {drain} so the prose can be split on the
+// placeholder position (and the slot wrapped in <b>) without splitting
+// on ordinary spaces in the translation.
+const DRAIN_SENTINEL = '__DRAIN__'
+
 // NodeKillDialog is the destructive counterpart of NodeDrainDialog.
 // Form-wrapped so Enter on the input submits the kill. The
 // onOpenChange wrapper ignores `false` while killing is in flight —
 // that single guard covers overlay click, Escape, X, and Cancel.
 export function NodeKillDialog({ open, nodeId, isLastNode, onOpenChange, onConfirm }: NodeKillDialogProps) {
+  const t = useT()
   const [confirmName, setConfirmName] = useState('')
   const [acknowledged, setAcknowledged] = useState(false)
   const [killing, setKilling] = useState(false)
@@ -54,6 +61,10 @@ export function NodeKillDialog({ open, nodeId, isLastNode, onOpenChange, onConfi
     }
   }
 
+  const drainTemplate = t('kill.dialog.warning_drain', { drain: DRAIN_SENTINEL })
+  const drainWord = t('kill.dialog.warning_drain.drain')
+  const [drainBefore, drainAfter] = drainTemplate.split(DRAIN_SENTINEL)
+
   return (
     <Dialog
       open={open}
@@ -67,24 +78,22 @@ export function NodeKillDialog({ open, nodeId, isLastNode, onOpenChange, onConfi
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Skull className="h-5 w-5 text-destructive" />
-              Kill node {nodeId}?
+              {t('kill.dialog.title', { id: nodeId })}
             </DialogTitle>
             <DialogDescription className="space-y-2">
               <span className="block">
-                The node is removed from the cluster. To bring it back online
-                you'll have to reinstall the asty agent on the host.
+                {t('kill.dialog.warning_main')}
               </span>
               <span className="block">
-                For routine operations use <b>Drain</b> — it migrates
-                allocations to peers before tearing the node down.
+                {drainBefore}<b>{drainWord}</b>{drainAfter}
               </span>
               {isLastNode && (
                 <span className="block text-destructive font-medium">
-                  This is the only node in the cluster — killing it will fully dismantle the cluster.
+                  {t('kill.dialog.last_node')}
                 </span>
               )}
               <span className="block">
-                Type the node id <code className="font-mono">{nodeId}</code> to confirm.
+                {t('kill.dialog.type_to_confirm', { id: nodeId })}
               </span>
             </DialogDescription>
           </DialogHeader>
@@ -104,21 +113,21 @@ export function NodeKillDialog({ open, nodeId, isLastNode, onOpenChange, onConfi
                 disabled={killing}
                 className="mt-0.5"
               />
-              <span>I understand the cluster will be fully dismantled.</span>
+              <span>{t('kill.dialog.acknowledge')}</span>
             </label>
           )}
           {killing && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground mt-3">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Killing node {nodeId}…
+              {t('kill.dialog.killing', { id: nodeId })}
             </div>
           )}
           <DialogFooter className="mt-4">
             <DialogClose asChild>
-              <Button type="button" variant="outline" disabled={killing}>Cancel</Button>
+              <Button type="button" variant="outline" disabled={killing}>{t('common.cancel')}</Button>
             </DialogClose>
             <Button type="submit" variant="destructive" disabled={!ready}>
-              {killing ? 'Killing…' : 'Kill node'}
+              {killing ? t('kill.dialog.confirming') : t('kill.dialog.confirm')}
             </Button>
           </DialogFooter>
         </form>

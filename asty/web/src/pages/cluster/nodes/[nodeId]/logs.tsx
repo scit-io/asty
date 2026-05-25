@@ -3,9 +3,10 @@ import { NodeHeader } from '@/components/node-header'
 import { PageShell } from '@/components/page-shell'
 import { ResourceTabs } from '@/components/resource-tabs'
 import { LogsView } from '@/features/logs'
+import { useT } from '@/lib/i18n'
 import { apiPaths } from '@/lib/routes'
 import { useSubscribe } from '@/lib/use-subscribe'
-import { nodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
+import { useNodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
 // Logs scoped to a single node. Owns two SSE streams: one for log
@@ -13,7 +14,9 @@ import { useClusterStore } from '@/store/cluster'
 // second feeds the header / breadcrumbs so a direct deep-link doesn't
 // keep showing the bare nodeId instead of the full node card data.
 export default function NodeLogs() {
+  const t = useT()
   const { nodeId } = useParams<{ nodeId: string }>()
+  const tabs = useNodeTabs(nodeId ?? '')
   const subscribeNode = useClusterStore((s) => s.subscribeNode)
   const node = useClusterStore((s) => nodeId
     ? s.nodeCache[nodeId]?.node ?? s.nodes.find((n) => n.id === nodeId) ?? null
@@ -22,10 +25,10 @@ export default function NodeLogs() {
   if (!nodeId) return null
   return (
     <PageShell tall>
-      <NodeHeader node={node} nodeId={nodeId} tail={[{ label: 'Logs' }]} />
-      <ResourceTabs items={nodeTabs(nodeId)} />
+      <NodeHeader node={node} nodeId={nodeId} tail={[{ label: t('tabs.logs') }]} />
+      <ResourceTabs items={tabs} />
       <div className="min-h-0 flex-1">
-        <LogsView title={`Logs · ${nodeId}`} streamUrl={apiPaths.nodeLogs(nodeId)} />
+        <LogsView title={t('logs.title_for', { target: nodeId })} streamUrl={apiPaths.nodeLogs(nodeId)} />
       </div>
     </PageShell>
   )
