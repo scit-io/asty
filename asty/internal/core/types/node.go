@@ -87,15 +87,15 @@ type NodeInfo struct {
 	LastSeen   time.Time  `json:"last_seen"`
 
 	// Resources
-	CPUTotal        int   `json:"cpu_total"`        // MHz
-	CPUAvailable    int   `json:"cpu_available"`
-	MemoryTotal     int64 `json:"memory_total"`     // MB
-	MemoryAvailable int64 `json:"memory_available"`
-	DiskTotal       int64 `json:"disk_total"`       // MB, capacity of the filesystem hosting work_dir
-	DiskAvailable   int64 `json:"disk_available"`   // MB
-	DiskType        DiskType `json:"disk_type"`     // ssd | hdd | unknown
-	SwapTotal       int64 `json:"swap_total"`       // MB
-	SwapAvailable   int64 `json:"swap_available"`   // MB
+	CPUTotal        int      `json:"cpu_total"` // MHz
+	CPUAvailable    int      `json:"cpu_available"`
+	MemoryTotal     int64    `json:"memory_total"` // MB
+	MemoryAvailable int64    `json:"memory_available"`
+	DiskTotal       int64    `json:"disk_total"`     // MB, capacity of the filesystem hosting work_dir
+	DiskAvailable   int64    `json:"disk_available"` // MB
+	DiskType        DiskType `json:"disk_type"`      // ssd | hdd | unknown
+	SwapTotal       int64    `json:"swap_total"`     // MB
+	SwapAvailable   int64    `json:"swap_available"` // MB
 
 	// Self — resource use of the asty agent process itself on this node.
 	// Sampled by the agent so the UI can show "Asty CPU/RAM/Disk" tiles
@@ -116,7 +116,7 @@ type NodeInfo struct {
 	NATSOutMsgs           int64   `json:"nats_out_msgs"` // monotonic counter
 	NATSJetStreamMessages int64   `json:"nats_jetstream_messages"`
 	NATSJetStreamBytes    int64   `json:"nats_jetstream_bytes"` // JetStream on-disk size
-	NATSDiskMB            int64   `json:"nats_disk_mb"`          // total NATS footprint = binary baseline + JS bytes
+	NATSDiskMB            int64   `json:"nats_disk_mb"`         // total NATS footprint = binary baseline + JS bytes
 
 	// Processes
 	Processes []string `json:"processes"` // list of service names

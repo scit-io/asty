@@ -54,4 +54,3 @@ func (gw *Gateway) wsConnGuard() (bool, func()) {
 		gw.rl.wsConns.Add(-1)
 	}
 }
-

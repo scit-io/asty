@@ -25,16 +25,16 @@ type ClusterStatusPayload struct {
 type ServiceWithUsage struct {
 	*ServiceDefinition
 
-	CurrentCopies      int     `json:"current_copies"`
-	AvgCPUPercent      float64 `json:"avg_cpu_percent"`
-	AvgMemoryPercent   float64 `json:"avg_memory_percent"`
-	AvgCPUMHz          float64 `json:"avg_cpu_mhz"`
-	AvgMemoryMB        float64 `json:"avg_memory_mb"`
+	CurrentCopies    int     `json:"current_copies"`
+	AvgCPUPercent    float64 `json:"avg_cpu_percent"`
+	AvgMemoryPercent float64 `json:"avg_memory_percent"`
+	AvgCPUMHz        float64 `json:"avg_cpu_mhz"`
+	AvgMemoryMB      float64 `json:"avg_memory_mb"`
 
-	MinCopies          int    `json:"min_copies"`
-	TargetCPU          int    `json:"target_cpu"`
-	TargetMemory       int    `json:"target_memory"`
-	TrafficThreshold   int    `json:"traffic_threshold"`
+	MinCopies          int           `json:"min_copies"`
+	TargetCPU          int           `json:"target_cpu"`
+	TargetMemory       int           `json:"target_memory"`
+	TrafficThreshold   int           `json:"traffic_threshold"`
 	CooldownUpActive   bool          `json:"cooldown_up_active"`
 	CooldownDownActive bool          `json:"cooldown_down_active"`
 	LastAction         ScalingAction `json:"last_action,omitempty"`

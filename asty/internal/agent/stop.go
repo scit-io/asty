@@ -14,7 +14,8 @@ import (
 // for a process that does not actually exist on this node.
 //
 // The status sequence is:
-//   Running → Stopping (right after dispatch) → Stopped (on confirmed exit)
+//
+//	Running → Stopping (right after dispatch) → Stopped (on confirmed exit)
 //
 // AllocStopping is the explicit "graceful exit in flight" window —
 // the slot is still occupied so the scheduler does not race another

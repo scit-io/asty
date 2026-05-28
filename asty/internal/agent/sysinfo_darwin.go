@@ -134,4 +134,3 @@ func detectDiskType(override string) types.DiskType {
 	}
 	return types.DiskSSD
 }
-

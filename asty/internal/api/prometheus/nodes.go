@@ -35,7 +35,7 @@ func newNodeCollector(ctx Context) *nodeCollector {
 	statusLabels := []string{"node_id", "datacenter", "status"}
 	diskTypeLabels := []string{"node_id", "datacenter", "disk_type"}
 	return &nodeCollector{
-		ctx:           ctx,
+		ctx: ctx,
 		cpuTotal: prometheusclient.NewDesc("asty_node_cpu_total_mhz",
 			"Total CPU capacity reported by the node, in MHz.", common, nil),
 		cpuAvailable: prometheusclient.NewDesc("asty_node_cpu_available_mhz",

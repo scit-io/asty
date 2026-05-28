@@ -52,9 +52,9 @@ func (a *Agent) publishHeartbeat(ctx context.Context) {
 // Cache flow:
 //   - Observed Draining/Drained/Paused → cache it.
 //   - Observed Ready/Joining            → clear cache (operator's intent
-//                                          was cleared, OR fresh node).
+//     was cleared, OR fresh node).
 //   - Read failed (empty status)         → restore from cache if any,
-//                                          otherwise default by capacity.
+//     otherwise default by capacity.
 //
 // Without the cache, a transient KV failure during cluster growth
 // would let the next UpdateNode write default Ready over Drained.

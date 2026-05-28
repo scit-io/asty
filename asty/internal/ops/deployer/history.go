@@ -136,4 +136,3 @@ func (d *Deployer) GetHistory() []DeploymentRecord {
 	}
 	return out
 }
-

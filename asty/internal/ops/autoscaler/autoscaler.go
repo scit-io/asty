@@ -6,8 +6,8 @@ import (
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/ops/autoscaler/metrics"
 	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/ops/autoscaler/metrics"
 	"asty/asty/internal/ops/scheduler"
 )
 

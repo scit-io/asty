@@ -32,7 +32,7 @@ type natsCollector struct {
 func newNATSCollector(ctx Context) *natsCollector {
 	common := []string{"node_id", "datacenter"}
 	return &natsCollector{
-		ctx:           ctx,
+		ctx: ctx,
 		cpuPercent: prometheusclient.NewDesc("asty_node_nats_cpu_percent",
 			"CPU% of the local NATS server (varz.cpu).", common, nil),
 		memoryMB: prometheusclient.NewDesc("asty_node_nats_memory_mb",

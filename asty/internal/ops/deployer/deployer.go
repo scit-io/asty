@@ -42,11 +42,11 @@ type DeploymentRecord struct {
 // the rollback.
 type RollbackStep struct {
 	Timestamp time.Time `json:"timestamp"`
-	NodeID    string    `json:"node_id,omitempty"`     // empty for the batch-wait verdict
+	NodeID    string    `json:"node_id,omitempty"` // empty for the batch-wait verdict
 	FromVer   string    `json:"from_version"`
 	ToVer     string    `json:"to_version"`
-	Action    string    `json:"action"`                // "mark_pending", "send_update", "wait_health"
-	Outcome   string    `json:"outcome"`               // "ok" | "error"
+	Action    string    `json:"action"`  // "mark_pending", "send_update", "wait_health"
+	Outcome   string    `json:"outcome"` // "ok" | "error"
 	Error     string    `json:"error,omitempty"`
 }
 

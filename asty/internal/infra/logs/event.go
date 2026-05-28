@@ -11,14 +11,14 @@ import (
 // tags. Keep field names in lockstep with the LogEvent type in
 // asty/web/src/types/index.ts.
 type Event struct {
-	Time      int64           `json:"time,omitempty"`      // zerolog "time" (Unix seconds).
-	Timestamp int64           `json:"timestamp,omitempty"` // redundant copy added by TimestampHook.
-	Level     string          `json:"level,omitempty"`
-	Component string          `json:"component,omitempty"` // server | agent | gateway | drainer | …
-	Message   string          `json:"message,omitempty"`
-	Err       string          `json:"error,omitempty"` // zerolog .Err() default key.
-	Fields    map[string]any  `json:"fields,omitempty"`
-	Line      string          `json:"line,omitempty"` // raw stdout from a managed process.
+	Time      int64          `json:"time,omitempty"`      // zerolog "time" (Unix seconds).
+	Timestamp int64          `json:"timestamp,omitempty"` // redundant copy added by TimestampHook.
+	Level     string         `json:"level,omitempty"`
+	Component string         `json:"component,omitempty"` // server | agent | gateway | drainer | …
+	Message   string         `json:"message,omitempty"`
+	Err       string         `json:"error,omitempty"` // zerolog .Err() default key.
+	Fields    map[string]any `json:"fields,omitempty"`
+	Line      string         `json:"line,omitempty"` // raw stdout from a managed process.
 }
 
 // builtinKeys are the zerolog/Asty keys ParseEvent pulls into typed

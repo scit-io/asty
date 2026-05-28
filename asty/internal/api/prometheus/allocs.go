@@ -29,7 +29,7 @@ func newAllocCollector(ctx Context) *allocCollector {
 	healthLabels := []string{"service", "node_id", "alloc_id", "state"}
 	statusLabels := []string{"service", "node_id", "alloc_id", "status"}
 	return &allocCollector{
-		ctx:           ctx,
+		ctx: ctx,
 		cpuPercent: prometheusclient.NewDesc("asty_alloc_cpu_percent",
 			"CPU% consumed by the allocation's process.", common, nil),
 		memoryMB: prometheusclient.NewDesc("asty_alloc_memory_mb",

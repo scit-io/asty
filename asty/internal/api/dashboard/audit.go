@@ -85,12 +85,13 @@ func (r *statusRecorder) WriteHeader(status int) {
 // every write, but the subject doesn't grow unbounded.
 //
 // Expected shapes (after http.StripPrefix):
-//   POST /nodes/{id}/drain
-//   POST /nodes/{id}/pause
-//   POST /nodes/{id}/allocations/{aid}/restart
-//   POST /nodes/{id}/allocations/{aid}/stop
-//   POST /services/{name}/scale
-//   POST /services/{name}/deploy
+//
+//	POST /nodes/{id}/drain
+//	POST /nodes/{id}/pause
+//	POST /nodes/{id}/allocations/{aid}/restart
+//	POST /nodes/{id}/allocations/{aid}/stop
+//	POST /services/{name}/scale
+//	POST /services/{name}/deploy
 func classifyPath(method, path string) (resource, action, nodeID, service, allocID string) {
 	parts := strings.Split(strings.Trim(path, "/"), "/")
 	if len(parts) == 0 || parts[0] == "" {
@@ -129,4 +130,3 @@ func classifyPath(method, path string) (resource, action, nodeID, service, alloc
 	}
 	return resource, strings.ToLower(method), nodeID, service, allocID
 }
-

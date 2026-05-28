@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/ops/autoscaler"
 	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/ops/autoscaler"
 	"asty/asty/internal/ops/scheduler"
 
 	"github.com/rs/zerolog/log"

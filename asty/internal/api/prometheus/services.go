@@ -21,7 +21,7 @@ type serviceCollector struct {
 func newServiceCollector(ctx Context) *serviceCollector {
 	labels := []string{"service"}
 	return &serviceCollector{
-		ctx:           ctx,
+		ctx: ctx,
 		copiesCurrent: prometheusclient.NewDesc("asty_service_copies_current",
 			"Number of live allocations (pending/starting/running) for the service.", labels, nil),
 		minCopies: prometheusclient.NewDesc("asty_service_min_copies",

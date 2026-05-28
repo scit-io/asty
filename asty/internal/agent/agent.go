@@ -12,11 +12,11 @@ import (
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/infra/kv"
 	"asty/asty/internal/infra/artifact"
+	"asty/asty/internal/infra/kv"
+	"asty/asty/internal/infra/metrics"
 	"asty/asty/internal/infra/probe"
 	"asty/asty/internal/infra/process"
-	"asty/asty/internal/infra/metrics"
 
 	"github.com/nats-io/nats.go"
 )

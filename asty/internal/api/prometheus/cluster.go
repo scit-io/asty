@@ -12,24 +12,24 @@ import (
 type clusterCollector struct {
 	ctx Context
 
-	cpuTotal       *prometheusclient.Desc
-	cpuAvailable   *prometheusclient.Desc
-	cpuUsed        *prometheusclient.Desc
-	memoryTotal    *prometheusclient.Desc
-	memoryAvail    *prometheusclient.Desc
-	memoryUsed     *prometheusclient.Desc
-	diskTotal      *prometheusclient.Desc
-	diskAvail      *prometheusclient.Desc
-	diskUsed       *prometheusclient.Desc
-	disksSSD       *prometheusclient.Desc
-	disksHDD       *prometheusclient.Desc
-	disksUnknown   *prometheusclient.Desc
-	swapTotal      *prometheusclient.Desc
-	swapAvail      *prometheusclient.Desc
-	swapUsed       *prometheusclient.Desc
-	rps            *prometheusclient.Desc
-	healthPercent  *prometheusclient.Desc
-	leader         *prometheusclient.Desc
+	cpuTotal      *prometheusclient.Desc
+	cpuAvailable  *prometheusclient.Desc
+	cpuUsed       *prometheusclient.Desc
+	memoryTotal   *prometheusclient.Desc
+	memoryAvail   *prometheusclient.Desc
+	memoryUsed    *prometheusclient.Desc
+	diskTotal     *prometheusclient.Desc
+	diskAvail     *prometheusclient.Desc
+	diskUsed      *prometheusclient.Desc
+	disksSSD      *prometheusclient.Desc
+	disksHDD      *prometheusclient.Desc
+	disksUnknown  *prometheusclient.Desc
+	swapTotal     *prometheusclient.Desc
+	swapAvail     *prometheusclient.Desc
+	swapUsed      *prometheusclient.Desc
+	rps           *prometheusclient.Desc
+	healthPercent *prometheusclient.Desc
+	leader        *prometheusclient.Desc
 }
 
 func newClusterCollector(ctx Context) *clusterCollector {

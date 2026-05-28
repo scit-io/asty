@@ -18,7 +18,7 @@ type deployCollector struct {
 
 func newDeployCollector(ctx Context) *deployCollector {
 	return &deployCollector{
-		ctx:           ctx,
+		ctx: ctx,
 		state: prometheusclient.NewDesc("asty_deploy_state",
 			"Latest deployment state for the service; value is always 1 — meaning lives on the `state` label.",
 			[]string{"service", "state"}, nil),

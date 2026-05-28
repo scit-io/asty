@@ -7,8 +7,8 @@ import (
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
-	"asty/asty/internal/infra/kv"
 	"asty/asty/internal/domain/proximity"
+	"asty/asty/internal/infra/kv"
 
 	"github.com/rs/zerolog/log"
 )
