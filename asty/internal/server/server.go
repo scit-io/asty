@@ -10,7 +10,6 @@ import (
 	"asty/asty/internal/ops/autoscaler"
 	autometrics "asty/asty/internal/ops/autoscaler/metrics"
 	"asty/asty/internal/ops/reconciler"
-	"asty/asty/internal/ops/discovery"
 	"asty/asty/internal/ops/leader"
 	"asty/asty/internal/infra/kv"
 	"asty/asty/internal/ops/deployer"
@@ -36,7 +35,6 @@ type Server struct {
 
 	clusterState    *kv.ClusterState
 	leaderElection  *leader.Election
-	nodeDiscovery   *discovery.NodeDiscovery
 	scheduler       *scheduler.Scheduler
 	autoscaler      *autoscaler.Autoscaler
 	proximityMatrix *proximity.Matrix

@@ -27,17 +27,6 @@ func (s *Server) watchLeadership(ctx context.Context) {
 	}
 }
 
-// watchClusterNodes is a thin adapter over node discovery: it logs the
-// current node list whenever DNS reports a change.
-func (s *Server) watchClusterNodes(ctx context.Context) {
-	s.nodeDiscovery.WatchNodes(ctx, func(nodes []string) {
-		log.Info().
-			Strs("nodes", nodes).
-			Int("count", len(nodes)).
-			Msg("cluster nodes updated")
-	})
-}
-
 // startLeaderWork spawns the controller under a sub-context derived
 // from the server context. Cancellation of that sub-context (on loss of
 // leadership) stops the controller — workers drain, watchers exit, the

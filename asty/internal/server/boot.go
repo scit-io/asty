@@ -9,7 +9,6 @@ import (
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/ops/autoscaler"
 	autometrics "asty/asty/internal/ops/autoscaler/metrics"
-	"asty/asty/internal/ops/discovery"
 	"asty/asty/internal/ops/leader"
 	"asty/asty/internal/infra/kv"
 	"asty/asty/internal/ops/deployer"
@@ -52,7 +51,6 @@ func (s *Server) Start(parent context.Context) error {
 		return err
 	}
 
-	go s.watchClusterNodes(ctx)
 	go s.watchSelfRemoval(ctx, cancel)
 	s.seedDevMockNodes()
 
@@ -70,9 +68,8 @@ func (s *Server) Start(parent context.Context) error {
 	return nil
 }
 
-// initInfra brings up NATS, cluster state, leader election, and the
-// node discovery client — everything the rest of the boot sequence
-// depends on.
+// initInfra brings up NATS, cluster state, and leader election —
+// everything the rest of the boot sequence depends on.
 func (s *Server) initInfra() error {
 	if err := s.connectNATS(); err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
@@ -93,7 +90,6 @@ func (s *Server) initInfra() error {
 		return fmt.Errorf("failed to initialize leader election: %w", err)
 	}
 	s.leaderElection = leaderElection
-	s.nodeDiscovery = discovery.New(s.cfg.Domain)
 	return nil
 }
 
