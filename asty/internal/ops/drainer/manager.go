@@ -67,11 +67,6 @@ func (op *drainOp) statusCopy() DrainStatus {
 	return op.status
 }
 
-type allocOnNode struct {
-	svc   *types.ServiceDefinition
-	alloc *types.ServiceAllocation
-}
-
 // NewDrainManager creates a drain manager. deps is typically the Server
 // itself; the interface lets tests inject fakes.
 func NewDrainManager(deps DrainDeps) *DrainManager {
@@ -176,49 +171,3 @@ func (dm *DrainManager) GetStatus(nodeID string) *DrainStatus {
 	return nil
 }
 
-// hasOtherReadyNode reports whether any node OTHER than nodeID is
-// effectively Ready. Used as the drain guard so we don't promise
-// migration when there's nothing to migrate to.
-func (dm *DrainManager) hasOtherReadyNode(nodeID string) bool {
-	nodes, err := dm.deps.GetClusterState().ListNodes()
-	if err != nil {
-		return false
-	}
-	now := time.Now()
-	for _, n := range nodes {
-		if n.ID == nodeID {
-			continue
-		}
-		if n.EffectiveStatus(now) == types.NodeReady {
-			return true
-		}
-	}
-	return false
-}
-
-// collectAllocs gathers every running/pending/starting allocation
-// currently bound to nodeID. Stopped/failed ones are ignored — they're
-// not contributing traffic and don't need migration. One Watch-based
-// snapshot beats N round-trips when the service list is long.
-func (dm *DrainManager) collectAllocs(nodeID string) []allocOnNode {
-	svcByName := make(map[string]*types.ServiceDefinition, len(dm.deps.GetServices()))
-	for _, svc := range dm.deps.GetServices() {
-		svcByName[svc.Name] = svc
-	}
-	all, err := dm.deps.GetClusterState().ListAllAllocations()
-	if err != nil {
-		return nil
-	}
-	var allocs []allocOnNode
-	for _, a := range all {
-		if a.NodeID != nodeID || !a.Status.IsLive() {
-			continue
-		}
-		svc, ok := svcByName[a.ServiceName]
-		if !ok {
-			continue
-		}
-		allocs = append(allocs, allocOnNode{svc: svc, alloc: a})
-	}
-	return allocs
-}
