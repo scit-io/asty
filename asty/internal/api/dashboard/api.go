@@ -184,5 +184,3 @@ func (api *API) writeError(w http.ResponseWriter, status int, message string, er
 
 	api.writeJSON(w, status, response)
 }
-
-var mustJSON = types.MustJSON
