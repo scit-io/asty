@@ -45,7 +45,7 @@ func (a *Agent) handleCommand(msg *nats.Msg) {
 		a.handleShutdownCommand(msg)
 	default:
 		log.Error().Str("kind", string(kind)).Msg("unknown command kind")
-		msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command kind: %s", kind)))
+		_ = msg.Respond(types.MarshalResponse(false, "", fmt.Errorf("unknown command kind: %s", kind)))
 	}
 }
 
@@ -53,7 +53,7 @@ func (a *Agent) handleRestartCommand(msg *nats.Msg) {
 	startCmd, err := types.ParseStartCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse restart command")
-		msg.Respond(types.MarshalResponse(false, "", err))
+		_ = msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -63,18 +63,18 @@ func (a *Agent) handleRestartCommand(msg *nats.Msg) {
 
 	if err := a.RestartService(startCmd.Service); err != nil {
 		log.Error().Err(err).Str("service", startCmd.Service.Name).Msg("failed to restart service")
-		msg.Respond(types.MarshalResponse(false, "", err))
+		_ = msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
-	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s restarted", startCmd.Service.Name), nil))
+	_ = msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s restarted", startCmd.Service.Name), nil))
 }
 
 func (a *Agent) handleStartCommand(msg *nats.Msg) {
 	startCmd, err := types.ParseStartCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse start command")
-		msg.Respond(types.MarshalResponse(false, "", err))
+		_ = msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -84,18 +84,18 @@ func (a *Agent) handleStartCommand(msg *nats.Msg) {
 
 	if err := a.StartService(startCmd.Service); err != nil {
 		log.Error().Err(err).Str("service", startCmd.Service.Name).Msg("failed to start service")
-		msg.Respond(types.MarshalResponse(false, "", err))
+		_ = msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
-	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
+	_ = msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s started", startCmd.Service.Name), nil))
 }
 
 func (a *Agent) handleStopCommand(msg *nats.Msg) {
 	stopCmd, err := types.ParseStopCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse stop command")
-		msg.Respond(types.MarshalResponse(false, "", err))
+		_ = msg.Respond(types.MarshalResponse(false, "", err))
 		return
 	}
 
@@ -103,7 +103,7 @@ func (a *Agent) handleStopCommand(msg *nats.Msg) {
 		Str("service", stopCmd.ServiceName).
 		Msg("stopping service")
 
-	msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s stop initiated", stopCmd.ServiceName), nil))
+	_ = msg.Respond(types.MarshalResponse(true, fmt.Sprintf("service %s stop initiated", stopCmd.ServiceName), nil))
 
 	go func() {
 		if err := a.StopService(stopCmd.ServiceName); err != nil {
@@ -117,7 +117,7 @@ func (a *Agent) handleStopCommand(msg *nats.Msg) {
 // node) runs — same flow as SIGTERM in start.sh remove.
 func (a *Agent) handleShutdownCommand(msg *nats.Msg) {
 	log.Info().Str("node_id", a.nodeID).Msg("shutdown command received")
-	msg.Respond(types.MarshalResponse(true, "shutdown initiated", nil))
+	_ = msg.Respond(types.MarshalResponse(true, "shutdown initiated", nil))
 	a.shutdownFn()
 }
 
@@ -125,7 +125,7 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg) {
 	logsCmd, err := types.ParseGetLogsCommand(msg.Data)
 	if err != nil {
 		log.Error().Err(err).Msg("failed to parse logs command")
-		msg.Respond(types.MarshalLogsResponse(nil, err))
+		_ = msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
@@ -142,14 +142,14 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg) {
 	if !exists {
 		err := fmt.Errorf("service %s not running", logsCmd.ServiceName)
 		log.Warn().Err(err).Str("service", logsCmd.ServiceName).Msg("service not found")
-		msg.Respond(types.MarshalLogsResponse(nil, err))
+		_ = msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
 	logData, err := proc.GetLogs(logsCmd.Lines)
 	if err != nil {
 		log.Error().Err(err).Str("service", logsCmd.ServiceName).Msg("failed to get logs")
-		msg.Respond(types.MarshalLogsResponse(nil, err))
+		_ = msg.Respond(types.MarshalLogsResponse(nil, err))
 		return
 	}
 
@@ -167,5 +167,5 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg) {
 		Int("line_count", len(logLines)).
 		Msg("logs retrieved")
 
-	msg.Respond(types.MarshalLogsResponse(logLines, nil))
+	_ = msg.Respond(types.MarshalLogsResponse(logLines, nil))
 }
