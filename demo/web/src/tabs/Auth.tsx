@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { apiCall } from '../api';
 
-export default function AuthTab() {
+type Props = { onAuthChanged: () => void };
+
+export default function AuthTab({ onAuthChanged }: Props) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('password');
   const [out, setOut] = useState<string>('');
@@ -16,20 +18,21 @@ export default function AuthTab() {
       setOut(`[${label}] error: ${String(e)}`);
     } finally {
       setBusy(false);
+      onAuthChanged();
     }
   };
 
   const login = () =>
     run('login', () =>
-      apiCall('/v1/xauth/login', {
+      apiCall('/api/v1/xauth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password }),
       }),
     );
 
-  const me = () => run('me', () => apiCall('/v1/xauth/me', { method: 'POST' }));
-  const refresh = () => run('refresh', () => apiCall('/v1/xauth/refresh', { method: 'POST' }));
-  const logout = () => run('logout', () => apiCall('/v1/xauth/logout', { method: 'POST' }));
+  const me = () => run('me', () => apiCall('/api/v1/xauth/me', { method: 'POST' }));
+  const refresh = () => run('refresh', () => apiCall('/api/v1/xauth/refresh', { method: 'POST' }));
+  const logout = () => run('logout', () => apiCall('/api/v1/xauth/logout', { method: 'POST' }));
 
   return (
     <section>

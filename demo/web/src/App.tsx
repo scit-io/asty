@@ -1,29 +1,55 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { apiCall, BASE } from './api';
 import AuthTab from './tabs/Auth';
 import CrudTab from './tabs/Crud';
 import WsTab from './tabs/Ws';
 
 type TabKey = 'auth' | 'crud' | 'ws';
+type AuthState = { authed: boolean; sub?: string } | null;
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>('auth');
   const [health, setHealth] = useState<string>('…');
+  const [auth, setAuth] = useState<AuthState>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    const check = async () => {
-      const r = await apiCall<{ status: string; nats: string }>('/health');
-      if (cancelled) return;
-      setHealth(r.ok ? `ok (nats: ${r.data?.nats ?? '?'})` : `down (${r.status})`);
-    };
-    check();
-    const t = setInterval(check, 5000);
-    return () => {
-      cancelled = true;
-      clearInterval(t);
-    };
+  const checkHealth = useCallback(async () => {
+    const r = await apiCall<{ status: string; nats: string }>('/health');
+    setHealth(r.ok ? `ok (nats: ${r.data?.nats ?? '?'})` : `down (${r.status})`);
   }, []);
+
+  const checkAuth = useCallback(async () => {
+    const r = await apiCall<{ sub: string; exp: number; iat: number }>('/api/v1/xauth/me', {
+      method: 'POST',
+    });
+    setAuth(r.ok ? { authed: true, sub: r.data?.sub } : { authed: false });
+  }, []);
+
+  // Event-driven, no setInterval: probe on mount, then re-probe when
+  // the tab becomes visible or the network comes back. Auth also
+  // re-fires from AuthTab via onAuthChanged after every user action.
+  useEffect(() => {
+    checkHealth();
+    checkAuth();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        checkHealth();
+        checkAuth();
+      }
+    };
+    const onOnline = () => {
+      checkHealth();
+      checkAuth();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('online', onOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('online', onOnline);
+    };
+  }, [checkHealth, checkAuth]);
+
+  const authLabel =
+    auth === null ? '…' : auth.authed ? `signed in as ${auth.sub ?? '?'}` : 'not signed in';
 
   return (
     <div className="app">
@@ -32,6 +58,7 @@ export default function App() {
         <div className="meta">
           <span>Gateway: <code>{BASE || '(proxy)'}</code></span>
           <span>Health: <code>{health}</code></span>
+          <span>Auth: <code>{authLabel}</code></span>
         </div>
         <nav>
           <button className={tab === 'auth' ? 'active' : ''} onClick={() => setTab('auth')}>xauth</button>
@@ -40,7 +67,7 @@ export default function App() {
         </nav>
       </header>
       <main>
-        {tab === 'auth' && <AuthTab />}
+        {tab === 'auth' && <AuthTab onAuthChanged={checkAuth} />}
         {tab === 'crud' && <CrudTab />}
         {tab === 'ws' && <WsTab />}
       </main>

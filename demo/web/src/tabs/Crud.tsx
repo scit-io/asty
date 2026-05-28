@@ -11,9 +11,13 @@ type Item = {
 
 export default function CrudTab() {
   const [items, setItems] = useState<Item[]>([]);
-  const [name, setName] = useState('');
-  const [value, setValue] = useState('');
+  const [createName, setCreateName] = useState('');
+  const [createValue, setCreateValue] = useState('');
   const [getId, setGetId] = useState('');
+  const [updateId, setUpdateId] = useState('');
+  const [updateName, setUpdateName] = useState('');
+  const [updateValue, setUpdateValue] = useState('');
+  const [deleteId, setDeleteId] = useState('');
   const [out, setOut] = useState<string>('');
   const [busy, setBusy] = useState(false);
 
@@ -21,7 +25,7 @@ export default function CrudTab() {
 
   const list = async () => {
     setBusy(true);
-    const r = await apiCall<Item[]>('/v1/xhttp/list', { method: 'POST', body: '{}' });
+    const r = await apiCall<Item[]>('/api/v1/xhttp/list', { method: 'POST', body: '{}' });
     if (r.ok && Array.isArray(r.data)) setItems(r.data);
     show('list', r);
     setBusy(false);
@@ -29,14 +33,14 @@ export default function CrudTab() {
 
   const create = async () => {
     setBusy(true);
-    const r = await apiCall<Item>('/v1/xhttp/create', {
+    const r = await apiCall<Item>('/api/v1/xhttp/create', {
       method: 'POST',
-      body: JSON.stringify({ name, value }),
+      body: JSON.stringify({ name: createName, value: createValue }),
     });
     show('create', r);
     if (r.ok) {
-      setName('');
-      setValue('');
+      setCreateName('');
+      setCreateValue('');
       await list();
     }
     setBusy(false);
@@ -44,7 +48,7 @@ export default function CrudTab() {
 
   const get = async () => {
     setBusy(true);
-    const r = await apiCall<Item>('/v1/xhttp/get', {
+    const r = await apiCall<Item>('/api/v1/xhttp/get', {
       method: 'POST',
       body: JSON.stringify({ id: Number(getId) }),
     });
@@ -52,30 +56,28 @@ export default function CrudTab() {
     setBusy(false);
   };
 
-  const update = async (it: Item) => {
-    const newName = prompt('name', it.name);
-    if (newName === null) return;
-    const newValue = prompt('value', it.value);
-    if (newValue === null) return;
+  const update = async () => {
     setBusy(true);
-    const r = await apiCall<Item>('/v1/xhttp/update', {
+    const r = await apiCall<Item>('/api/v1/xhttp/update', {
       method: 'POST',
-      body: JSON.stringify({ id: it.id, name: newName, value: newValue }),
+      body: JSON.stringify({ id: Number(updateId), name: updateName, value: updateValue }),
     });
     show('update', r);
-    await list();
+    if (r.ok) await list();
     setBusy(false);
   };
 
-  const del = async (id: number) => {
-    if (!confirm(`Delete #${id}?`)) return;
+  const del = async () => {
     setBusy(true);
-    const r = await apiCall(`/v1/xhttp/delete`, {
+    const r = await apiCall('/api/v1/xhttp/delete', {
       method: 'POST',
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id: Number(deleteId) }),
     });
     show('delete', r);
-    await list();
+    if (r.ok) {
+      setDeleteId('');
+      await list();
+    }
     setBusy(false);
   };
 
@@ -83,22 +85,106 @@ export default function CrudTab() {
     <section>
       <h2>xhttp — CRUD</h2>
 
-      <div className="row">
-        <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} />
-        <button className="primary" disabled={busy || !name} onClick={create}>create</button>
-      </div>
-
-      <div className="row">
-        <button className="secondary" disabled={busy} onClick={list}>list</button>
-        <input
-          placeholder="id"
-          value={getId}
-          onChange={(e) => setGetId(e.target.value)}
-          style={{ width: 80 }}
-        />
-        <button className="secondary" disabled={busy || !getId} onClick={get}>get by id</button>
-      </div>
+      <table className="handles">
+        <thead>
+          <tr>
+            <th style={{ width: 90 }}>Endpoint</th>
+            <th>Inputs</th>
+            <th style={{ width: 70 }}>Auth</th>
+            <th style={{ width: 110 }}>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>create</code></td>
+            <td>
+              <div className="row" style={{ margin: 0 }}>
+                <input placeholder="name" value={createName} onChange={(e) => setCreateName(e.target.value)} />
+                <input placeholder="value" value={createValue} onChange={(e) => setCreateValue(e.target.value)} />
+              </div>
+            </td>
+            <td><code>required</code></td>
+            <td>
+              <button
+                className="primary"
+                disabled={busy || !createName}
+                onClick={create}
+              >
+                create
+              </button>
+            </td>
+          </tr>
+          <tr>
+            <td><code>list</code></td>
+            <td />
+            <td><code>optional</code></td>
+            <td>
+              <button className="secondary" disabled={busy} onClick={list}>list</button>
+            </td>
+          </tr>
+          <tr>
+            <td><code>get</code></td>
+            <td>
+              <input
+                placeholder="id"
+                value={getId}
+                onChange={(e) => setGetId(e.target.value)}
+                style={{ width: 80 }}
+              />
+            </td>
+            <td><code>optional</code></td>
+            <td>
+              <button className="secondary" disabled={busy || !getId} onClick={get}>get</button>
+            </td>
+          </tr>
+          <tr>
+            <td><code>update</code></td>
+            <td>
+              <div className="row" style={{ margin: 0 }}>
+                <input
+                  placeholder="id"
+                  value={updateId}
+                  onChange={(e) => setUpdateId(e.target.value)}
+                  style={{ width: 80 }}
+                />
+                <input placeholder="name" value={updateName} onChange={(e) => setUpdateName(e.target.value)} />
+                <input placeholder="value" value={updateValue} onChange={(e) => setUpdateValue(e.target.value)} />
+              </div>
+            </td>
+            <td><code>required</code></td>
+            <td>
+              <button
+                className="secondary"
+                disabled={busy || !updateId || !updateName}
+                onClick={update}
+              >
+                update
+              </button>
+            </td>
+          </tr>
+          <tr>
+            <td><code>delete</code></td>
+            <td>
+              <input
+                placeholder="id"
+                value={deleteId}
+                onChange={(e) => setDeleteId(e.target.value)}
+                style={{ width: 80 }}
+              />
+            </td>
+            <td><code>required</code></td>
+            <td>
+              <button
+                className="secondary"
+                disabled={busy || !deleteId}
+                onClick={del}
+              >
+                delete
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
 
       {items.length > 0 && (
         <table>
@@ -108,7 +194,6 @@ export default function CrudTab() {
               <th>name</th>
               <th>value</th>
               <th>updated</th>
-              <th></th>
             </tr>
           </thead>
           <tbody>
@@ -118,17 +203,13 @@ export default function CrudTab() {
                 <td>{it.name}</td>
                 <td>{it.value}</td>
                 <td>{new Date(it.updated_at).toLocaleString()}</td>
-                <td>
-                  <button className="secondary" disabled={busy} onClick={() => update(it)}>edit</button>{' '}
-                  <button className="secondary" disabled={busy} onClick={() => del(it.id)}>del</button>
-                </td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
 
-      <pre className="out">{out || 'Press "list" to see the records.'}</pre>
+      <pre className="out">{out || 'Press an action — the response appears here.'}</pre>
     </section>
   );
 }

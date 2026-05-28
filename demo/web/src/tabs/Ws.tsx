@@ -21,7 +21,7 @@ export default function WsTab() {
 
   const connect = () => {
     if (wsRef.current) return;
-    const url = wsURL('/v1/xws/ws');
+    const url = wsURL('/api/v1/xws/ws');
     push('sys', `connecting to ${url}`);
     setStatus('connecting');
     const ws = new WebSocket(url);
