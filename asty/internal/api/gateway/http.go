@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"asty/asty/internal/core/netutil"
+
 	"github.com/nats-io/nats.go"
 )
 
@@ -25,7 +27,7 @@ func (gw *Gateway) handleHTTP(w http.ResponseWriter, r *http.Request, service st
 	reqID := newRequestID()
 	method := strings.Join(methodParts, ".")
 	subject := fmt.Sprintf("api.v1.%s.%s", service, method)
-	ip := realIP(r, gw.cfg.RateLimit.TrustedProxy)
+	ip := netutil.RealIP(r, gw.cfg.RateLimit.TrustedProxy)
 	start := time.Now()
 
 	gw.log.Info().Str("req", reqID).Str("method", r.Method).Str("path", r.URL.Path).Str("ip", ip).Msg("→")

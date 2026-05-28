@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/config"
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog"
@@ -216,9 +217,9 @@ func TestRealIP(t *testing.T) {
 			if tc.xRealIP != "" {
 				r.Header.Set("X-Real-IP", tc.xRealIP)
 			}
-			got := realIP(r, tc.trustedProxy)
+			got := netutil.RealIP(r, tc.trustedProxy)
 			if got != tc.want {
-				t.Errorf("realIP() = %q, want %q", got, tc.want)
+				t.Errorf("RealIP() = %q, want %q", got, tc.want)
 			}
 		})
 	}

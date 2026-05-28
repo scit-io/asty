@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/codec"
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog/log"
@@ -41,7 +42,7 @@ func (api *API) auditLog(h http.HandlerFunc) http.HandlerFunc {
 			NodeID:    nodeID,
 			Service:   service,
 			AllocID:   allocID,
-			ActorIP:   realIP(r),
+			ActorIP:   netutil.RealIP(r, api.cfg.Gateway.RateLimit.TrustedProxy),
 			RequestID: r.Header.Get("X-Request-Id"),
 			At:        time.Now(),
 		}
@@ -129,19 +130,3 @@ func classifyPath(method, path string) (resource, action, nodeID, service, alloc
 	return resource, strings.ToLower(method), nodeID, service, allocID
 }
 
-// realIP returns the client IP for the audit ActorIP field. Honours
-// X-Forwarded-For if cfg.Gateway.RateLimit.TrustedProxy is set —
-// otherwise it falls back to RemoteAddr. We deliberately do NOT
-// trust XFF on every request because that's the standard
-// header-spoof vector; only when an operator has explicitly named
-// a trusted proxy.
-func realIP(r *http.Request) string {
-	// We don't have cfg here; keep it simple — RemoteAddr is the
-	// truthful source unless a future change wires the trusted-proxy
-	// list into the audit middleware.
-	addr := r.RemoteAddr
-	if i := strings.LastIndex(addr, ":"); i > 0 {
-		return addr[:i]
-	}
-	return addr
-}

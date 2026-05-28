@@ -1,8 +1,9 @@
 package gateway
 
 import (
-	"net"
 	"net/http"
+
+	"asty/asty/internal/core/netutil"
 )
 
 // middlewareRateLimit applies per-IP rate limiting to /v1/ routes.
@@ -15,7 +16,7 @@ import (
 // /health bypasses this chain entirely.
 func (gw *Gateway) middlewareRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := realIP(r, gw.cfg.RateLimit.TrustedProxy)
+		ip := netutil.RealIP(r, gw.cfg.RateLimit.TrustedProxy)
 
 		if allowed, prefix := gw.rl.allowPath(ip, r.URL.Path); prefix != "" {
 			if !allowed {
@@ -54,23 +55,3 @@ func (gw *Gateway) wsConnGuard() (bool, func()) {
 	}
 }
 
-// realIP returns the client IP. X-Real-IP is accepted only when the
-// request came from trustedProxy (Cloudflare, LB). Empty trustedProxy
-// or a mismatch falls back to r.RemoteAddr.
-func realIP(r *http.Request, trustedProxy string) string {
-	if trustedProxy != "" {
-		remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-		if remoteIP == trustedProxy {
-			if ip := r.Header.Get("X-Real-IP"); ip != "" {
-				if parsed := net.ParseIP(ip); parsed != nil {
-					return parsed.String()
-				}
-			}
-		}
-	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return ip
-}
