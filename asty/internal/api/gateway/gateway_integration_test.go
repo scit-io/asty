@@ -276,7 +276,8 @@ func testRecover(log zerolog.Logger, next nats.MsgHandler) nats.MsgHandler {
 				}
 				out := nats.NewMsg(msg.Reply)
 				out.Header.Set("Content-Type", "application/json")
-				out.Header.Set("Status", "500")
+				out.Header.Set("Nats-Service-Error-Code", "500")
+				out.Header.Set("Nats-Service-Error", "internal server error")
 				out.Data = []byte(`{"error":"internal server error"}`)
 				_ = msg.RespondMsg(out)
 			}

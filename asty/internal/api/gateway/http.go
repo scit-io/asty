@@ -115,24 +115,31 @@ func (gw *Gateway) natsRoundTrip(ctx context.Context, msg *nats.Msg) (*nats.Msg,
 
 // writeResponse copies headers from the NATS reply to the HTTP
 // response, picks the status code, and returns it.
+//
+// Status comes from ADR-32 service-error headers — the canonical NATS
+// service-error contract. A reply with no Nats-Service-Error-Code is
+// success → 200. Codes outside 100..599 collapse to 500 (valid per
+// spec but not expressible as HTTP statuses). The two ADR-32 headers
+// themselves are not propagated to the HTTP response; they're
+// NATS-wire metadata, not HTTP semantics.
+//
+// Header copy uses Add so multi-value headers (e.g. multiple
+// Set-Cookie on login) survive intact.
 func writeResponse(w http.ResponseWriter, resp *nats.Msg, reqID string) int {
 	statusCode := http.StatusOK
+	if code, _ := readServiceError(resp.Header); code != 0 {
+		if code >= 100 && code <= 599 {
+			statusCode = code
+		} else {
+			statusCode = http.StatusInternalServerError
+		}
+	}
 	for k, values := range resp.Header {
-		switch k {
-		case "Status":
-			if len(values) > 0 {
-				if n := parseStatus(values[0]); n != 0 {
-					statusCode = n
-				}
-			}
-		case "Set-Cookie":
-			for _, v := range values {
-				w.Header().Add("Set-Cookie", v)
-			}
-		default:
-			if len(values) > 0 {
-				w.Header().Set(k, values[0])
-			}
+		if k == natsServiceErrorCode || k == natsServiceError {
+			continue
+		}
+		for _, v := range values {
+			w.Header().Add(k, v)
 		}
 	}
 	w.Header().Set("X-Request-Id", reqID)

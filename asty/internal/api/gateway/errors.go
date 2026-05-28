@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/nats-io/nats.go"
 )
 
 // isTimeoutError reports whether err is a net.Error-style read timeout.
@@ -50,12 +52,29 @@ func newRequestID() string {
 	return fmt.Sprintf("%x", b)
 }
 
-// parseStatus parses an HTTP status string into int, or returns 0
-// when the value is out of range — caller substitutes a default.
-func parseStatus(s string) int {
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 100 || n > 599 {
-		return 0
+// ADR-32 service-error headers — wire-protocol identifiers shared with
+// nats.go/micro.ErrorHeader / micro.ErrorCodeHeader. Not imported from
+// micro because the gateway is a NATS client, not a service; micro is
+// the service-side helper package and pulling it in just for two string
+// literals would be misleading.
+// https://github.com/nats-io/nats-architecture-and-design/blob/main/adr/ADR-32.md
+const (
+	natsServiceErrorCode = "Nats-Service-Error-Code"
+	natsServiceError     = "Nats-Service-Error"
+)
+
+// readServiceError extracts an ADR-32 service-error from a NATS reply.
+// Returns (0, "") when no error was signaled or the code is unparseable.
+// The spec ("safe to parse as a number") leaves the code range open;
+// callers map it to their own domain (HTTP status, WS close code).
+func readServiceError(h nats.Header) (code int, description string) {
+	raw := h.Get(natsServiceErrorCode)
+	if raw == "" {
+		return 0, ""
 	}
-	return n
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 0, ""
+	}
+	return n, h.Get(natsServiceError)
 }
