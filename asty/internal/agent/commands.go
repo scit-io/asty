@@ -1,8 +1,9 @@
 package agent
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
-	"strings"
 
 	"asty/asty/internal/core/types"
 
@@ -154,9 +155,13 @@ func (a *Agent) handleLogsCommand(msg *nats.Msg) {
 	}
 
 	// GetLogs already bounded the result to logsCmd.Lines lines; here we
-	// just split into individual entries and drop empties.
+	// just split into individual entries and drop empties. bufio.Scanner
+	// streams the dump instead of materialising every line up front, which
+	// matters for large follow-mode windows.
 	var logLines []string
-	for _, line := range strings.Split(string(logData), "\n") {
+	sc := bufio.NewScanner(bytes.NewReader(logData))
+	for sc.Scan() {
+		line := sc.Text()
 		if line != "" {
 			logLines = append(logLines, line)
 		}
