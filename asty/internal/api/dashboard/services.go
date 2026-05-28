@@ -121,7 +121,7 @@ func (api *API) handleServiceDeployHistory(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	all := api.ctx.Deployer().GetHistory()
-	filtered := make([]any, 0)
+	filtered := make([]deployer.DeploymentRecord, 0)
 	for _, rec := range all {
 		if rec.Service == serviceName {
 			filtered = append(filtered, rec)
