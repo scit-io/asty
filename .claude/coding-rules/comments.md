@@ -88,7 +88,7 @@ X_AUTH_ACCESS_SECRET  = "dev-access-secret"
 
 ## Files / packages
 
-`doc.go` per sub-package: 5–10 lines of `// Package X does Y.` plus background a new reader needs. Top-of-file comments for in-package splits document the slice of behaviour the file owns. See `file-layout.md`.
+`doc.go` per sub-package: 5–10 lines of `// Package X does Y.` plus background a new reader needs. Top-of-file comments for in-package splits document the slice of behaviour the file owns.
 
 ## What NOT to comment
 

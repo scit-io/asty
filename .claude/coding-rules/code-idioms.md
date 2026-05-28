@@ -1,6 +1,6 @@
 # Code idioms
 
-Code-style rules established in the Phase-6 refactor of the asty orchestrator package. Apply when writing or modifying Go code anywhere under the asty package root.
+Code-style rules for the asty orchestrator package. Apply when writing or modifying Go code anywhere under the asty package root.
 
 ## Use stdlib over handwritten utilities
 

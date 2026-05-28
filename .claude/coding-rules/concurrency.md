@@ -1,12 +1,12 @@
 # Concurrency — event-driven over polling
 
-Asty was deliberately converted from a polling architecture to an event-driven one in Phase 6.3. Follow these rules when adding code that needs to react to state changes.
+Asty is event-driven by design. Follow these rules when adding code that needs to react to state changes.
 
 ## Default to event-driven
 
 - For NATS KV state changes — use `state.WatchAllocations` / `state.WatchNodes` / `state.WatchAllocation` / `bucket.Watch`. The state package exposes a generic `watchKV` driver; build new watchers on top of it, not by polling `List*` in a ticker.
 - For process exits — use `Process.OnExit(fn func(err error))` callback or `<-Process.Done()` channel. Both fire from the monitor goroutine when the OS process exits.
-- For deploy/drain health waits — use `WatchAllocations` with a `healthTracker` state machine (see `features/deployment/tracker.go`).
+- For deploy/drain health waits — use `WatchAllocations` with a `healthTracker` state machine (see `ops/deployer/tracker.go`).
 
 ## Acceptable polling — only with documented rationale
 

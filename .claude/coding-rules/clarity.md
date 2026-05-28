@@ -1,6 +1,6 @@
 # Clarity — write for non-backend readers
 
-The asty orchestrator codebase is read by people without deep backend experience. Phase 6.4 of the refactor restructured code with that audience in mind. Apply these rules to new code as well.
+The asty orchestrator codebase is read by people without deep backend experience. Apply these rules to new code.
 
 ## Comments
 
@@ -10,13 +10,17 @@ All comment rules live in [comments.md](comments.md) — WHY-over-WHAT, key-focu
 
 `wait.go` waits, `tracker.go` tracks, `canary.go` does canary, `rolling.go` does rolling. A new reader can locate code by guessing the file name.
 
+## File size — ≤200 lines per Go file
+
+Hard cap, target 150–180. Anything past 200 should be split, in-package by default (multiple `.go` files in the same `package X`). Only carve out a sub-package when the split is a cohesive sub-feature with its own external surface — a sub-package forces import-path churn on every caller, so pay that cost only when the split is genuinely independent.
+
 ## No dead stubs
 
 Anything that returns `"not yet implemented"` with a 200 OK is forbidden. Either implement, or return `http.StatusNotImplemented` (501). Half-truth responses lie to operators.
 
 ## No half-finished functions
 
-If a method is unused or returns a placeholder, delete it. (Phase 6.2.10 removed the dead `Process.Context()` that returned a non-cancellable `context.Background()`.)
+If a method is unused or returns a placeholder, delete it.
 
 ## Magic numbers → named constants with rationale
 

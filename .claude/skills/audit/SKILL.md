@@ -187,7 +187,7 @@ report.
 2. **Rules first**: read `CLAUDE.md` + all `.claude/coding-rules/*.md`. Findings must reference these.
 3. **By layers**: 4–10 files in parallel via Read. Start at `core/`, move outward.
 4. **Grep antipatterns**: see "Useful commands".
-5. **Check documented exceptions** before flagging (e.g. file-size exceptions in `file-layout.md`).
+5. **Check documented exceptions** before flagging.
 6. **Check memory**: read `MEMORY.md`, especially `feedback_*` — verify each rule against current code.
 7. **Cite**: every finding gets `path:line` anchors.
 

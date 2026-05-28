@@ -9,7 +9,7 @@ Testing rules for the asty orchestrator package.
 - `go test -race -count=1 ./...` — must pass (concurrency is the rule, not the exception).
 - `go vet ./...` — must be clean (no warnings).
 
-Run them at the end of every phase / sub-phase. The Phase-6 refactor committed only when all four were green.
+Run them before every commit; all four must be green.
 
 ## Fixtures
 
