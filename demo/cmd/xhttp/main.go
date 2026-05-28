@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"asty/demo/internal/xhttp"
+	"asty/demo/middleware"
 
 	_ "github.com/lib/pq"
 
@@ -69,11 +70,11 @@ func main() {
 	}
 
 	root := srv.AddGroup("api.v1.xhttp")
-	root.AddEndpoint("create", micro.HandlerFunc(h.Create))
+	root.AddEndpoint("create", middleware.RequireAuthMicro(cfg.AccessSecret, h.Create))
 	root.AddEndpoint("get", micro.HandlerFunc(h.Get))
 	root.AddEndpoint("list", micro.HandlerFunc(h.List))
-	root.AddEndpoint("update", micro.HandlerFunc(h.Update))
-	root.AddEndpoint("delete", micro.HandlerFunc(h.Delete))
+	root.AddEndpoint("update", middleware.RequireAuthMicro(cfg.AccessSecret, h.Update))
+	root.AddEndpoint("delete", middleware.RequireAuthMicro(cfg.AccessSecret, h.Delete))
 
 	log.Info().Msg("xhttp started")
 

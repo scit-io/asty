@@ -8,8 +8,10 @@ import (
 	"syscall"
 
 	"asty/demo/internal/xws"
+	"asty/demo/middleware"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/micro"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -29,41 +31,38 @@ func main() {
 
 	mgr := xws.NewManager(nc, cfg.InactivityTimeout, log.Logger)
 
-	const (
-		connectSubject = "api.v1.xws.ws.connect"
-		queue          = "xws"
-	)
-
-	nc.Subscribe("xws.ping", func(msg *nats.Msg) {
-		msg.Respond([]byte("ok"))
+	srv, err := micro.AddService(nc, micro.Config{
+		Name:    "xws",
+		Version: "1.0.0",
 	})
+	if err != nil {
+		log.Fatal().Err(err).Msg("micro.AddService")
+	}
 
-	_, err = nc.QueueSubscribe(connectSubject, queue, func(msg *nats.Msg) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Error().Interface("panic", r).Msg("recover")
-			}
-		}()
-
-		sid := msg.Header.Get("Sid")
+	connect := middleware.RequireAuthMicro(cfg.AccessSecret, func(req micro.Request) {
+		sid := req.Headers().Get("Sid")
 		if sid == "" {
-			var req struct {
+			var body struct {
 				SID string `json:"sid"`
 			}
-			if json.Unmarshal(msg.Data, &req) != nil || req.SID == "" {
+			if json.Unmarshal(req.Data(), &body) != nil || body.SID == "" {
+				_ = req.Error("400", "missing sid", nil)
 				return
 			}
-			sid = req.SID
+			sid = body.SID
 		}
 		if !validSID.MatchString(sid) {
 			log.Warn().Str("sid", sid).Msg("invalid sid format")
+			_ = req.Error("400", "invalid sid format", nil)
 			return
 		}
 		mgr.Open(sid)
-		msg.Respond(nil)
+		_ = req.Respond(nil)
 	})
-	if err != nil {
-		log.Fatal().Err(err).Msg("QueueSubscribe")
+
+	root := srv.AddGroup("api.v1.xws.ws")
+	if err := root.AddEndpoint("connect", connect); err != nil {
+		log.Fatal().Err(err).Msg("AddEndpoint connect")
 	}
 
 	log.Info().Dur("inactivity_timeout", cfg.InactivityTimeout).Msg("xws started")
@@ -72,6 +71,7 @@ func main() {
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	<-sig
 
+	_ = srv.Stop()
 	mgr.CloseAll()
 	log.Info().Msg("xws stopped")
 }

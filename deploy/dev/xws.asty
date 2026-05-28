@@ -5,9 +5,6 @@
 # session for that client. Messages flow both ways until disconnect
 # or inactivity timeout.
 #
-# Unlike xauth/xhttp, xws does NOT use nats.go/micro — it's raw NATS.
-# So it exposes a custom "xws.ping" subject for health checks.
-#
 # Environment: LOCAL DEV
 
 name: xws           # Service identifier; matches binary name and NATS subject prefix
@@ -22,6 +19,7 @@ user: nobody        # OS user the process runs as (nobody — non-root, limits d
 kill_timeout: 10s   # Grace period after SIGTERM before SIGKILL
 
 env:
+  X_AUTH_ACCESS_SECRET: "${X_AUTH_ACCESS_SECRET}"        # HMAC key for verifying access tokens (shared with xauth)
   X_WS_INACTIVITY_TIMEOUT: "${X_WS_INACTIVITY_TIMEOUT}"  # Idle WS session lifetime (env-substituted at deploy)
 
 # Resource reservations for the scheduler.
@@ -29,13 +27,11 @@ resources:
   cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
   memory: 32        # Memory reservation in MB
 
-# Custom health subject because xws uses raw NATS (no micro $SRV.PING).
-# The service subscribes to "xws.ping" and responds with "ok".
 health:
-  type: nats        # Probe type (nats — request-reply; http — GET addr+path)
-  subject: xws.ping # NATS subject the service replies on (for type=nats)
-  interval: 10s     # Probe frequency
-  timeout: 3s       # Max wait for a reply before marking unhealthy
+  type: nats             # Probe type (nats — request-reply; http — GET addr+path)
+  subject: $SRV.PING.xws # NATS subject the service replies on (nats.go/micro auto-handler)
+  interval: 10s          # Probe frequency
+  timeout: 3s            # Max wait for a reply before marking unhealthy
 
 logs:
   max_files: 5      # Number of rotated log files retained
