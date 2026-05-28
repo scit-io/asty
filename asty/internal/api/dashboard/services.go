@@ -116,9 +116,9 @@ func (api *API) handleServiceScale(w http.ResponseWriter, r *http.Request) {
 			"cannot scale a system-type service; system services run one copy per node by definition", nil)
 		return
 	}
-	if cap := api.ctx.Config().Autoscale.MaxCopies; cap > 0 && req.Count > cap {
+	if maxCopies := api.ctx.Config().Autoscale.MaxCopies; maxCopies > 0 && req.Count > maxCopies {
 		api.writeError(w, http.StatusBadRequest,
-			fmt.Sprintf("count %d exceeds autoscaler max_copies %d", req.Count, cap), nil)
+			fmt.Sprintf("count %d exceeds autoscaler max_copies %d", req.Count, maxCopies), nil)
 		return
 	}
 	if err := api.ctx.ClusterState().SetServiceScale(serviceName, req.Count); err != nil {

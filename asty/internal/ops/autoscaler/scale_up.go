@@ -26,7 +26,7 @@ const trafficWindow = 60 * time.Second
 // is already reached. MaxCopies=0 means unlimited — the only ceiling
 // then is the number of healthy nodes the scheduler can place onto.
 func (as *Autoscaler) evaluateScaleUp(svc *types.ServiceDefinition, live []*types.ServiceAllocation, nodes []*types.NodeInfo) *ScalingDecision {
-	if cap := as.cfg.Autoscale.MaxCopies; cap > 0 && len(live) >= cap {
+	if maxCopies := as.cfg.Autoscale.MaxCopies; maxCopies > 0 && len(live) >= maxCopies {
 		return nil
 	}
 	if node := as.findNodeWithTrafficWithoutService(nodes, live); node != nil {
