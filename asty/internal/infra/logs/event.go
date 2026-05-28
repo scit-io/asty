@@ -26,7 +26,7 @@ type Event struct {
 // carries a "fields" object (re-parse of our own wire format) must
 // not let that container nest under itself. ParseEvent lifts it
 // directly into Event.Fields; the generic non-builtin loop below
-// then skips the same key so the demo's flat shape and the wire's
+// then skips the same key so the external producer's flat shape and the wire's
 // nested shape both end up as a single, un-doubled Fields map.
 var builtinKeys = map[string]struct{}{
 	"time": {}, "timestamp": {}, "level": {}, "component": {},

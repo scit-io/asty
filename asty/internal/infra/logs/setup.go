@@ -66,7 +66,7 @@ func AttachNATS(nc *nats.Conn, subject string) {
 }
 
 // For returns a child logger annotated with a sub-component tag.
-// Subsystems that own a logger field (gateway, demo handlers) take it
+// Subsystems that own a logger field (gateway, user-service handlers) take it
 // at construction; ad-hoc users can call this inline.
 func For(component string) zerolog.Logger {
 	return log.With().Str("component", component).Logger()
