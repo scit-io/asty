@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 
 type SwitchSize = 'default' | 'sm'
 
-interface SwitchProps extends React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> {
+type SwitchProps = React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root> & {
   size?: SwitchSize
 }
 
