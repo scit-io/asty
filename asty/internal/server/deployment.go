@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"time"
@@ -40,7 +39,7 @@ const (
 //
 // Refuses concurrent deploys for the same service via the deployer's
 // in-flight set — caller maps deployer.ErrDeployInFlight to a 409.
-func (s *Server) DeployService(_ context.Context, serviceName, version string) (*deployer.DeploymentStatus, error) {
+func (s *Server) DeployService(serviceName, version string) (*deployer.DeploymentStatus, error) {
 	if version == "" {
 		return nil, fmt.Errorf("version required")
 	}

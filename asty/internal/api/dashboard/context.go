@@ -1,8 +1,6 @@
 package dashboard
 
 import (
-	"context"
-
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/kv"
@@ -28,7 +26,7 @@ type ServerContext interface {
 	Deployer() *deployer.Deployer
 	NATSConn() *nats.Conn
 	StreamHub() StreamHub
-	DeployService(ctx context.Context, service, version string) (*deployer.DeploymentStatus, error)
+	DeployService(service, version string) (*deployer.DeploymentStatus, error)
 	StopServiceOnNode(nodeID, serviceName string) error
 	RestartServiceOnNode(nodeID, serviceName string) error
 	ShutdownAgent(nodeID string) error

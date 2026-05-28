@@ -97,7 +97,7 @@ func (api *API) handleServiceDeploy(w http.ResponseWriter, r *http.Request) {
 		api.writeError(w, http.StatusBadRequest, "version required", nil)
 		return
 	}
-	status, err := api.ctx.DeployService(r.Context(), serviceName, req.Version)
+	status, err := api.ctx.DeployService(serviceName, req.Version)
 	if err != nil {
 		if errors.Is(err, deployer.ErrDeployInFlight) {
 			api.writeError(w, http.StatusConflict, err.Error(), nil)
