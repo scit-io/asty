@@ -18,7 +18,7 @@ import (
 //
 // Mirror rule: every gauge here corresponds to something the web UI
 // also displays. When the UI gains a metric, add the matching gauge
-// here in the same PR (see CLAUDE.md > Observability).
+// here in the same PR.
 func Handler(ctx Context) http.Handler {
 	reg := prometheusclient.NewRegistry()
 

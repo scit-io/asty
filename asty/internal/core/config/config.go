@@ -44,11 +44,10 @@ func joinHostPort(host string, port int) string {
 	return fmt.Sprintf("%s:%d", host, port)
 }
 
-// AutoscaleConfig — controller and scaling thresholds. MaxCopies and
-// IdleHold come from TZ §5.2: the former caps runaway scale-up, the
-// latter requires the service to stay idle for a continuous window
-// before a scale-down decision fires (anti-flap hysteresis on top of
-// the cooldown gate).
+// AutoscaleConfig — controller and scaling thresholds. MaxCopies caps
+// runaway scale-up; IdleHold requires the service to stay idle for a
+// continuous window before a scale-down decision fires (anti-flap
+// hysteresis on top of the cooldown gate).
 type AutoscaleConfig struct {
 	MinCopies           int           `yaml:"min_copies"`
 	MaxCopies           int           `yaml:"max_copies"`
@@ -125,10 +124,10 @@ func (c *Config) Validate() error {
 	return c.Gateway.Validate()
 }
 
-// Validate enforces the autoscaler-sanity rules TZ §8.4 lists. These
-// are pure-numerical checks that don't depend on env / secret fields,
-// so they run for dev-mode configs too — a typo in min_copies hurts
-// just as much in dev as in prod.
+// Validate enforces the autoscaler-sanity rules — pure-numerical
+// checks that don't depend on env / secret fields, so they run for
+// dev-mode configs too: a typo in min_copies hurts just as much in
+// dev as in prod.
 func (a AutoscaleConfig) Validate() error {
 	if a.MinCopies < 1 {
 		return fmt.Errorf("autoscale.min_copies must be ≥ 1, got %d", a.MinCopies)

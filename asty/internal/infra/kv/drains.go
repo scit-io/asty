@@ -6,10 +6,10 @@ import (
 	"github.com/nats-io/nats.go"
 )
 
-// drainKey carries the most recent DrainStatus for a node. Per
-// TZ §6.1, drains/<nodeID> belongs in the asty-cluster bucket so
-// the operator can read the state of a drain even after the
-// originating server has been restarted or failed over.
+// drainKey carries the most recent DrainStatus for a node. Stored in
+// the asty-cluster bucket so the operator can read the state of a
+// drain even after the originating server has been restarted or
+// failed over.
 const drainKey = "node.%s.drain"
 
 // PutDrain writes the DrainStatus payload for `nodeID`, overwriting

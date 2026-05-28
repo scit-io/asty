@@ -17,7 +17,7 @@ import (
 //
 // Self-IP is filtered so a node never routes to itself. Env values
 // arrive through core/config; this function does not call os.Getenv
-// directly (TZ §2.9).
+// directly.
 func (a *Agent) resolveNATSPeers(selfIP string) []string {
 	if path := a.cfg.NATS.PeersFile; path != "" {
 		if raw, err := os.ReadFile(path); err == nil {

@@ -102,9 +102,9 @@ type DeploymentStatus struct {
 // deployer flag a service that failed auto_revert so the autoscaler
 // stops touching it; the operator clears the flag via the API once
 // they reconcile the mixed-version state. PutDeployment persists the
-// latest DeploymentRecord under `service.<name>.deployment` in KV
-// (TZ §6.1); callers ignore its error and log, since persistence is
-// observational, not authorisation.
+// latest DeploymentRecord under `service.<name>.deployment` in KV;
+// callers ignore its error and log, since persistence is observational,
+// not authorisation.
 //
 // Get/SetServiceVersion is the version pin scheduler.createAllocation
 // reads when placing new copies — Deploy is the sole writer so that

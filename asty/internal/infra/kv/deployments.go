@@ -9,8 +9,8 @@ import (
 )
 
 // deploymentKey is the KV key carrying the most recent deployment
-// record for a service. Per TZ §6.1 this lives alongside `nodes/`,
-// `allocs/`, `cooldowns/`, etc. in the asty-cluster bucket.
+// record for a service. Lives alongside `nodes/`, `allocs/`,
+// `cooldowns/`, etc. in the asty-cluster bucket.
 //
 // Schema convention: subjects use dots, not slashes, because
 // `nats.KeyValue` keys map onto JetStream subjects under the hood and

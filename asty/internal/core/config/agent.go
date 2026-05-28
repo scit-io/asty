@@ -2,8 +2,7 @@ package config
 
 // AgentConfig — agent-specific paths and capacity overrides. Capacity
 // overrides used to be read with os.Getenv at the point of use; they
-// now live here as part of the single-config-path discipline
-// (TZ §2.9).
+// now live here as part of the single-config-path discipline.
 //
 // The drop-root target is NOT configurable — when the agent starts as
 // root it drops to the dedicated `asty` user after bootstrap. See

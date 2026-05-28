@@ -36,14 +36,14 @@ func NewDownloader() *Downloader {
 //
 // URL schemes accepted: `https://...` (network fetch, the prod path),
 // `file://...` and the literal `local` (dev shortcuts). Plain `http://`
-// is rejected — TZ §10.2 mandates HTTPS for network fetches so the
-// agent never pulls an unverifiable payload over the wire.
+// is rejected — HTTPS is mandatory for network fetches so the agent
+// never pulls an unverifiable payload over the wire.
 func (d *Downloader) Download(url, checksum, destDir string) error {
 	if strings.HasPrefix(url, "file://") || url == "local" {
 		return d.copyLocal(url, destDir)
 	}
 	if !strings.HasPrefix(url, "https://") {
-		return fmt.Errorf("artifact URL must be https:// (got %q) — plain http or other schemes rejected per TZ §10.2", url)
+		return fmt.Errorf("artifact URL must be https:// (got %q) — plain http or other schemes rejected", url)
 	}
 
 	log.Info().

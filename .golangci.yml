@@ -1,13 +1,12 @@
 # golangci-lint configuration for Asty.
 #
-# Enforces the discipline laid out in .audit/TZ.md (the target
-# architecture) without yet enforcing the full L0..L4 onion model —
-# that needs the directory reshuffle in TZ §14.4. For now we lock in
-# the cheap-to-enforce invariants:
+# Locked-in cheap-to-enforce invariants:
 #
-#   - os.Getenv is forbidden outside core/config (TZ §2.9).
-#   - features/api may not import internal/server (only the other way).
-#   - core/* may not import anything from internal/features or above.
+#   - os.Getenv is forbidden outside core/config (single config path).
+#   - api/* may depend on server only through the ServerContext
+#     interface, never by direct import.
+#   - core/* may not import anything from infra/domain/ops/api or the
+#     composition roots.
 #
 # Run with `make lint` (golangci-lint run) — kept out of `make ci` so
 # the aggregator does not require a third-party tool.
@@ -37,7 +36,7 @@ linters-settings:
           - "!**/asty/internal/core/config/**/*.go"
         deny:
           - pkg: "os"
-            desc: "os.Getenv/Setenv outside core/config violates TZ §2.9 (single config path); add the field to core/config and read it through cfg."
+            desc: "os.Getenv/Setenv outside core/config violates the single-config-path rule; add the field to core/config and read it through cfg."
         # The os package itself is OK; we only block os.Getenv/Setenv
         # via the pattern below. depguard cannot block individual
         # symbols, so this rule is informational — pair with a CI grep

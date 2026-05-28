@@ -11,8 +11,9 @@ import (
 )
 
 // deployHealthPollInterval — how often we re-check health during the
-// canary and rolling phases. Phase 6.3 will replace this with
-// WatchAllocations event-driven waits.
+// canary and rolling phases on the polling fallback. The reactive
+// path uses WatchAllocations instead; this constant only matters when
+// the state accessor doesn't expose a watcher.
 const deployHealthPollInterval = 5 * time.Second
 
 // deployCanary updates the first plan.UpdateStrategy.Canary allocations to the target

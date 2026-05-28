@@ -16,7 +16,6 @@
 
 [Unit]
 Description=Asty server — leader election + controller + dashboard API
-Documentation=https://github.com/example/asty/blob/main/CLAUDE.md
 After=asty-agent.service network-online.target
 Wants=asty-agent.service network-online.target
 

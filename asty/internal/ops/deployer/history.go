@@ -14,8 +14,8 @@ import (
 
 // jsonMarshal aliases encoding/json.Marshal so the persistLast
 // publish path uses the same JSON encoding as drain.progress —
-// TZ §6.2 explicitly carves out deploy.progress and drain.progress
-// as JSON, not CBOR, because SSE clients decode JSON natively.
+// deploy.progress and drain.progress are intentionally JSON, not
+// CBOR, because SSE clients decode JSON natively.
 var jsonMarshal = json.Marshal
 
 // historyCap — how many past deployments are kept in memory. Old
@@ -91,11 +91,11 @@ func (d *Deployer) updateLastRecord(status State, progress int) {
 }
 
 // persistLast writes the most recent DeploymentRecord to KV at
-// `service.<name>.deployment` (TZ §6.1) AND publishes a JSON copy
-// on `asty.v1.deploy.progress.<service>` (TZ §6.2) so SSE-subscribed
-// dashboards see live progress without polling KV. Both writes are
-// best-effort — failure is logged at warn, the in-memory ring stays
-// authoritative for the dashboard.
+// `service.<name>.deployment` AND publishes a JSON copy on
+// `asty.v1.deploy.progress.<service>` so SSE-subscribed dashboards
+// see live progress without polling KV. Both writes are best-effort
+// — failure is logged at warn, the in-memory ring stays authoritative
+// for the dashboard.
 func (d *Deployer) persistLast() {
 	d.mu.Lock()
 	if len(d.history) == 0 {

@@ -16,13 +16,13 @@ import (
 // creates while extracting an artifact. 0700 — owner-only — because
 // agents share a host with other services and we don't want an
 // `ls /var/lib/asty/<node>/<svc>/` from another uid to fingerprint
-// what's deployed. TZ §10.2.
+// what's deployed.
 const artifactDirMode os.FileMode = 0o700
 
 // artifactBinMode is the permission Asty applies to the extracted
 // binary BEFORE `chmod +x` (agent's spawn path does that). 0400 keeps
 // it read-only-by-owner; the exec bit gets stamped on right before
-// process.Start. TZ §10.2.
+// process.Start.
 const artifactBinMode os.FileMode = 0o400
 
 // extract walks a gzipped tar stream into destDir, refusing entries

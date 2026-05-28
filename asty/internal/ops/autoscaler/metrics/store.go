@@ -1,10 +1,10 @@
 package metrics
 
 import (
-	"encoding/json"
 	"sync"
 	"time"
 
+	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/core/util/ringbuf"
 
@@ -76,6 +76,10 @@ func (s *Store) AttachNATS(nc *nats.Conn) { s.nc = nc }
 // the subscription handler in the server boot sequence — and there's
 // no risk of double-counting. Falls back to a local AddEvent when no
 // NATS connection is attached (tests, degraded mode).
+//
+// Wire format: codec.Wire (CBOR by default, JSON in dev_mode). This
+// subject does NOT fan out to SSE, so the deploy.progress /
+// drain.progress JSON carve-out does not apply.
 func (s *Store) PublishEvent(evt ScalingEvent) {
 	if evt.Timestamp == 0 {
 		evt.Timestamp = time.Now().Unix()
@@ -84,7 +88,7 @@ func (s *Store) PublishEvent(evt ScalingEvent) {
 		s.AddEvent(evt)
 		return
 	}
-	data, err := json.Marshal(evt)
+	data, err := codec.Wire.Marshal(evt)
 	if err != nil {
 		log.Warn().Err(err).Str("service", evt.Service).Msg("scaling event: marshal failed, dropping")
 		return

@@ -27,8 +27,8 @@ type NATSConfig struct {
 	AppPassword      string `yaml:"app_password"`
 
 	// PeersFile / Peers move A_NATS_PEERS_FILE and A_NATS_PEERS off
-	// raw os.Getenv into the config layer (TZ §2.9). resolveNATSPeers
-	// reads them in priority order: PeersFile beats Peers beats DNS.
+	// raw os.Getenv into the config layer. resolveNATSPeers reads them
+	// in priority order: PeersFile beats Peers beats DNS.
 	PeersFile string `yaml:"peers_file"`
 	Peers     string `yaml:"peers"` // CSV; parser splits and trims
 

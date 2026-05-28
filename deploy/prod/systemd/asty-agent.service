@@ -39,7 +39,6 @@
 
 [Unit]
 Description=Asty agent — process supervisor + embedded gateway + NATS supervisor
-Documentation=https://github.com/example/asty/blob/main/CLAUDE.md
 After=network-online.target
 Wants=network-online.target
 

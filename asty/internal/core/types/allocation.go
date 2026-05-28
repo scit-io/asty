@@ -91,10 +91,10 @@ func (s AllocationStatus) Occupies() bool {
 
 // ServiceCooldown captures the timestamps of the most recent autoscaler
 // actions for a service plus the moment usage first dropped into the
-// scale-down floor (drives the idle_hold hysteresis introduced in
-// TZ §5.2). IdleSince is zero whenever the service is not currently
-// observed as idle; the autoscaler resets it on every evaluation that
-// exits the floor and seeds it on every evaluation that enters.
+// scale-down floor (drives the idle_hold hysteresis). IdleSince is zero
+// whenever the service is not currently observed as idle; the
+// autoscaler resets it on every evaluation that exits the floor and
+// seeds it on every evaluation that enters.
 //
 // RollbackFailed reflects the deploy FSM's terminal RollbackFailed
 // state at the service level: the last deploy attempted auto_revert

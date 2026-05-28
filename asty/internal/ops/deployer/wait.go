@@ -27,9 +27,8 @@ type allocWatcher interface {
 //     for plan.UpdateStrategy.MinHealthyTime (returns true), or
 //   - plan.UpdateStrategy.HealthyDeadline elapses without that condition (returns false).
 //
-// It reacts to KV change events instead of polling — this is the path
-// the audit's Phase 6.3 requires. Falls back gracefully when the state
-// accessor doesn't expose a watcher.
+// It reacts to KV change events instead of polling. Falls back
+// gracefully when the state accessor doesn't expose a watcher.
 func (d *Deployer) waitForBatchHealth(ctx context.Context, batch []*types.ServiceAllocation, plan *DeploymentPlan) bool {
 	w, ok := d.clusterState.(allocWatcher)
 	if !ok {

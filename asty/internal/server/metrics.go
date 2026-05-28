@@ -18,7 +18,7 @@ import (
 // rpsReporterInterval on types.MetricsGatewaySubject(nodeID); the
 // autoscaler uses these samples (averaged over trafficWindow) to
 // detect traffic hitting nodes that don't have the service yet —
-// the locality-aware scale-up trigger documented in CLAUDE.md.
+// the locality-aware scale-up trigger.
 func (s *Server) subscribeGatewayMetrics() {
 	subject := types.MetricsGatewayPattern()
 	_, err := s.nc.Subscribe(subject, func(msg *nats.Msg) {
@@ -45,7 +45,7 @@ func (s *Server) subscribeGatewayMetrics() {
 func (s *Server) subscribeScalingEvents(ctx context.Context) {
 	sub, err := s.nc.Subscribe(autometrics.ScalingEventSubject, func(msg *nats.Msg) {
 		var evt autometrics.ScalingEvent
-		if err := json.Unmarshal(msg.Data, &evt); err != nil {
+		if err := codec.Wire.Unmarshal(msg.Data, &evt); err != nil {
 			log.Warn().Err(err).Msg("scaling event: malformed payload, dropping")
 			return
 		}

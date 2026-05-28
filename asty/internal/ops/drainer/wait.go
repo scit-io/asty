@@ -142,9 +142,8 @@ type allocLister interface {
 // publishDrainEvent broadcasts the current drain status on the
 // asty.v1.drain.progress NATS subject so streamHub can fan it out to
 // SSE clients, AND mirrors it into the asty-cluster KV at
-// `node.<nodeID>.drain` (TZ §6.1) so the status survives a server
-// restart and a fresh dashboard can pick it up without replaying
-// the NATS stream.
+// `node.<nodeID>.drain` so the status survives a server restart and
+// a fresh dashboard can pick it up without replaying the NATS stream.
 //
 // Both operations are best-effort: marshal/publish errors are
 // silently dropped, because audit/visibility shouldn't gate the

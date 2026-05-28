@@ -46,10 +46,10 @@ func (a *Agent) StartService(svc *types.ServiceDefinition) error {
 			return fmt.Errorf("failed to download artifact: %w", err)
 		}
 		// Stamp +x on the entrypoint binary. The artifact downloader
-		// writes 0400 to honour TZ §10.2 (owner-read-only at rest);
-		// we add the exec bit here, just-in-time, so the file is
-		// runnable for fork+exec but stays as locked-down as the
-		// archive allows when not being executed.
+		// writes 0400 (owner-read-only at rest); we add the exec bit
+		// here, just-in-time, so the file is runnable for fork+exec but
+		// stays as locked-down as the archive allows when not being
+		// executed.
 		entrypoint := filepath.Join(serviceDir, svc.Name)
 		if err := os.Chmod(entrypoint, 0o500); err != nil {
 			return fmt.Errorf("chmod +x %s: %w", entrypoint, err)
