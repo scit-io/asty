@@ -24,7 +24,7 @@ func (dm *DrainManager) waitForStopped(ctx context.Context, nodeID string, svc *
 	dctx, cancel := context.WithTimeout(ctx, svc.GetKillTimeout()+drainStopMinSlack)
 	defer cancel()
 
-	err := dm.deps.GetClusterState().WatchAllocation(dctx, svc.Name, nodeID, func(alloc *types.ServiceAllocation) bool {
+	err := dm.deps.ClusterState().WatchAllocation(dctx, svc.Name, nodeID, func(alloc *types.ServiceAllocation) bool {
 		if alloc == nil {
 			return true
 		}
@@ -48,7 +48,7 @@ func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode str
 	dctx, cancel := context.WithTimeout(ctx, drainHealthDeadline)
 	defer cancel()
 
-	err := dm.deps.GetClusterState().WatchAllocation(dctx, svc.Name, targetNode, func(alloc *types.ServiceAllocation) bool {
+	err := dm.deps.ClusterState().WatchAllocation(dctx, svc.Name, targetNode, func(alloc *types.ServiceAllocation) bool {
 		return alloc != nil && alloc.Status == types.AllocRunning
 	})
 	if err != nil {
@@ -73,7 +73,7 @@ func (dm *DrainManager) waitForHealthyOnNode(ctx context.Context, targetNode str
 // before our watcher is set up (NATS Watch replays history but we
 // don't want to depend on that for correctness).
 func (dm *DrainManager) waitForHealthyReplacement(ctx context.Context, drainedNode string, svc *types.ServiceDefinition) error {
-	cs := dm.deps.GetClusterState()
+	cs := dm.deps.ClusterState()
 	if dm.healthyReplacementExists(cs, svc.Name, drainedNode) {
 		return nil
 	}
@@ -153,8 +153,8 @@ func (dm *DrainManager) publishDrainEvent(status DrainStatus) {
 	if err != nil {
 		return
 	}
-	_ = dm.deps.GetNATSConn().Publish("asty.v1.drain.progress", data)
+	_ = dm.deps.NATSConn().Publish("asty.v1.drain.progress", data)
 	if status.NodeID != "" {
-		_ = dm.deps.GetClusterState().PutDrain(status.NodeID, data)
+		_ = dm.deps.ClusterState().PutDrain(status.NodeID, data)
 	}
 }

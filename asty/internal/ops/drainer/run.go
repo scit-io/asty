@@ -145,9 +145,9 @@ func (dm *DrainManager) completeNodeDrain(nodeID string, op *drainOp) {
 		finalDrainStatus = DrainStatusStuck
 	}
 
-	if node, err := dm.deps.GetClusterState().GetNode(nodeID); err == nil && node.Status == types.NodeDraining {
+	if node, err := dm.deps.ClusterState().GetNode(nodeID); err == nil && node.Status == types.NodeDraining {
 		node.Status = finalNodeStatus
-		_ = dm.deps.GetClusterState().UpdateNode(node)
+		_ = dm.deps.ClusterState().UpdateNode(node)
 	}
 
 	dm.mu.Lock()

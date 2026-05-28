@@ -21,9 +21,8 @@ import (
 // in one place prevents the rest of the server package from spreading
 // "give me state" boilerplate across feature files.
 
-// --- api.ServerContext ---
-
 func (s *Server) ClusterState() *kv.ClusterState        { return s.clusterState }
+func (s *Server) Scheduler() *scheduler.Scheduler       { return s.scheduler }
 func (s *Server) Services() []*types.ServiceDefinition  { return s.services }
 func (s *Server) Config() *config.Config                { return s.cfg }
 func (s *Server) LeaderElection() *leader.Election      { return s.leaderElection }
@@ -34,13 +33,6 @@ func (s *Server) DrainManager() *drainer.DrainManager   { return s.drainManager 
 func (s *Server) Deployer() *deployer.Deployer          { return s.deployer }
 func (s *Server) NATSConn() *nats.Conn                  { return s.nc }
 func (s *Server) StreamHub() apiPkg.StreamHub           { return s.streamHub }
-
-// --- drainer.DrainDeps ---
-
-func (s *Server) GetClusterState() *kv.ClusterState       { return s.clusterState }
-func (s *Server) GetScheduler() *scheduler.Scheduler      { return s.scheduler }
-func (s *Server) GetServices() []*types.ServiceDefinition { return s.services }
-func (s *Server) GetNATSConn() *nats.Conn                 { return s.nc }
 
 // Compile-time interface checks. These guarantee that adding a new
 // method to ServerContext or DrainDeps without implementing it here

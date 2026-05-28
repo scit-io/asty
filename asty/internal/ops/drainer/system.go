@@ -20,7 +20,7 @@ func (dm *DrainManager) dismantleAndConfirm(ctx context.Context, nodeID string, 
 		log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop confirmation failed")
 	}
 
-	if err := dm.deps.GetClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
+	if err := dm.deps.ClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
 		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: delete allocation failed")
 	}
 

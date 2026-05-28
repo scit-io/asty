@@ -44,10 +44,10 @@ const (
 // DrainDeps provides access to server resources without importing the
 // server package (which would create a cycle: server → draining → server).
 type DrainDeps interface {
-	GetClusterState() *kv.ClusterState
-	GetScheduler() *scheduler.Scheduler
-	GetServices() []*types.ServiceDefinition
-	GetNATSConn() *nats.Conn
+	ClusterState() *kv.ClusterState
+	Scheduler() *scheduler.Scheduler
+	Services() []*types.ServiceDefinition
+	NATSConn() *nats.Conn
 	StopServiceOnNode(nodeID, serviceName string) error
 }
 
@@ -88,7 +88,7 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 		return &op.status, fmt.Errorf("node %s is already draining", nodeID)
 	}
 
-	node, err := dm.deps.GetClusterState().GetNode(nodeID)
+	node, err := dm.deps.ClusterState().GetNode(nodeID)
 	if err != nil {
 		return nil, fmt.Errorf("node not found: %w", err)
 	}
@@ -102,7 +102,7 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 	allocs := dm.collectAllocs(nodeID)
 
 	node.Status = types.NodeDraining
-	if err := dm.deps.GetClusterState().UpdateNode(node); err != nil {
+	if err := dm.deps.ClusterState().UpdateNode(node); err != nil {
 		return nil, fmt.Errorf("failed to update node status: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 
 	if len(allocs) == 0 {
 		node.Status = types.NodeDrained
-		_ = dm.deps.GetClusterState().UpdateNode(node)
+		_ = dm.deps.ClusterState().UpdateNode(node)
 		status.Status = DrainStatusDrained
 		dm.publishDrainEvent(status)
 		return &status, nil
@@ -143,7 +143,7 @@ func (dm *DrainManager) Resume(nodeID string) error {
 	}
 	dm.mu.Unlock()
 
-	node, err := dm.deps.GetClusterState().GetNode(nodeID)
+	node, err := dm.deps.ClusterState().GetNode(nodeID)
 	if err != nil {
 		return fmt.Errorf("node not found: %w", err)
 	}
@@ -153,7 +153,7 @@ func (dm *DrainManager) Resume(nodeID string) error {
 
 	node.Status = types.NodeReady
 	node.LastSeen = time.Now()
-	if err := dm.deps.GetClusterState().UpdateNode(node); err != nil {
+	if err := dm.deps.ClusterState().UpdateNode(node); err != nil {
 		return fmt.Errorf("failed to update node status: %w", err)
 	}
 	log.Info().Str("node_id", nodeID).Msg("node drain cancelled, status set to ready")

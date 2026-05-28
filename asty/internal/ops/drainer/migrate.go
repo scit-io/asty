@@ -16,14 +16,14 @@ import (
 // when no nearest target was available — we fall back to letting the
 // controller pick a node).
 func (dm *DrainManager) placeReplacement(ctx context.Context, nodeID string, a allocOnNode) (fellBack bool, err error) {
-	target := dm.deps.GetScheduler().SelectNearestForReplacement(nodeID, a.svc)
+	target := dm.deps.Scheduler().SelectNearestForReplacement(nodeID, a.svc)
 	if target == nil {
 		log.Warn().
 			Str("service", a.svc.Name).
 			Str("node_id", nodeID).
 			Msg("drain: no nearest replacement available, falling back to controller placement")
 
-		if err := dm.deps.GetClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
+		if err := dm.deps.ClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
 			return true, fmt.Errorf("delete allocation failed: %w", err)
 		}
 		if err := dm.waitForHealthyReplacement(ctx, nodeID, a.svc); err != nil {
@@ -32,7 +32,7 @@ func (dm *DrainManager) placeReplacement(ctx context.Context, nodeID string, a a
 		return true, nil
 	}
 
-	if err := dm.deps.GetClusterState().CreateAllocation(&types.ServiceAllocation{
+	if err := dm.deps.ClusterState().CreateAllocation(&types.ServiceAllocation{
 		ServiceName: a.svc.Name,
 		NodeID:      target.ID,
 		Status:      types.AllocPending,
@@ -74,7 +74,7 @@ func (dm *DrainManager) finalizeMigration(ctx context.Context, nodeID string, a 
 		log.Error().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: stop confirmation failed")
 	}
 
-	if err := dm.deps.GetClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
+	if err := dm.deps.ClusterState().DeleteAllocation(a.svc.Name, nodeID); err != nil {
 		log.Warn().Err(err).Str("service", a.svc.Name).Str("node_id", nodeID).Msg("drain: delete allocation failed")
 	}
 }

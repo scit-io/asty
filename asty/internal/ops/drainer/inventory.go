@@ -19,7 +19,7 @@ type allocOnNode struct {
 // effectively Ready. Used as the drain guard so we don't promise
 // migration when there's nothing to migrate to.
 func (dm *DrainManager) hasOtherReadyNode(nodeID string) bool {
-	nodes, err := dm.deps.GetClusterState().ListNodes()
+	nodes, err := dm.deps.ClusterState().ListNodes()
 	if err != nil {
 		return false
 	}
@@ -40,11 +40,11 @@ func (dm *DrainManager) hasOtherReadyNode(nodeID string) bool {
 // not contributing traffic and don't need migration. One Watch-based
 // snapshot beats N round-trips when the service list is long.
 func (dm *DrainManager) collectAllocs(nodeID string) []allocOnNode {
-	svcByName := make(map[string]*types.ServiceDefinition, len(dm.deps.GetServices()))
-	for _, svc := range dm.deps.GetServices() {
+	svcByName := make(map[string]*types.ServiceDefinition, len(dm.deps.Services()))
+	for _, svc := range dm.deps.Services() {
 		svcByName[svc.Name] = svc
 	}
-	all, err := dm.deps.GetClusterState().ListAllAllocations()
+	all, err := dm.deps.ClusterState().ListAllAllocations()
 	if err != nil {
 		return nil
 	}
