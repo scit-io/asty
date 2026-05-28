@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/types"
+	"asty/asty/internal/ops/deployer"
 )
 
 // allocIndex is an in-memory mirror of the KV node and allocation state.
@@ -140,6 +141,22 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 	cfg := h.server.cfg
 	services := h.server.services
 	servicesOut := make([]types.ServiceWithUsage, 0, len(services))
+
+	// Index the deploy history once: first record per service wins
+	// because GetHistory returns newest-first. Without this the per-
+	// service loop below would call GetHistory() N times, each call
+	// copying the full ring under the deployer's mutex.
+	lastDeployByService := make(map[string]deployer.DeploymentRecord, len(services))
+	for _, rec := range h.server.deployer.GetHistory() {
+		if _, seen := lastDeployByService[rec.Service]; seen {
+			continue
+		}
+		lastDeployByService[rec.Service] = rec
+		if len(lastDeployByService) == len(services) {
+			break
+		}
+	}
+
 	for _, svc := range services {
 		allocs := allocsByService[svc.Name]
 		var sumCPU, sumMem float64
@@ -190,14 +207,10 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		// {scaling event, deploy} per-row without a second fetch.
 		var lastDeployVersion, lastDeployStatus string
 		var lastDeployAt int64
-		for _, rec := range h.server.deployer.GetHistory() {
-			if rec.Service != svc.Name {
-				continue
-			}
+		if rec, ok := lastDeployByService[svc.Name]; ok {
 			lastDeployVersion = rec.Version
 			lastDeployStatus = string(rec.Status)
 			lastDeployAt = rec.StartedAt.Unix()
-			break
 		}
 
 		servicesOut = append(servicesOut, types.ServiceWithUsage{
