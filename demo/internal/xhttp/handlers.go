@@ -83,11 +83,8 @@ func (h *Handlers) Get(req micro.Request) {
 
 	cacheKey := fmt.Sprintf("item:%d", body.ID)
 	if cached := h.cache.Get(ctx, cacheKey); len(cached) > 0 {
-		var it Item
-		if json.Unmarshal(cached, &it) == nil {
-			_ = req.RespondJSON(it)
-			return
-		}
+		_ = req.Respond(cached)
+		return
 	}
 
 	var it Item
@@ -104,10 +101,13 @@ func (h *Handlers) Get(req micro.Request) {
 		return
 	}
 
-	if encoded, err := json.Marshal(it); err == nil {
-		h.cache.Put(ctx, cacheKey, encoded)
+	encoded, err := json.Marshal(it)
+	if err != nil {
+		_ = req.Error("500", "marshal error", nil)
+		return
 	}
-	_ = req.RespondJSON(it)
+	h.cache.Put(ctx, cacheKey, encoded)
+	_ = req.Respond(encoded)
 }
 
 func (h *Handlers) List(req micro.Request) {
@@ -115,11 +115,8 @@ func (h *Handlers) List(req micro.Request) {
 	defer cancel()
 
 	if cached := h.cache.Get(ctx, "list"); len(cached) > 0 {
-		var items []Item
-		if json.Unmarshal(cached, &items) == nil {
-			_ = req.RespondJSON(items)
-			return
-		}
+		_ = req.Respond(cached)
+		return
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
@@ -145,10 +142,13 @@ func (h *Handlers) List(req micro.Request) {
 		return
 	}
 
-	if encoded, err := json.Marshal(items); err == nil {
-		h.cache.Put(ctx, "list", encoded)
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		_ = req.Error("500", "marshal error", nil)
+		return
 	}
-	_ = req.RespondJSON(items)
+	h.cache.Put(ctx, "list", encoded)
+	_ = req.Respond(encoded)
 }
 
 func (h *Handlers) Update(req micro.Request) {
