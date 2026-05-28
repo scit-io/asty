@@ -22,8 +22,8 @@ export default function AllocationLogs() {
   const allocation = useClusterStore((s) => allocId ? s.allocationCache[allocId]?.allocation ?? null : null)
   useSubscribe(subscribeAllocation, nodeId, allocId)
   if (!nodeId || !allocId) return null
-  // Drop the allocId fallback: showing "Logs · xauth-dev-node-6-..."
-  // for a beat before it swaps to "Logs · xauth" is uglier than just
+  // Drop the allocId fallback: showing "Logs · service-a-dev-node-6-..."
+  // for a beat before it swaps to "Logs · service-a" is uglier than just
   // "Logs" until the name arrives.
   const title = allocation?.service_name
     ? t('logs.title_for', { target: allocation.service_name })

@@ -51,8 +51,8 @@ func TestParseEvent_FallbackTimestamp(t *testing.T) {
 }
 
 func TestParseEvent_RoundtripNoDoubleFields(t *testing.T) {
-	// Demo emits flat zerolog JSON.
-	raw := []byte(`{"level":"info","time":1,"component":"xws","message":"started","inactivity_timeout":180000}`)
+	// External producer emits flat zerolog JSON.
+	raw := []byte(`{"level":"info","time":1,"component":"sample","message":"started","inactivity_timeout":180000}`)
 	first, err := ParseEvent(raw)
 	if err != nil {
 		t.Fatalf("first ParseEvent: %v", err)

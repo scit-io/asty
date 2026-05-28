@@ -144,7 +144,7 @@ export interface LogEvent {
   timestamp?: number
   time?: number
   level?: string       // trace | debug | info | warn | error | fatal
-  component?: string   // server | agent | gateway | xauth | …
+  component?: string   // server | agent | gateway | <user-service>
   message?: string
   error?: string
   line?: string        // raw stdout line, mutually exclusive with message

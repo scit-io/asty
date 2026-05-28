@@ -151,22 +151,22 @@ func TestRL_CleanupStopsAtFirstFresh(t *testing.T) {
 
 func TestRL_AllowPathMatchesLongestPrefix(t *testing.T) {
 	rules := []types.RateLimitRule{
-		{PathPrefix: "/v1/auth/", Rate: 5, Burst: 1},
-		{PathPrefix: "/v1/auth/login", Rate: 2, Burst: 1},
+		{PathPrefix: "/v1/foo/", Rate: 5, Burst: 1},
+		{PathPrefix: "/v1/foo/bar", Rate: 2, Burst: 1},
 	}
 	r := newTestRLWithRules(10, rules)
 
-	// "/v1/auth/login" should match the more specific rule (rate=2, burst=1)
-	allowed, prefix := r.allowPath("1.1.1.1", "/v1/auth/login")
-	if prefix != "/v1/auth/login" {
-		t.Errorf("matched prefix = %q, want /v1/auth/login", prefix)
+	// "/v1/foo/bar" should match the more specific rule (rate=2, burst=1)
+	allowed, prefix := r.allowPath("1.1.1.1", "/v1/foo/bar")
+	if prefix != "/v1/foo/bar" {
+		t.Errorf("matched prefix = %q, want /v1/foo/bar", prefix)
 	}
 	if !allowed {
 		t.Error("first request should be allowed")
 	}
 
 	// Second request should be rejected (burst=1 exhausted)
-	allowed, _ = r.allowPath("1.1.1.1", "/v1/auth/login")
+	allowed, _ = r.allowPath("1.1.1.1", "/v1/foo/bar")
 	if allowed {
 		t.Error("second request should be rejected (burst=1)")
 	}
@@ -174,7 +174,7 @@ func TestRL_AllowPathMatchesLongestPrefix(t *testing.T) {
 
 func TestRL_AllowPathNoMatch(t *testing.T) {
 	rules := []types.RateLimitRule{
-		{PathPrefix: "/v1/auth/", Rate: 5, Burst: 1},
+		{PathPrefix: "/v1/foo/", Rate: 5, Burst: 1},
 	}
 	r := newTestRLWithRules(10, rules)
 
