@@ -1144,9 +1144,10 @@ heartbeat (5 s), process metrics sampling (10 s), gateway RPS
 sample-and-report (5 s), HTTP health probes (1 s), TailLogs file
 polling (100 ms), proximity validation (1 h), NATS peer re-resolve
 (5 s — DNS exposes no watch API), NATS server-stats poll (STATSZ/JSZ,
-5 s — NATS monitoring is request-reply, not push), and the leader's
-stream-replica upgrade scan (10 s — doubles as the retry for when the
-cluster cannot yet place the requested replicas). Protocol keepalives
+5 s — NATS monitoring is request-reply, not push). The leader's
+stream-replica upgrade is event-driven off `WatchNodes` — a join is the
+only thing that lets a stream place more replicas — with a bounded retry
+only when a just-grown cluster can't place them yet. Protocol keepalives
 (SSE/WS pings) and the rate-limiter LRU eviction are timers but not
 state polling. Each is documented at its definition.
 
