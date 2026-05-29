@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"asty/asty/internal/core/codec"
-
-	"github.com/nats-io/nats.go"
 )
 
 // deploymentKey is the KV key carrying the most recent deployment
@@ -37,24 +35,11 @@ func (cs *ClusterState) PutDeployment(service string, payload []byte) error {
 	return nil
 }
 
-// GetDeployment returns the most recently-written DeploymentRecord
-// payload for the service. Missing keys come back as (nil, nil) — the
-// service has no deployment history in KV, not an error.
-func (cs *ClusterState) GetDeployment(service string) ([]byte, error) {
-	key := fmt.Sprintf(deploymentKey, service)
-	entry, err := cs.bucket.Get(key)
-	if err != nil {
-		if err == nats.ErrKeyNotFound {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get deployment: %w", err)
-	}
-	return entry.Value(), nil
-}
-
-// MarshalDeploymentRecord and UnmarshalDeploymentRecord are thin
-// wrappers around codec.State so callers don't need to import codec
-// directly. The shape of the payload is whatever ops/deployer
-// (DeploymentRecord) encodes — kv stays type-agnostic.
-func MarshalDeploymentRecord(v any) ([]byte, error)   { return codec.State.Marshal(v) }
-func UnmarshalDeploymentRecord(b []byte, v any) error { return codec.State.Unmarshal(b, v) }
+// MarshalDeploymentRecord is a thin wrapper around codec.State so
+// callers don't need to import codec directly. The shape of the
+// payload is whatever ops/deployer (DeploymentRecord) encodes — kv
+// stays type-agnostic. The record is written for durability and
+// operator inspection only; the deployer's in-memory ring stays the
+// authoritative source for the dashboard, so there is no read-back
+// helper.
+func MarshalDeploymentRecord(v any) ([]byte, error) { return codec.State.Marshal(v) }
