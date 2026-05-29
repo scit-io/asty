@@ -132,22 +132,3 @@ func (c *Collector) GetMetrics(pid int) (*ProcessMetrics, bool) {
 		LastUpdated: metrics.LastUpdated,
 	}, true
 }
-
-// GetAllMetrics returns metrics for all processes
-func (c *Collector) GetAllMetrics() map[int]*ProcessMetrics {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
-	result := make(map[int]*ProcessMetrics, len(c.metrics))
-	for pid, metrics := range c.metrics {
-		result[pid] = &ProcessMetrics{
-			PID:         metrics.PID,
-			ProcessName: metrics.ProcessName,
-			CPUPercent:  metrics.CPUPercent,
-			MemoryMB:    metrics.MemoryMB,
-			LastUpdated: metrics.LastUpdated,
-		}
-	}
-
-	return result
-}
