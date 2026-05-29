@@ -85,28 +85,18 @@ func TestWorkqueueAddAfter(t *testing.T) {
 	}
 }
 
-// Backoff: each AddRateLimited without Forget doubles the delay.
+// Backoff: each consecutive failure doubles the computed delay, capped at
+// MaxDelay. Asserts the schedule directly instead of timing Get, so it is
+// deterministic — the wall-clock version flaked under -race when scheduler
+// jitter inflated one measurement past the doubling ratio.
 func TestWorkqueueRateLimitedBackoff(t *testing.T) {
-	q := NewWorkqueue()
-	q.BaseDelay = 20 * time.Millisecond
-	q.MaxDelay = 200 * time.Millisecond
-	defer q.ShutDown()
-
-	q.AddRateLimited("k")
-	first := time.Now()
-	got, _ := q.Get()
-	d1 := time.Since(first)
-	q.Done(got)
-
-	q.AddRateLimited("k")
-	second := time.Now()
-	q.Get()
-	d2 := time.Since(second)
-	q.Done("k")
-
-	// d2 should be roughly 2× d1 (within scheduler jitter).
-	if d2 < d1*3/2 {
-		t.Errorf("backoff not doubling: d1=%v d2=%v", d1, d2)
+	const base = 20 * time.Millisecond
+	const max = 200 * time.Millisecond
+	want := []time.Duration{base, 2 * base, 4 * base, 8 * base, max, max}
+	for n, w := range want {
+		if got := rateLimitedDelay(n, base, max); got != w {
+			t.Errorf("rateLimitedDelay(n=%d) = %v, want %v", n, got, w)
+		}
 	}
 }
 

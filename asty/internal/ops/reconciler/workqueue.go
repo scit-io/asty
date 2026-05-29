@@ -108,10 +108,17 @@ func (q *Workqueue) AddRateLimited(key string) {
 	q.mu.Lock()
 	n := q.failures[key]
 	q.failures[key] = n + 1
-	base := q.BaseDelay
-	max := q.MaxDelay
+	base, max := q.BaseDelay, q.MaxDelay
 	q.mu.Unlock()
 
+	q.AddAfter(key, rateLimitedDelay(n, base, max))
+}
+
+// rateLimitedDelay is the exponential backoff for the n-th consecutive
+// failure of a key (n=0 is the first attempt): base doubled n times,
+// capped at max. Pulled out as a pure function so the schedule is
+// unit-testable directly, without measuring wall-clock time.
+func rateLimitedDelay(n int, base, max time.Duration) time.Duration {
 	delay := base
 	for i := 0; i < n && delay < max; i++ {
 		delay *= 2
@@ -119,7 +126,7 @@ func (q *Workqueue) AddRateLimited(key string) {
 	if delay > max {
 		delay = max
 	}
-	q.AddAfter(key, delay)
+	return delay
 }
 
 func (q *Workqueue) Forget(key string) {
