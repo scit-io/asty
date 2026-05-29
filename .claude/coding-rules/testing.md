@@ -13,7 +13,9 @@ Run them before every commit; all four must be green.
 
 ## Fixtures
 
-Shared test fixtures live in `testutil/` (e.g. `NewTestConfig`, `NewTestNode`, `NewTestService`, `NewTestAllocation`). When the typed status enums were introduced, fixtures had to switch from `"running"` to `types.AllocRunning`. Always use typed constants in fixtures — they are part of the public test surface.
+Fixtures are built per-package — inline struct literals or a small local constructor in the test file (e.g. `newReadyNode` in `scheduler_test.go`). A constructor that only one package needs stays in that package's `_test.go`; there is no shared fixtures package.
+
+Always use the typed status enums in fixtures (`types.AllocRunning`, not the bare string `"running"`) so an enum rename is caught by the compiler.
 
 ## Test fixture pattern
 
