@@ -36,6 +36,27 @@ import { useSubscribe } from '@/lib/use-subscribe'
 import { useNodeTabs } from '@/pages/cluster/nodes/[nodeId]/tabs'
 import { useClusterStore } from '@/store/cluster'
 
+// confirmNodeGone probes the node a handful of times after a kill whose
+// HTTP response failed. Returns true once the node 404s (gone =
+// success), false if it's still present after the budget. Errors
+// (unreachable) are retried, not treated as gone — we only declare
+// success on a definitive absence. ~3s total covers KV-delete
+// propagation plus DNS failover onto a surviving node.
+async function confirmNodeGone(id: string): Promise<boolean> {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      if (!(await api.nodeExists(id))) return true // 404 → gone → success
+      // Still present: don't conclude failure yet — a successful kill's
+      // KV delete may still be replicating to the node we asked. Keep
+      // checking until the budget runs out.
+    } catch {
+      // couldn't reach a node to ask; wait and retry
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600))
+  }
+  return false // still present after ~3s → genuine failure
+}
+
 // Node Overview (/nodes/:id) — first tab of the node section.
 // Maintenance section (drain switch) + Asty/NATS sub-blocks land
 // here; allocations and logs moved to their own routes.
@@ -72,12 +93,20 @@ export default function NodeDetail() {
     if (!nodeId) return
     try {
       await api.killNode(nodeId, nodeId)
-      toast.success(t('toast.kill_success', { id: nodeId }))
-      navigate(routes.nodes)
     } catch (err) {
-      toastError(err, t, 'toast.kill_failed')
-      throw err
+      // Killing the leader removes the very node serving this request
+      // and opens a brief leaderless window, so a 5xx/transport error
+      // does not mean the kill failed. Judge by state instead: if the
+      // node is gone, it worked. Bounded one-shot confirmation (not a
+      // steady poll) — a few retries cover KV-delete propagation and
+      // the browser landing on a live node via DNS failover.
+      if (!(await confirmNodeGone(nodeId))) {
+        toastError(err, t, 'toast.kill_failed')
+        throw err
+      }
     }
+    toast.success(t('toast.kill_success', { id: nodeId }))
+    navigate(routes.nodes)
   }
 
   if (!node) {

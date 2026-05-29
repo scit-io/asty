@@ -87,6 +87,17 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm_name: confirmName }),
     }),
+  // nodeExists probes GET /nodes/{id}: false on 404 (gone), true on 200.
+  // Throws on any other status / network error so the caller can tell
+  // "confirmed gone" apart from "couldn't reach a node to check".
+  // Used to judge a kill by state — killing the leader tears down the
+  // connection serving the request, so its HTTP outcome is unreliable.
+  nodeExists: async (id: string): Promise<boolean> => {
+    const res = await fetch(apiURL(apiPaths.node(id)))
+    if (res.status === 404) return false
+    if (res.ok) return true
+    throw new Error(`HTTP ${res.status}`)
+  },
 
   // Allocation actions
   restartAllocation: (nodeId: string, allocId: string) =>
