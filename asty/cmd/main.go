@@ -86,11 +86,15 @@ func runAgent(ctx context.Context, cfg *config.Config) {
 		log.Fatal().Err(err).Msg("failed to create agent")
 	}
 
+	// Start blocks until shutdown completes — on SIGTERM (parent ctx) or
+	// on a dashboard kill, which cancels Start's own derived ctx via
+	// CmdShutdown. It returns only after the graceful teardown has run,
+	// so we just exit here. (Waiting on ctx.Done() afterwards would hang
+	// the process forever on the kill path, where the parent ctx is
+	// still live — that left zombie agents behind a dashboard kill.)
 	if err := a.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("agent failed")
 	}
-
-	<-ctx.Done()
 	log.Info().Msg("agent stopped")
 }
 
@@ -102,11 +106,16 @@ func runServer(ctx context.Context, cfg *config.Config) {
 		log.Fatal().Err(err).Msg("failed to create server")
 	}
 
+	// Start blocks until shutdown completes — on SIGTERM (parent ctx) or
+	// on self-removal, where watchSelfRemoval cancels Start's own derived
+	// ctx after the node's KV entry is deleted. It returns only after the
+	// graceful teardown has run, so we just exit here. (Waiting on
+	// ctx.Done() afterwards would hang forever on the self-removal path,
+	// where the parent ctx is still live — that left zombie servers
+	// behind a dashboard kill.)
 	if err := srv.Start(ctx); err != nil {
 		log.Fatal().Err(err).Msg("server failed")
 	}
-
-	<-ctx.Done()
 	log.Info().Msg("server stopped")
 }
 
