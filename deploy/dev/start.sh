@@ -32,6 +32,15 @@ PID_FILE_TMPL="$DATA_BASE/pids"
 # file; live agents pick up the change on their next tick.
 PEERS_FILE="$DATA_BASE/peers.txt"
 
+# /etc/hosts name the dashboard SPA points at (VITE_ASTY_ORIGIN =
+# http://asty.test:7060). sync_hosts maps it to every node IP from
+# PEERS_FILE — one A-record per node — so the browser fails over across
+# nodes at the DNS layer, the dev mirror of the prod cluster domain.
+# .test is RFC 6761 reserved and (unlike .dev) not HSTS-forced to HTTPS.
+HOSTS_NAME="asty.test"
+HOSTS_BEGIN="# >>> asty-dev (asty.test) >>>"
+HOSTS_END="# <<< asty-dev <<<"
+
 # =============================================================================
 # Output helpers
 # =============================================================================
@@ -130,6 +139,46 @@ teardown_loopback_aliases() {
   for addr in $aliases; do
     sudo ifconfig lo0 -alias "$addr" 2>/dev/null && info "removed $addr" || true
   done
+}
+
+# =============================================================================
+# /etc/hosts — asty.test name for the dashboard SPA (both macOS and Linux)
+# =============================================================================
+# sync_hosts rewrites the asty.test block in /etc/hosts from PEERS_FILE,
+# one "ip asty.test" line per node. The resolver returns all addresses
+# for the name, so the browser fails over across nodes on connection
+# error — the dev mirror of a multi-A-record prod domain. Called after
+# every PEERS_FILE change (start, add, remove). Requires sudo.
+sync_hosts() {
+  [[ -f "$PEERS_FILE" ]] || return 0
+  local block tmp ip count
+  block="$HOSTS_BEGIN"$'\n'
+  count=0
+  while IFS= read -r ip; do
+    [[ -n "$ip" ]] || continue
+    block+="$ip $HOSTS_NAME"$'\n'
+    count=$((count + 1))
+  done < "$PEERS_FILE"
+  block+="$HOSTS_END"
+  # Strip any prior block (read needs no sudo — /etc/hosts is world-
+  # readable), append the fresh one, swap the file back with sudo.
+  tmp=$(mktemp)
+  sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
+  printf '%s\n' "$block" >> "$tmp"
+  sudo cp "$tmp" /etc/hosts
+  rm -f "$tmp"
+  info "$HOSTS_NAME → $count node(s) in /etc/hosts"
+}
+
+# teardown_hosts removes the asty.test block from /etc/hosts.
+teardown_hosts() {
+  grep -q "^# >>> asty-dev" /etc/hosts 2>/dev/null || return 0
+  log "removing $HOSTS_NAME from /etc/hosts (requires sudo)..."
+  local tmp
+  tmp=$(mktemp)
+  sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
+  sudo cp "$tmp" /etc/hosts
+  rm -f "$tmp"
 }
 
 # =============================================================================
@@ -294,6 +343,7 @@ add_node() {
 
   echo "$addr" >> "$PEERS_FILE"
   start_node "$i"
+  sync_hosts
 
   info "node $i started. Existing agents will pick up the new peer on"
   info "the next nats-watch tick (~5 s) and restart their nats-server."
@@ -410,6 +460,7 @@ remove_node() {
   tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
   grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
   mv "$tmp" "$PEERS_FILE"
+  sync_hosts
 
   # 4) Clean per-node state — pidfile, working dir, JS store. Old
   #    JetStream data would conflict with a future add reusing
@@ -466,7 +517,7 @@ print_status() {
   echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Dashboard:  http://127.0.0.1:7060/dashboard/v1  (node 1; SPA proxy point)"
+  info "Dashboard:  http://asty.test:7060/dashboard/v1  (all nodes; SPA target, DNS failover)"
   info "Prometheus: http://127.0.0.1:7060/metrics       (shared listener)"
   info "Health:     http://127.0.0.1:7060/health"
   info "Gateway:    http://127.0.0.1:80/api/v1          (node 1; user traffic)"
@@ -518,6 +569,9 @@ stop_all() {
   # Loopback aliases (macOS).
   teardown_loopback_aliases
 
+  # /etc/hosts asty.test block.
+  teardown_hosts
+
   log "✓ stopped"
 }
 
@@ -566,6 +620,7 @@ build_binaries
 setup_loopback_aliases "$NODES"
 
 start_asty "$NODES"
+sync_hosts
 wait_asty
 
 print_status
