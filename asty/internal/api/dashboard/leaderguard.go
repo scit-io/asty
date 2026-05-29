@@ -53,6 +53,21 @@ func (api *API) leaderOnly(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		w.Header().Set("X-Asty-Leader", info.ID)
-		httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+		proxy := httputil.NewSingleHostReverseProxy(target)
+		// corsOrigin (the outermost middleware) already set the CORS
+		// response headers on w. The leader runs corsOrigin too, so the
+		// upstream response carries them again; the proxy would copy
+		// those in alongside ours, and a response with two
+		// Access-Control-Allow-Origin values is rejected wholesale by the
+		// browser — a proxied write then fails client-side even though
+		// the leader performed it. Strip the upstream copies so the
+		// follower's stay the single authority.
+		proxy.ModifyResponse = func(resp *http.Response) error {
+			resp.Header.Del("Access-Control-Allow-Origin")
+			resp.Header.Del("Access-Control-Expose-Headers")
+			resp.Header.Del("Vary")
+			return nil
+		}
+		proxy.ServeHTTP(w, r)
 	}
 }
