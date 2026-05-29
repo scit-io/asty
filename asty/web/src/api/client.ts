@@ -20,15 +20,33 @@ function authToken(): string {
   return (import.meta.env?.VITE_ASTY_TOKEN as string) ?? ''
 }
 
+// ApiError carries the HTTP status (0 = the fetch itself never
+// completed, e.g. the cluster is unreachable) so the toast layer can
+// render a localized message keyed off the status instead of the raw
+// English statusText.
+export class ApiError extends Error {
+  readonly status: number
+  constructor(status: number) {
+    super(status === 0 ? 'Network error' : `HTTP ${status}`)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers)
   const token = authToken()
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  const response = await fetch(apiURL(url), { ...options, headers })
+  let response: Response
+  try {
+    response = await fetch(apiURL(url), { ...options, headers })
+  } catch {
+    throw new ApiError(0)
+  }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    throw new ApiError(response.status)
   }
   return response.json()
 }
@@ -93,10 +111,15 @@ export const api = {
   // Used to judge a kill by state — killing the leader tears down the
   // connection serving the request, so its HTTP outcome is unreliable.
   nodeExists: async (id: string): Promise<boolean> => {
-    const res = await fetch(apiURL(apiPaths.node(id)))
+    let res: Response
+    try {
+      res = await fetch(apiURL(apiPaths.node(id)))
+    } catch {
+      throw new ApiError(0)
+    }
     if (res.status === 404) return false
     if (res.ok) return true
-    throw new Error(`HTTP ${res.status}`)
+    throw new ApiError(res.status)
   },
 
   // Allocation actions

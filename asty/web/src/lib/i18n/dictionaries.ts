@@ -204,6 +204,20 @@ export const en = {
   'toast.scale_set': 'Set {service} floor to {n}',
   'toast.scale_invalid': 'Enter a non-negative integer',
 
+  // HTTP error text — fills {error} in the toast templates above. Known
+  // statuses get a localized phrase; anything else falls back to
+  // error.http.generic with the raw code.
+  'error.http.network': 'Network error — cluster unreachable',
+  'error.http.bad_request': 'Bad request',
+  'error.http.unauthorized': 'Authentication required',
+  'error.http.forbidden': 'Forbidden',
+  'error.http.not_found': 'Not found',
+  'error.http.conflict': 'Conflict',
+  'error.http.server': 'Server error',
+  'error.http.bad_gateway': 'Bad gateway',
+  'error.http.unavailable': 'Service unavailable',
+  'error.http.generic': 'Request failed ({status})',
+
   // Services list
   'services.title': 'Services',
   'services.col.service': 'Service',
@@ -506,6 +520,17 @@ export const ru: Messages = {
   'toast.deploy_failed': 'Ошибка деплоя: {error}',
   'toast.scale_set': 'Установлен минимум для {service}: {n}',
   'toast.scale_invalid': 'Введите неотрицательное целое число',
+
+  'error.http.network': 'Сеть недоступна — кластер не отвечает',
+  'error.http.bad_request': 'Неверный запрос',
+  'error.http.unauthorized': 'Требуется авторизация',
+  'error.http.forbidden': 'Доступ запрещён',
+  'error.http.not_found': 'Не найдено',
+  'error.http.conflict': 'Конфликт',
+  'error.http.server': 'Ошибка сервера',
+  'error.http.bad_gateway': 'Ошибка шлюза',
+  'error.http.unavailable': 'Сервис недоступен',
+  'error.http.generic': 'Запрос не выполнен ({status})',
 
   'services.title': 'Сервисы',
   'services.col.service': 'Сервис',
