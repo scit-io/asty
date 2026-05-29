@@ -28,6 +28,10 @@ export const en = {
   'toggle.theme': 'Toggle theme',
   'toggle.language': 'Switch language',
 
+  // Footer
+  'footer.connected_to': 'Connected to node {node}',
+  'footer.disconnected': 'Reconnecting…',
+
   // Header / sections
   'section.cluster': 'Cluster',
   'section.services': 'Services',
@@ -340,6 +344,10 @@ export const ru: Messages = {
 
   'toggle.theme': 'Сменить тему',
   'toggle.language': 'Сменить язык',
+
+  // Footer
+  'footer.connected_to': 'Подключено к узлу {node}',
+  'footer.disconnected': 'Переподключение…',
 
   'section.cluster': 'Кластер',
   'section.services': 'Сервисы',

@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react'
 import { ThemeProvider, useTheme } from '@/components/theme-provider'
 import { LocaleProvider } from '@/lib/i18n'
 import { Header } from '@/components/header'
+import { Footer } from '@/components/footer'
 import { LoadingBlock } from '@/components/loading-block'
 import { Toaster } from 'sonner'
 
@@ -41,7 +42,7 @@ export default function App() {
             Pages with natural content (lists, dashboards) scroll
             inside main; pages with their own viewport sizing (logs)
             use h-full + overflow-hidden so main never overflows. */}
-        <div className="flex h-screen flex-col overflow-hidden bg-linear-to-t from-muted to-muted/30">
+        <div className="relative flex h-screen flex-col overflow-hidden bg-linear-to-t from-muted to-muted/30">
           <Header />
           <main className="min-h-0 flex-1 overflow-y-auto">
             <Suspense fallback={<div className="p-4"><LoadingBlock /></div>}>
@@ -69,6 +70,7 @@ export default function App() {
               </Routes>
             </Suspense>
           </main>
+          <Footer />
         </div>
         <ThemedToaster />
       </BrowserRouter>

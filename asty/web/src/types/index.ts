@@ -80,6 +80,7 @@ export interface ClusterStatus {
     is_leader: boolean
     nodes_total: number
     nodes_healthy: number
+    served_by: string   // node id that produced this snapshot (the one we're connected to)
   }
   services: {
     loaded: number
