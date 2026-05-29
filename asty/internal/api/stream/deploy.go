@@ -15,9 +15,9 @@ import (
 //
 // Each event is forwarded verbatim as the SSE payload under the
 // `progress` event name. Clients receive the same DeploymentRecord
-// JSON that PutDeployment writes to KV — id, status, progress,
-// rollback_steps included — so the dashboard can render history-
-// equivalent detail live.
+// JSON the deployer publishes on deploy.progress — id, status,
+// progress, rollback_steps included — so the dashboard can render
+// detailed progress live.
 func Deploy(ctx Context, w http.ResponseWriter, r *http.Request, serviceName string) {
 	if serviceName == "" {
 		http.Error(w, "service name required", http.StatusBadRequest)

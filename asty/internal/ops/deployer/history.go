@@ -5,15 +5,13 @@ import (
 	"fmt"
 	"time"
 
-	"asty/asty/internal/infra/kv"
-
 	"github.com/rs/zerolog/log"
 )
 
-// jsonMarshal aliases encoding/json.Marshal so the persistLast
-// publish path uses the same JSON encoding as drain.progress —
-// deploy.progress and drain.progress are intentionally JSON, not
-// CBOR, because SSE clients decode JSON natively.
+// jsonMarshal aliases encoding/json.Marshal so the publishLast path
+// uses the same JSON encoding as drain.progress — deploy.progress and
+// drain.progress are intentionally JSON, not CBOR, because SSE clients
+// decode JSON natively.
 var jsonMarshal = json.Marshal
 
 // historyCap — how many past deployments are kept in memory. Old
@@ -47,7 +45,7 @@ func (d *Deployer) addRecord(record DeploymentRecord) {
 	}
 	d.history = append(d.history, record)
 	d.mu.Unlock()
-	d.persistLast()
+	d.publishLast()
 }
 
 // ApplyRemoteRecord merges a deployment record received via NATS
@@ -85,16 +83,16 @@ func (d *Deployer) updateLastRecord(status State, progress int) {
 		last.CompletedAt = time.Now()
 	}
 	d.mu.Unlock()
-	d.persistLast()
+	d.publishLast()
 }
 
-// persistLast writes the most recent DeploymentRecord to KV at
-// `service.<name>.deployment` AND publishes a JSON copy on
-// `asty.v1.deploy.progress.<service>` so SSE-subscribed dashboards
-// see live progress without polling KV. Both writes are best-effort
-// — failure is logged at warn, the in-memory ring stays authoritative
-// for the dashboard.
-func (d *Deployer) persistLast() {
+// publishLast publishes the most recent DeploymentRecord as JSON on
+// `asty.v1.deploy.progress.<service>` so SSE-subscribed dashboards see
+// live progress without polling. Best-effort — failure is logged at
+// warn, the in-memory ring stays authoritative for the dashboard.
+// Asty does not persist deployment history; external log/metric
+// shippers own retention.
+func (d *Deployer) publishLast() {
 	d.mu.Lock()
 	if len(d.history) == 0 {
 		d.mu.Unlock()
@@ -102,12 +100,6 @@ func (d *Deployer) persistLast() {
 	}
 	rec := d.history[len(d.history)-1]
 	d.mu.Unlock()
-
-	if payload, err := kv.MarshalDeploymentRecord(&rec); err != nil {
-		log.Warn().Err(err).Str("service", rec.Service).Msg("deployment: marshal for KV persistence failed")
-	} else if err := d.clusterState.PutDeployment(rec.Service, payload); err != nil {
-		log.Warn().Err(err).Str("service", rec.Service).Msg("deployment: KV persist failed")
-	}
 
 	if d.nc == nil {
 		return

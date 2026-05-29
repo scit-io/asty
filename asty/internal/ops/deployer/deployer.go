@@ -23,10 +23,7 @@ var ErrDeployInFlight = errors.New("deploy already in progress for this service"
 // minimal so tests can inject a stub. SetRollbackFailed lets the
 // deployer flag a service that failed auto_revert so the autoscaler
 // stops touching it; the operator clears the flag via the API once
-// they reconcile the mixed-version state. PutDeployment persists the
-// latest DeploymentRecord under `service.<name>.deployment` in KV;
-// callers ignore its error and log, since persistence is observational,
-// not authorisation.
+// they reconcile the mixed-version state.
 //
 // Get/SetServiceVersion is the version pin scheduler.createAllocation
 // reads when placing new copies — Deploy is the sole writer so that
@@ -37,7 +34,6 @@ type StateAccessor interface {
 	MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error
 	SetRollbackFailed(serviceName string, failed bool) error
 	SetDeployInProgress(serviceName string, active bool) error
-	PutDeployment(service string, payload []byte) error
 	GetServiceVersion(serviceName string) (types.ServiceVersion, error)
 	SetServiceVersion(serviceName string, v types.ServiceVersion) error
 }

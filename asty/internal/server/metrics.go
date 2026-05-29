@@ -63,7 +63,7 @@ func (s *Server) subscribeScalingEvents(ctx context.Context) {
 
 // subscribeDeployHistory replays deploy-progress messages
 // (asty.v1.deploy.progress.<service>) into the local deployer's
-// history ring. The publisher (deployer.persistLast on the leader)
+// history ring. The publisher (deployer.publishLast on the leader)
 // updates its own ring directly; this subscription is what keeps
 // every other server's `GET /services/{name}/deploy` consistent.
 // Records are upserted by ID so the same record can transition

@@ -91,9 +91,9 @@ func (s *Server) DeployService(serviceName, version string) (*deployer.Deploymen
 
 	go func() {
 		if _, err := s.deployer.Deploy(s.lifeCtx, plan); err != nil {
-			// Final state is already recorded in history + KV + SSE
-			// via updateLastRecord/persistLast — nothing more to do
-			// from this goroutine.
+			// Final state is already recorded in the history ring and
+			// published on SSE via updateLastRecord/publishLast —
+			// nothing more to do from this goroutine.
 			_ = err
 		}
 	}()
