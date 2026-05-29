@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"asty/asty/internal/core/config"
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 
 	"github.com/gorilla/websocket"
@@ -46,7 +47,7 @@ type Gateway struct {
 	cfg          config.GatewayConfig
 	nodeID       string
 	upgrader     websocket.Upgrader
-	allowedHosts allowedHostSet
+	allowedHosts netutil.OriginAllowList
 	rl           *rateLimiter
 	log          zerolog.Logger
 
@@ -85,7 +86,7 @@ func (gw *Gateway) bumpService(service string) {
 // rules collected from all loaded .asty service definitions — the
 // gateway enforces them on incoming requests before proxying to NATS.
 func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
-	hosts, err := parseAllowedHosts(log, cfg.AllowedHosts)
+	hosts, err := netutil.ParseOriginAllowList(log, cfg.AllowedHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +104,7 @@ func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return hosts.allows(log, r.Header.Get("Origin"))
+			return hosts.Allows(log, r.Header.Get("Origin"))
 		},
 	}
 	return gw, nil

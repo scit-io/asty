@@ -24,7 +24,7 @@ func (gw *Gateway) middlewareOrigin(next http.Handler) http.Handler {
 			return
 		}
 
-		if !gw.allowedHosts.allows(gw.log, origin) {
+		if !gw.allowedHosts.Allows(gw.log, origin) {
 			gw.log.Warn().Str("origin", origin).Str("method", r.Method).Str("path", r.URL.Path).Msg("rejected Origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
