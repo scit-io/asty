@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
+import { apiURL } from '@/lib/backend'
 import { useT } from '@/lib/i18n'
 import { parseEvent } from './format'
 import { LevelFilter, type LevelFilterValue } from './level-filter'
@@ -11,9 +12,10 @@ import { TailButton } from './tail-button'
 import type { LogEvent } from '@/types'
 
 interface LogsViewProps {
-  // streamUrl is hit with `new EventSource(streamUrl)`. The backend's
-  // content-negotiation switches to SSE because EventSource sets
-  // Accept: text/event-stream automatically.
+  // streamUrl is a prefix-relative path (from routes.ts); apiURL joins
+  // it with the backend origin before `new EventSource(...)`. The
+  // backend's content-negotiation switches to SSE because EventSource
+  // sets Accept: text/event-stream automatically.
   streamUrl: string
   title?: string
   maxLines?: number
@@ -150,7 +152,7 @@ export function LogsView({ streamUrl, title, maxLines = DEFAULT_MAX }: LogsViewP
     const open = () => {
       if (cancelled) return
       setStreamState('reconnecting')
-      es = new EventSource(streamUrl)
+      es = new EventSource(apiURL(streamUrl))
       es.onopen = () => {
         retryCount = 0
         setStreamState('streaming')

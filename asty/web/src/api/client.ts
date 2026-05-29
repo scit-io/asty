@@ -6,6 +6,7 @@ import type {
   DrainStatus,
 } from '../types'
 import { apiPaths } from '@/lib/routes'
+import { apiURL } from '@/lib/backend'
 
 // authToken returns the Bearer token the client attaches to write
 // requests. We pull it from VITE_ASTY_TOKEN at build time and from
@@ -25,7 +26,7 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  const response = await fetch(url, { ...options, headers })
+  const response = await fetch(apiURL(url), { ...options, headers })
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`)
   }

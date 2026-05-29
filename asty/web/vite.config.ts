@@ -29,13 +29,10 @@ export default defineConfig({
       },
     },
   },
-  server: {
-    proxy: {
-      // Dashboard listener (REST + SSE) — default :7060 with prefix
-      // /dashboard/v1. Match the orchestrator's A_DASHBOARD_PORT and
-      // A_DASHBOARD_PREFIX defaults; if you change them on the
-      // backend, mirror here.
-      '/dashboard': 'http://localhost:7060',
-    }
-  }
+  // No dev proxy: the SPA calls the cluster directly on the absolute
+  // origin from VITE_ASTY_ORIGIN (e.g. http://asty.test:7060), which
+  // resolves to every node's loopback alias via /etc/hosts — so the
+  // browser fails over across nodes at the DNS layer, exactly like the
+  // multi-A-record cluster domain does in prod. The dashboard's CORS
+  // layer permits the cross-origin call. See src/lib/backend.ts.
 })

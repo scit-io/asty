@@ -1,4 +1,5 @@
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STORE_FLUSH_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
+import { apiURL } from '@/lib/backend'
 
 // ConnectionState — observable lifecycle of one SSE subscription. Not
 // rendered directly anywhere; subscribers use it to wipe cached
@@ -9,8 +10,13 @@ export type ConnectionState = 'connecting' | 'streaming' | 'reconnecting' | 'dea
 // Reusable EventSource lifecycle with exponential backoff reconnect.
 // onState fires on every transition so the caller can mirror the
 // connection status into a UI-visible field or trigger a cache wipe.
+//
+// path is prefix-relative (from routes.ts); apiURL joins it with the
+// configured backend origin. On reconnect the browser re-resolves that
+// origin's DNS, so when the current node dies it can land on another
+// A-record — node failover lives at the DNS layer, not here.
 export function openStream(
-  url: string,
+  path: string,
   setup: (es: EventSource) => void,
   onState?: (state: ConnectionState) => void,
 ): () => void {
@@ -22,7 +28,7 @@ export function openStream(
   const open = () => {
     if (cancelled) return
     onState?.(retryCount === 0 ? 'connecting' : 'reconnecting')
-    es = new EventSource(url)
+    es = new EventSource(apiURL(path))
     setup(es)
     es.onopen = () => {
       retryCount = 0
