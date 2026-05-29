@@ -65,13 +65,6 @@ func AttachNATS(nc *nats.Conn, subject string) {
 	log.Logger = log.Logger.Output(io.MultiWriter(consoleWriter(), natsWriter))
 }
 
-// For returns a child logger annotated with a sub-component tag.
-// Subsystems that own a logger field (gateway, user-service handlers) take it
-// at construction; ad-hoc users can call this inline.
-func For(component string) zerolog.Logger {
-	return log.With().Str("component", component).Logger()
-}
-
 // consoleWriter centralises the stderr formatter so InitGlobal and
 // AttachNATS produce identical pretty output. Color emission is
 // gated on the stderr-is-a-terminal check so piped output stays
