@@ -125,15 +125,6 @@ func (c *Checker) Start(ctx context.Context) {
 	}
 }
 
-// IsHealthy reports the most recent probe result for processName.
-// Returns false for unregistered processes.
-func (c *Checker) IsHealthy(processName string) bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	check, ok := c.checks[processName]
-	return ok && check.Healthy
-}
-
 // HealthStatus returns the latest probe state for processName, or
 // HealthUnknown if no probe is registered. Used by the agent to
 // populate Allocation.HealthStatus.

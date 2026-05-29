@@ -81,32 +81,3 @@ func (c *Checker) recordResult(check *Check, healthy bool, err error) {
 	}
 	check.Healthy = healthy
 }
-
-// cloneCheck returns a defensive copy so callers can't mutate the
-// checker's internal state by holding onto a returned pointer.
-func cloneCheck(c *Check) *Check {
-	cp := *c
-	return &cp
-}
-
-// GetStatus returns a snapshot of one check by process name.
-func (c *Checker) GetStatus(processName string) (*Check, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	check, ok := c.checks[processName]
-	if !ok {
-		return nil, false
-	}
-	return cloneCheck(check), true
-}
-
-// GetAllStatuses returns snapshots of every registered check.
-func (c *Checker) GetAllStatuses() map[string]*Check {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	out := make(map[string]*Check, len(c.checks))
-	for name, check := range c.checks {
-		out[name] = cloneCheck(check)
-	}
-	return out
-}
