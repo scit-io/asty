@@ -8,12 +8,6 @@ import (
 	"asty/asty/internal/core/types"
 )
 
-// agentRestartTimeout caps how long we wait for an agent to ack a
-// restart command. 30 s mirrors the start-command timeout — generous
-// for slow artifact pulls but well under any realistic deployment
-// total budget.
-const agentRestartTimeout = 30 * time.Second
-
 // allocWatcher is the small interface the deployer needs from
 // ClusterState — listing initial state plus reacting to changes. The
 // real ClusterState satisfies it; tests can supply a stub.
