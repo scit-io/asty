@@ -11,6 +11,7 @@ import (
 	"asty/asty/internal/api/prometheus"
 	"asty/asty/internal/api/stream"
 	"asty/asty/internal/core/config"
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/kv"
 
@@ -27,8 +28,9 @@ type API struct {
 	ctx               ServerContext
 	httpServer        *http.Server
 	cfg               *config.Config
-	prometheusHandler http.Handler   // built by api/prometheus.Handler.
-	streamCtx         stream.Context // narrowed view for api/stream handlers.
+	prometheusHandler http.Handler            // built by api/prometheus.Handler.
+	streamCtx         stream.Context          // narrowed view for api/stream handlers.
+	corsOrigins       netutil.OriginAllowList // browser Origins allowed to call the surface.
 }
 
 // New creates a new API server. The prometheus handler is built once
@@ -39,11 +41,20 @@ type API struct {
 // return types to the smaller interfaces each sub-package declares.
 func New(ctx ServerContext) *API {
 	cfg := ctx.Config()
+	// A malformed entry falls back to the allow-all set with a loud log
+	// rather than deny-all: the dashboard is an admin surface and a
+	// silent lockout is worse than a logged typo. Empty config is the
+	// normal dev/same-origin case and also yields allow-all.
+	origins, err := netutil.ParseOriginAllowList(log.Logger, cfg.Dashboard.AllowedOrigins)
+	if err != nil {
+		log.Error().Err(err).Msg("dashboard: invalid allowed_origins, falling back to allow-all")
+	}
 	return &API{
 		ctx:               ctx,
 		cfg:               cfg,
 		prometheusHandler: prometheus.Handler(prometheusAdapter{ctx: ctx}),
 		streamCtx:         streamAdapter{ctx: ctx},
+		corsOrigins:       origins,
 	}
 }
 
@@ -137,9 +148,11 @@ func (api *API) Start(ctx context.Context) error {
 	route("GET /services/{name}/versions", api.handleServiceVersions)
 	route("POST /services/{name}/deploy", write(api.handleServiceDeploy))
 
+	// corsOrigin wraps the whole mux: browser callers get CORS headers,
+	// while /metrics and /health (no Origin) pass through untouched.
 	api.httpServer = &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           api.corsOrigin(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      0, // SSE connections are long-lived

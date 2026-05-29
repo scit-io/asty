@@ -58,7 +58,10 @@ func Setup(w http.ResponseWriter) http.Flusher {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// CORS for SSE is owned by the dashboard's corsOrigin middleware,
+	// which reflects the request Origin. Setting Access-Control-Allow-
+	// Origin here too would emit a duplicate header — browsers reject
+	// responses with two Access-Control-Allow-Origin values.
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {

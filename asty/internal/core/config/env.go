@@ -49,6 +49,9 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_DASHBOARD_HOST", &c.Dashboard.Host)
 	envInt("A_DASHBOARD_PORT", &c.Dashboard.Port)
 	envStr("A_DASHBOARD_PREFIX", &c.Dashboard.Prefix)
+	if raw, ok := os.LookupEnv("A_DASHBOARD_ALLOWED_ORIGINS"); ok {
+		c.Dashboard.AllowedOrigins = splitCSV(raw)
+	}
 
 	envStr("A_PROMETHEUS_HOST", &c.Prometheus.Host)
 	envInt("A_PROMETHEUS_PORT", &c.Prometheus.Port)

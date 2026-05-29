@@ -81,6 +81,13 @@ type DashboardConfig struct {
 	Host   string `yaml:"host"`   // bind host (default 127.0.0.1 to keep it behind a reverse proxy)
 	Port   int    `yaml:"port"`   // default 7060
 	Prefix string `yaml:"prefix"` // default /dashboard/v1
+	// AllowedOrigins gates browser cross-origin access (CORS). Empty =
+	// allow any Origin — the dev default, since the SPA may talk to a
+	// node directly from a different dev-server origin. In prod the SPA
+	// is same-origin behind a reverse proxy, so this stays empty there
+	// too; set it only when a browser on another origin must reach the
+	// dashboard directly.
+	AllowedOrigins []string `yaml:"allowed_origins"`
 }
 
 // Addr returns "<host>:<port>" — the form http.Server.Addr expects.

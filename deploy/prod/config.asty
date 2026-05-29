@@ -99,6 +99,7 @@ dashboard:
   host: 127.0.0.1                # Bind host (loopback; 0.0.0.0 only behind a reverse proxy)
   port: 7060                     # Listener port — shared with prometheus when ports match
   prefix: /dashboard/v1          # URL prefix the SPA's API_PREFIX matches
+  allowed_origins: []            # Browser Origins for CORS (empty = same-origin behind proxy; set if exposed cross-origin)
 
 # Prometheus exposition. When prometheus.port == dashboard.port (the
 # default) the same http.Server mounts both; differing ports spawn a
