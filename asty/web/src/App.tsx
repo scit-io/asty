@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, useEffect, useRef } from 'react'
 import { ThemeProvider, useTheme } from '@/components/theme-provider'
 import { LocaleProvider } from '@/lib/i18n'
 import { Header } from '@/components/header'
@@ -33,6 +33,25 @@ function ThemedToaster() {
 }
 
 export default function App() {
+  const shellRef = useRef<HTMLDivElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+
+  // Expose <main>'s live vertical-scrollbar width as --scrollbar-width on
+  // the shell so the footer can dock just left of the scrollbar instead
+  // of under it. 0 with overlay scrollbars (macOS default), ~15px with
+  // classic ones; recomputed when content makes the bar appear or vanish.
+  useEffect(() => {
+    const main = mainRef.current
+    const shell = shellRef.current
+    if (!main || !shell) return
+    const sync = () =>
+      shell.style.setProperty('--scrollbar-width', `${main.offsetWidth - main.clientWidth}px`)
+    sync()
+    const ro = new ResizeObserver(sync)
+    ro.observe(main)
+    return () => ro.disconnect()
+  }, [])
+
   return (
     <ThemeProvider defaultTheme="system" storageKey="asty-theme">
       <LocaleProvider storageKey="asty-locale">
@@ -42,9 +61,9 @@ export default function App() {
             Pages with natural content (lists, dashboards) scroll
             inside main; pages with their own viewport sizing (logs)
             use h-full + overflow-hidden so main never overflows. */}
-        <div className="relative flex h-screen flex-col overflow-hidden bg-linear-to-t from-muted to-muted/30">
+        <div ref={shellRef} className="relative flex h-screen flex-col overflow-hidden bg-linear-to-t from-muted to-muted/30">
           <Header />
-          <main className="min-h-0 flex-1 overflow-y-auto">
+          <main ref={mainRef} className="min-h-0 flex-1 overflow-y-auto">
             <Suspense fallback={<div className="p-4"><LoadingBlock /></div>}>
               <Routes>
                 {/* Cluster section */}

@@ -12,7 +12,10 @@ export function Footer() {
   const servedBy = useClusterStore((s) => s.clusterStatus?.cluster.served_by)
 
   return (
-    <footer className="absolute inset-x-0 bottom-0 py-2 text-center text-[11px] leading-none text-muted-foreground/70">
+    <footer
+      style={{ right: 'var(--scrollbar-width, 0px)' }}
+      className="absolute bottom-0 z-10 rounded-tl-lg bg-muted/60 px-3 py-1.5 text-[11px] leading-none text-muted-foreground/70"
+    >
       {servedBy
         ? t('footer.connected_to', { node: servedBy })
         : t('footer.disconnected')}
