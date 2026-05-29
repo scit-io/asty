@@ -524,7 +524,7 @@ export const ru: Messages = {
   'error.http.network': 'Сеть недоступна — кластер не отвечает',
   'error.http.bad_request': 'Неверный запрос',
   'error.http.unauthorized': 'Требуется авторизация',
-  'error.http.forbidden': 'Доступ запрещён',
+  'error.http.forbidden': 'Доступ запрещен',
   'error.http.not_found': 'Не найдено',
   'error.http.conflict': 'Конфликт',
   'error.http.server': 'Ошибка сервера',
@@ -573,7 +573,7 @@ export const ru: Messages = {
   'svc.deploy.button_inflight': 'В процессе…',
   'svc.deploy.button_dispatching': 'Запускаем…',
   'svc.deploy.help':
-    'Развёртывание сервиса указанной версии',
+    'Развертывание сервиса указанной версии',
 
   'svc.scale.title': 'Минимум копий',
   'svc.scale.placeholder': 'копий',
