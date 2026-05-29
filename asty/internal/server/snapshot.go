@@ -73,6 +73,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		IsLeader:     h.server.leaderElection.IsLeader(),
 		NodesTotal:   len(nodes),
 		NodesHealthy: healthy,
+		ServedBy:     h.server.nodeID,
 	}
 
 	cfg := h.server.cfg

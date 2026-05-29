@@ -20,6 +20,11 @@ type ClusterStatusPayload struct {
 	IsLeader     bool   `json:"is_leader"`
 	NodesTotal   int    `json:"nodes_total"`
 	NodesHealthy int    `json:"nodes_healthy"`
+	// ServedBy is the id of the node that produced this snapshot — the
+	// one the dashboard is currently talking to. Lets the UI show which
+	// node answered even behind a load balancer, where the browser
+	// otherwise can't tell which backend served the request.
+	ServedBy string `json:"served_by"`
 }
 
 type ServiceWithUsage struct {

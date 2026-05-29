@@ -47,6 +47,7 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 			"is_leader":     isLeader,
 			"nodes_total":   len(nodes),
 			"nodes_healthy": healthyNodes,
+			"served_by":     api.ctx.Config().NodeID,
 		},
 		"services": map[string]any{
 			"loaded": len(api.ctx.Services()),
