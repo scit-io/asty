@@ -17,12 +17,12 @@ import (
 const natsLeaveTimeout = 5 * time.Second
 
 // survivingClusterPeers counts live `node.<id>` entries minus self.
-// peers.txt / DNS are discovery sources; only start.sh remove or a
-// DNS edit updates them — a dashboard kill doesn't, so they lie about
-// membership the moment kills go through the UI. KV is updated by
-// every agent's graceful path (RemoveNode before exit), so it tracks
-// reality. Fallback to peers.txt on KV failure beats returning 0,
-// which would skip both shrink AND decommission.
+// DNS discovery only updates on a start.sh remove or a DNS edit — a
+// dashboard kill doesn't, so it lies about membership the moment kills
+// go through the UI. KV is updated by every agent's graceful path
+// (RemoveNode before exit), so it tracks reality. Fallback to the DNS
+// count on KV failure beats returning 0, which would skip both shrink
+// AND decommission.
 func (a *Agent) survivingClusterPeers() int {
 	if a.clusterState != nil {
 		nodes, err := a.clusterState.ListNodes()
@@ -35,7 +35,7 @@ func (a *Agent) survivingClusterPeers() int {
 			}
 			return n
 		}
-		log.Warn().Err(err).Msg("pre-departure: ListNodes failed, falling back to peers.txt")
+		log.Warn().Err(err).Msg("pre-departure: ListNodes failed, falling back to DNS peer count")
 	}
 	return len(a.resolveNATSPeers(a.resolveNodeIP()))
 }

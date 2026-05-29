@@ -112,7 +112,7 @@ func (a *Agent) Start(ctx context.Context) error {
 	// each step). Order matters: shrink first if going to 1 survivor,
 	// then decommission — SERVER.REMOVE disables our JS, so any
 	// stream update has to land before it. survivingClusterPeers reads
-	// from KV, not peers.txt — see its doc for why.
+	// from KV, not DNS — see its doc for why.
 	if surviving := a.survivingClusterPeers(); surviving >= 1 {
 		if surviving == 1 {
 			a.shrinkStreamsToSingle()

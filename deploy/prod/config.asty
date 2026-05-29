@@ -8,7 +8,7 @@
 # This file is committed to the repo and should contain no sensitive values.
 
 # Cluster identity.
-domain: ""          # Cluster domain (set via A_DOMAIN per deployment, e.g. "prod.example.com")
+domain: ""          # Cluster domain — resolved via DNS A-records for NATS peer discovery (set via A_DOMAIN, e.g. "prod.example.com")
 datacenter: ""      # This node's DC (set via A_DATACENTER per node, e.g. "eu-west-1")
 log_level: info     # Zerolog level (info — production default)
 dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod default with CBOR for size and speed)

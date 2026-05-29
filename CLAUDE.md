@@ -191,19 +191,17 @@ credentials to spawned services:
 
 #### Peer discovery
 
-`resolveNATSPeers` checks three sources in order — first one with a
-non-empty value wins. Self-IP is filtered out so a node never routes
-to itself.
+`resolveNATSPeers` has one source: DNS `LookupIP(cfg.Domain)`. Self-IP
+is filtered out so a node never routes to itself. Agents re-resolve on
+every watcher tick, so operators grow/shrink the cluster by editing the
+domain's A-records.
 
-1. `A_NATS_PEERS_FILE` — path to a file with one IP per line (or
-   comma-separated). Used in dev to imitate a DNS A-record: `start.sh`
-   maintains it, agents re-read on every watcher tick, `start.sh
-   add` appends a line to grow the cluster live.
-2. `A_NATS_PEERS` — comma-separated env var. Static, doesn't change
-   during process lifetime; useful for CI and one-shot launches.
-3. DNS `LookupIP(cfg.Domain)` — the prod path. Operators add/remove
-   nodes by editing the A-record; agents pick up changes on the
-   watcher's next tick.
+- **Prod**: `cfg.Domain` is the cluster domain; its A-records are the
+  nodes.
+- **Dev**: `cfg.Domain` is `asty.test`, which `start.sh`'s `sync_hosts`
+  points at every node's loopback alias in `/etc/hosts` (rebuilt from
+  the peer-IP list on start / `add` / `remove`). Same `LookupIP` code
+  path as prod — no file/env stand-in.
 
 Render-time asymmetry: cold bootstrap with an empty peer list (i.e.
 single-node startup) omits the `cluster{}` block and NATS runs in
@@ -237,14 +235,14 @@ non-empty, `agent/natsleave.go` runs before `stopNATSSupervisor`:
   update has to land before it.
 - The `surviving` count comes from `survivingClusterPeers()`
   (`agent/natsleave.go`), which reads live `node.<id>` entries from
-  cluster KV minus self — not from peers.txt / DNS. Discovery sources
-  are updated by `start.sh remove` or by an operator editing DNS; a
-  dashboard kill touches neither, so trusting them would miscount the
-  2→1 step and skip the shrink, pinning streams at R=3 with one alive
-  peer (no quorum → `nats: no response from stream` on every write).
-  KV is the orchestrator's own membership view, kept current by every
-  agent's `RemoveNode` on graceful exit. Falls back to peers.txt only
-  when KV is unreachable.
+  cluster KV minus self — not from DNS. The DNS A-records update only
+  on a `start.sh remove` or an operator editing them; a dashboard kill
+  touches neither, so trusting them would miscount the 2→1 step and
+  skip the shrink, pinning streams at R=3 with one alive peer (no
+  quorum → `nats: no response from stream` on every write). KV is the
+  orchestrator's own membership view, kept current by every agent's
+  `RemoveNode` on graceful exit. Falls back to the DNS count only when
+  KV is unreachable.
 
 Permissions: the `asty-observer` SYS user is granted publish on
 `$JS.API.SERVER.REMOVE` and subscribe on
@@ -777,7 +775,7 @@ Routed through `Config` (`core/config/env.go`):
   `A_NATS_DISK_BASELINE`, `A_DISK_TYPE`.
 - Artifact URL templating (server-side): `A_ARCH` (fallback
   `runtime.GOARCH`), `A_GITHUB_REPO`.
-- NATS peer discovery: `A_NATS_PEERS_FILE`, `A_NATS_PEERS`.
+- NATS peer discovery: none — resolved from `A_DOMAIN`'s DNS A-records.
 - Agent paths: `A_WORK_DIR` (default `/var/lib/asty`), `A_SERVICE_DIR`
   (default `/etc/asty/services`).
 
@@ -804,8 +802,10 @@ appears outside `core/config` (`Makefile:layer-check` target).
 `deploy/dev/.env` (secrets + simulated-hardware tunables), then
 exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_DASHBOARD_PORT`,
 `A_GATEWAY_PORT`, `A_WORK_DIR`, `A_DISK_TYPE` on top of the shared
-`config.asty`, and points all agents at
-`A_NATS_PEERS_FILE=/tmp/asty-dev/peers.txt` for live peer discovery.
+`config.asty`. Peer discovery is the prod DNS path: `config.asty` sets
+`domain: asty.test`, and `start.sh`'s `sync_hosts` maps `asty.test` to
+every live node's `127.0.0.$i` in `/etc/hosts` (one A-record each),
+rebuilt on start / `add` / `remove` from the per-node pidfiles.
 
 ```
 deploy/dev/start.sh             # 1 node
@@ -815,9 +815,9 @@ deploy/dev/start.sh remove [N]  # shrink (graceful: SERVER.REMOVE on the leaver)
 deploy/dev/start.sh stop        # tear down everything
 ```
 
-`add` appends the new node's IP to `peers.txt`, brings up its
+`add` publishes the new node's `asty.test` A-record, brings up its
 loopback alias (`127.0.0.$i`), and starts a fresh server+agent pair.
-Existing agents notice the file change on their next watcher tick
+Existing agents notice the DNS change on their next watcher tick
 (~5 s). For a cluster already at N>1 they SIGHUP their `nats-server`
 to apply the routes delta live (no downtime); growing from N=1 takes
 a cold restart on the existing node because JetStream flips from
@@ -1090,7 +1090,7 @@ asty/internal/
     │                              #   SERVER.REMOVE + shrinkStreamsToSingle
     │                              #   + transferStreamLeader +
     │                              #   survivingClusterPeers (cluster KV
-    │                              #   is the source of truth, not peers.txt)
+    │                              #   is the source of truth, not DNS)
     ├── natsstats.go               # STATSZ/JSZ poller → asty_node_nats_*
     ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService

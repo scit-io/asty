@@ -152,8 +152,8 @@ func (a *Agent) stopNATSChild(cmd *exec.Cmd, exitCh <-chan error) {
 	}
 }
 
-// watchNATSPeers polls the peer source (A_NATS_PEERS env in dev, DNS
-// lookup of cfg.Domain in prod) and signals the supervisor to restart
+// watchNATSPeers polls the peer source (DNS lookup of cfg.Domain) and
+// signals the supervisor to restart
 // nats-server when the resolved set changes. The supervisor reads the
 // fresh peer list via bootstrapNATS, so the watcher only carries the
 // "something changed" signal — never the list itself.

@@ -27,8 +27,6 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_NATS_OBSERVER_PASSWORD", &c.NATS.ObserverPassword)
 	envStr("A_NATS_APP_USER", &c.NATS.AppUser)
 	envStr("A_NATS_APP_PASSWORD", &c.NATS.AppPassword)
-	envStr("A_NATS_PEERS_FILE", &c.NATS.PeersFile)
-	envStr("A_NATS_PEERS", &c.NATS.Peers)
 
 	envInt("A_MIN_COPIES", &c.Autoscale.MinCopies)
 	envInt("A_MAX_COPIES", &c.Autoscale.MaxCopies)

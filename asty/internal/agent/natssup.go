@@ -120,8 +120,8 @@ func (a *Agent) resolveNodeIP() string {
 	return ""
 }
 
-// Peer resolution helpers (resolveNATSPeers, splitAndTrim, filterSelf)
-// live in natspeers.go.
+// Peer resolution helpers (resolveNATSPeers, filterSelf) live in
+// natspeers.go.
 
 // findNATSServerBinary locates the nats-server binary the supervisor
 // exec's. Order: same directory as the running asty binary (handles the

@@ -26,17 +26,14 @@ DATA_BASE="/tmp/asty-dev"
 # ps, and each add/remove leaves a self-contained record; stop_all
 # iterates the whole set.
 PID_FILE_TMPL="$DATA_BASE/pids"
-# Shared peer-list file consumed by every agent (A_NATS_PEERS_FILE).
-# Imitates a prod DNS A-record: one IP per line, agents re-read on
-# every watcher tick, self-filter in code. add/remove update this
-# file; live agents pick up the change on their next tick.
-PEERS_FILE="$DATA_BASE/peers.txt"
-
-# /etc/hosts name the dashboard SPA points at (VITE_ASTY_ORIGIN =
-# http://asty.test:7060). sync_hosts maps it to every node IP from
-# PEERS_FILE — one A-record per node — so the browser fails over across
-# nodes at the DNS layer, the dev mirror of the prod cluster domain.
-# .test is RFC 6761 reserved and (unlike .dev) not HSTS-forced to HTTPS.
+# /etc/hosts name that is BOTH the dashboard SPA target (VITE_ASTY_ORIGIN
+# = http://asty.test:7060) and the cluster domain agents resolve for
+# NATS peer discovery (LookupIP — the same code path as prod). sync_hosts
+# maps it to 127.0.0.<i> for every live node (one A-record each), so the
+# browser and the agents fail over across nodes at the DNS layer. The
+# node set comes from the per-node pidfiles, so no separate peer file is
+# kept. .test is RFC 6761 reserved and (unlike .dev) not HSTS-forced to
+# HTTPS.
 HOSTS_NAME="asty.test"
 HOSTS_BEGIN="# >>> asty-dev (asty.test) >>>"
 HOSTS_END="# <<< asty-dev <<<"
@@ -144,21 +141,32 @@ teardown_loopback_aliases() {
 # =============================================================================
 # /etc/hosts — asty.test name for the dashboard SPA (both macOS and Linux)
 # =============================================================================
-# sync_hosts rewrites the asty.test block in /etc/hosts from PEERS_FILE,
-# one "ip asty.test" line per node. The resolver returns all addresses
-# for the name, so the browser fails over across nodes on connection
-# error — the dev mirror of a multi-A-record prod domain. Called after
-# every PEERS_FILE change (start, add, remove). Requires sudo.
+# node_indices prints the index of every live node (one per line) from
+# the per-node pidfiles — the authoritative record of which nodes exist
+# (start_node writes pids-$i, remove deletes it). Index $i maps to IP
+# 127.0.0.$i.
+node_indices() {
+  local pf i
+  for pf in "${PID_FILE_TMPL}-"*; do
+    [[ -f "$pf" ]] || continue
+    i="${pf##*-}"
+    [[ "$i" =~ ^[0-9]+$ ]] && echo "$i"
+  done
+}
+
+# sync_hosts <index...> rewrites the asty.test block in /etc/hosts to
+# "127.0.0.<index> asty.test" for each given node. The resolver returns
+# all addresses for the name, so agents (LookupIP) and the browser fail
+# over across nodes. Built from explicit indices, not pidfiles, because
+# at initial start the pidfiles don't exist yet and agents must resolve
+# the full set on first boot. Requires sudo.
 sync_hosts() {
-  [[ -f "$PEERS_FILE" ]] || return 0
-  local block tmp ip count
+  local block tmp i count=0
   block="$HOSTS_BEGIN"$'\n'
-  count=0
-  while IFS= read -r ip; do
-    [[ -n "$ip" ]] || continue
-    block+="$ip $HOSTS_NAME"$'\n'
+  for i in "$@"; do
+    block+="127.0.0.$i $HOSTS_NAME"$'\n'
     count=$((count + 1))
-  done < "$PEERS_FILE"
+  done
   block+="$HOSTS_END"
   # Strip any prior block (read needs no sudo — /etc/hosts is world-
   # readable), append the fresh one, swap the file back with sudo.
@@ -187,17 +195,18 @@ teardown_hosts() {
 # sweep_orphan_nodes drops pidfiles whose agent PID is gone — dashboard
 # kill, crash, or external SIGTERM all leave the file behind otherwise.
 # It also picks up the orphaned server process from the same pidfile
-# (servers don't die on their own when the agent does) and the matching
-# entry in PEERS_FILE so surviving nats-servers don't keep trying to
-# route to a dead peer. Called at the top of add_node and remove_node
-# so subsequent counts/index-picks see ground truth.
+# (servers don't die on their own when the agent does). Removing the
+# pidfile drops the node from node_indices; the caller (add/remove)
+# rebuilds /etc/hosts via sync_hosts so surviving nats-servers stop
+# routing to the dead peer. Called at the top of add_node and
+# remove_node so subsequent counts/index-picks see ground truth.
 #
 # Why `sudo kill -0`: the agent runs under sudo, so its PID is owned by
 # root; an unprivileged `kill -0` from this script's user gets EPERM
 # and falsely reports the process dead. A single `sudo kill -0` works
 # for both root-owned (agent) and user-owned (server) PIDs.
 sweep_orphan_nodes() {
-  local pf server_pid agent_pid idx addr tmp
+  local pf server_pid agent_pid
   for pf in "${PID_FILE_TMPL}-"*; do
     [[ -f "$pf" ]] || continue
     server_pid=$(sed -n '1p' "$pf" 2>/dev/null)
@@ -209,13 +218,6 @@ sweep_orphan_nodes() {
     info "sweeping stale node (pidfile $pf: agent gone)"
     if [[ -n "$server_pid" ]] && sudo kill -0 "$server_pid" 2>/dev/null; then
       sudo kill "$server_pid" 2>/dev/null && info "  ✓ killed orphan server PID $server_pid"
-    fi
-    idx="${pf##*-}"
-    addr="127.0.0.${idx}"
-    if [[ -f "$PEERS_FILE" ]]; then
-      tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
-      grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
-      mv "$tmp" "$PEERS_FILE"
     fi
     rm -f "$pf"
   done
@@ -240,13 +242,12 @@ start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
 
-  # Seed the shared peers file with every node's IP. Agents self-filter
-  # in code, so a single file shared by all of them is enough.
+  # Publish asty.test → all node IPs in /etc/hosts BEFORE the agents
+  # boot, so each resolves the full peer set on its first bootstrap and
+  # comes up clustered (not standalone-then-cold-restart). Agents
+  # self-filter their own IP.
   mkdir -p "$DATA_BASE"
-  : > "$PEERS_FILE"
-  for ((i=1; i<=nodes; i++)); do
-    echo "127.0.0.$i" >> "$PEERS_FILE"
-  done
+  sync_hosts $(seq 1 "$nodes")
 
   for ((i=1; i<=nodes; i++)); do
     start_node "$i"
@@ -258,9 +259,9 @@ start_asty() {
 
 # start_node brings up one server + agent pair with the per-node env
 # (NODE_ID/IP/UI/gateway address, fake disk type). Shared by start_asty
-# (initial fan-out) and add_node (live cluster growth). The agent reads
-# the peer list from PEERS_FILE — see watchNATSPeers in the asty agent
-# for how live changes propagate.
+# (initial fan-out) and add_node (live cluster growth). The agent
+# resolves peers via DNS (asty.test in /etc/hosts) — see watchNATSPeers
+# in the asty agent for how live changes propagate.
 start_node() {
   local i=$1
   local addr="127.0.0.$i"
@@ -304,7 +305,6 @@ start_node() {
   # stays as root for the session — start.sh-only convenience, see
   # asty/internal/agent/privileges.go.
   sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
-    A_NATS_PEERS_FILE="$PEERS_FILE" \
     A_WORK_DIR="$DATA_BASE/work" \
     A_GATEWAY_HOST="$gateway_host" \
     A_DISK_TYPE="$disk_type" \
@@ -318,39 +318,38 @@ start_node() {
 }
 
 # add_node grows a running cluster by one. Picks the next free index,
-# brings up its loopback alias, appends its IP to PEERS_FILE, then
-# starts the new node. Existing agents notice the file change on their
-# next watcher tick (~5 s), pererender nats.conf with the new peer, and
+# brings up its loopback alias, publishes its asty.test A-record, then
+# starts the new node. Existing agents notice the DNS change on their
+# next watcher tick (~5 s), re-render nats.conf with the new peer, and
 # restart their nats-server child. Reaching steady-state takes the
 # rendered-conf change + JetStream meta-leader re-election (~10–15 s).
 add_node() {
   sweep_orphan_nodes
-  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
-    die "no running cluster found (no ${PID_FILE_TMPL}-* / $PEERS_FILE). Start one with: $0 [N]"
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
+    die "no running cluster found (no ${PID_FILE_TMPL}-*). Start one with: $0 [N]"
   fi
 
-  # Next free index = max existing + 1. Peers file is the source of
-  # truth (PID file holds 2 lines per node so it would double-count).
-  local max_i=0
-  while IFS= read -r ip; do
-    local last="${ip##*.}"
-    [[ -n "$last" && "$last" =~ ^[0-9]+$ && $last -gt $max_i ]] && max_i=$last
-  done < "$PEERS_FILE"
+  # Next free index = max existing + 1, from the pidfiles.
+  local max_i=0 idx
+  for idx in $(node_indices); do
+    [[ $idx -gt $max_i ]] && max_i=$idx
+  done
   local i=$((max_i + 1))
   local addr="127.0.0.$i"
 
   log "adding node $i (id=dev-node-$i, ip=$addr)..."
 
-  echo "$addr" >> "$PEERS_FILE"
+  # Publish the new A-record (existing nodes + i) before booting the new
+  # agent so it resolves the full peer set on its first bootstrap.
+  sync_hosts $(node_indices) "$i"
   start_node "$i"
-  sync_hosts
 
   info "node $i started. Existing agents will pick up the new peer on"
   info "the next nats-watch tick (~5 s) and restart their nats-server."
 }
 
 # remove_node shrinks a running cluster by tearing down one node and
-# removing its entry from PEERS_FILE. Without args, removes the
+# dropping it from the asty.test records. Without args, removes the
 # highest-numbered node (symmetric with add_node). With an explicit
 # index, removes that one. Removing the last node prompts for an
 # explicit 'yes' — the cluster is fully dismantled in that case and
@@ -366,17 +365,17 @@ remove_node() {
 
   sweep_orphan_nodes
 
-  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null || [[ ! -f "$PEERS_FILE" ]]; then
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
     die "no running cluster found. Start one with: $0 [N]"
   fi
 
-  # Resolve target: explicit index wins, otherwise highest in PEERS_FILE.
+  # Resolve target: explicit index wins, otherwise highest live node.
   if [[ -z "$target" ]]; then
     target=0
-    while IFS= read -r ip; do
-      local last="${ip##*.}"
-      [[ -n "$last" && "$last" =~ ^[0-9]+$ && $last -gt $target ]] && target=$last
-    done < "$PEERS_FILE"
+    local idx
+    for idx in $(node_indices); do
+      [[ $idx -gt $target ]] && target=$idx
+    done
   fi
   if ! [[ "$target" =~ ^[0-9]+$ ]] || [[ $target -lt 1 ]]; then
     die "usage: $0 remove [N]  (N ≥ 1)"
@@ -453,20 +452,16 @@ remove_node() {
     sudo kill -0 "$pid" 2>/dev/null && sudo kill -9 "$pid" 2>/dev/null && info "✓ PID $pid (SIGKILL)" || true
   done < "$pidfile"
 
-  # 3) Drop the IP from PEERS_FILE so surviving agents notice on their
-  #    next watcher tick and shrink their cluster.routes (SIGHUP hot
-  #    reload when 2+ nodes remain, cold restart on the 2→1 step).
-  local tmp
-  tmp=$(mktemp "${PEERS_FILE}.XXXXXX")
-  grep -v "^${addr}$" "$PEERS_FILE" > "$tmp" || true
-  mv "$tmp" "$PEERS_FILE"
-  sync_hosts
-
-  # 4) Clean per-node state — pidfile, working dir, JS store. Old
-  #    JetStream data would conflict with a future add reusing
-  #    the same index.
+  # 3) Clean per-node state — pidfile, working dir, JS store. Old
+  #    JetStream data would conflict with a future add reusing the same
+  #    index. Dropping the pidfile also drops the node from node_indices.
   rm -f "$pidfile"
   sudo rm -rf "$DATA_BASE/work/dev-node-$target" "$DATA_BASE/jetstream/dev-node-$target" "$DATA_BASE/node$target"
+
+  # 4) Rebuild asty.test from the survivors so they notice on their next
+  #    watcher tick and shrink their cluster.routes (SIGHUP hot reload
+  #    when 2+ remain, cold restart on the 2→1 step).
+  sync_hosts $(node_indices)
 
   info "node $target removed. Loopback alias $addr left up; stop_all"
   info "tears down aliases at end-of-life."
@@ -620,7 +615,6 @@ build_binaries
 setup_loopback_aliases "$NODES"
 
 start_asty "$NODES"
-sync_hosts
 wait_asty
 
 print_status

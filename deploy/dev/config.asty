@@ -9,7 +9,7 @@
 # by start.sh into the process env.
 
 # Cluster identity.
-domain: dev.local   # Cluster domain (used in NATS subject namespacing and API auth)
+domain: asty.test   # Cluster domain — resolved via DNS A-records for NATS peer discovery (dev: /etc/hosts → every node, maintained by start.sh)
 datacenter: dc1     # This node's DC; used by proximity-aware scheduling
 log_level: debug    # Zerolog level (debug — verbose; in prod typically info)
 dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod-like CBOR)
