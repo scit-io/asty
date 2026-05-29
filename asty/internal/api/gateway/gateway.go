@@ -62,11 +62,9 @@ type Gateway struct {
 	// individual allocations on this node.
 	serviceRequests sync.Map // map[string]*atomic.Int64
 
-	// ctx is the gateway-scoped context. Cancelled when the parent
-	// context (the agent's) is cancelled, which lets WS handlers and
-	// HTTP requests observe a single shutdown signal.
-	ctx    context.Context
-	cancel context.CancelFunc
+	// ctx is the gateway-scoped context (the agent's). WS handlers and
+	// HTTP requests observe shutdown when the agent cancels it.
+	ctx context.Context
 }
 
 // bumpService increments the per-service surviving-request counter for
@@ -85,13 +83,12 @@ func (gw *Gateway) bumpService(service string) {
 // server can attribute traffic per node. serviceRules are rate-limit
 // rules collected from all loaded .asty service definitions — the
 // gateway enforces them on incoming requests before proxying to NATS.
-func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
+func New(ctx context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
 	hosts, err := netutil.ParseOriginAllowList(log, cfg.AllowedHosts)
 	if err != nil {
 		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(parent)
 	gw := &Gateway{
 		nats:         nc,
 		cfg:          cfg,
@@ -100,7 +97,6 @@ func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID
 		rl:           newRateLimiter(cfg.RateLimit, serviceRules, log, ctx.Done()),
 		log:          log,
 		ctx:          ctx,
-		cancel:       cancel,
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -114,10 +110,6 @@ func New(parent context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID
 // into http.Server.BaseContext so each request's r.Context() cancels
 // on shutdown, letting NATS round-trips abort promptly.
 func (gw *Gateway) RootContext() context.Context { return gw.ctx }
-
-// Shutdown cancels the gateway's context. Triggers WS sessions to
-// close and unblocks any callers blocked on RootContext().Done().
-func (gw *Gateway) Shutdown() { gw.cancel() }
 
 // Handler returns the root http.Handler of the gateway.
 //
