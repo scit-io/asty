@@ -263,7 +263,7 @@ export const en = {
   'svc.deploy.button_inflight': 'In progress…',
   'svc.deploy.button_dispatching': 'Deploying…',
   'svc.deploy.help':
-    'Rolling update per `update` policy (optional canary → batches of `max_parallel`). Autoscaler paused for the rollout; auto-reverts on failure if `auto_revert` is enabled.',
+    'Deploy a specific version of the service',
 
   // Service min-copies card
   'svc.scale.title': 'Min copies',
@@ -271,7 +271,7 @@ export const en = {
   'svc.scale.button': 'Set floor',
   'svc.scale.button_saving': 'Saving…',
   'svc.scale.help':
-    'Per-service floor. Autoscaler can grow above; lowering stops excess copies immediately.',
+    'Minimum copies per cluster',
 
   // Scaling events page
   'scaling.col.action': 'Action',
@@ -516,7 +516,7 @@ export const ru: Messages = {
   'toast.kill_failed': 'Не удалось удалить: {error}',
   'toast.restarted': 'Перезапущено: {service}',
   'toast.stopped': 'Остановлено: {service}',
-  'toast.deploying': 'Развертываем {service}@{version}',
+  'toast.deploying': 'Развертывание {service}@{version}',
   'toast.deploy_failed': 'Ошибка деплоя: {error}',
   'toast.scale_set': 'Установлен минимум для {service}: {n}',
   'toast.scale_invalid': 'Введите неотрицательное целое число',
@@ -557,8 +557,8 @@ export const ru: Messages = {
 
   'svc.config.title': 'Конфигурация',
   'svc.config.current_copies': 'Текущих копий',
-  'svc.config.min_copies': 'Мин. копий',
-  'svc.config.max_copies': 'Макс. копий',
+  'svc.config.min_copies': 'Минимум копий',
+  'svc.config.max_copies': 'Максимум копий',
   'svc.config.unlimited': 'без ограничения',
   'svc.config.target_cpu': 'Целевой ЦП',
   'svc.config.target_ram': 'Целевой ОЗУ',
@@ -573,14 +573,14 @@ export const ru: Messages = {
   'svc.deploy.button_inflight': 'В процессе…',
   'svc.deploy.button_dispatching': 'Запускаем…',
   'svc.deploy.help':
-    'Rolling по `update` (canary → батчи `max_parallel`). Автомасштабирование на паузе; при сбое — откат через `auto_revert`.',
+    'Развёртывание сервиса указанной версии',
 
-  'svc.scale.title': 'Мин. копий',
+  'svc.scale.title': 'Минимум копий',
   'svc.scale.placeholder': 'копий',
   'svc.scale.button': 'Установить',
   'svc.scale.button_saving': 'Сохраняем…',
   'svc.scale.help':
-    'Минимум копий. Автомасштабирование растет выше; уменьшение сразу гасит лишние.',
+    'Минимум копий на кластер',
 
   'scaling.col.action': 'Действие',
   'scaling.col.reason': 'Комментарий',
