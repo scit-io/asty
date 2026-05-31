@@ -37,8 +37,11 @@ interface NodeHeaderProps {
 }
 
 // NodeHeader renders the canonical split-row header for any page
-// inside /nodes/{id}: breadcrumbs left, node-id big title + status
-// dot + ip / datacenter line right-aligned.
+// inside /nodes/{id}: breadcrumbs left, ip/datacenter as the big
+// title + status dot + host on a muted subline, right-aligned.
+// Breadcrumbs still carry the node id (that's the routable identity);
+// the headline trades it for ip/dc so the visual emphasis matches
+// what operators actually look at — the address.
 export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
   const t = useT()
   const id = node?.id ?? nodeId
@@ -52,12 +55,16 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
     ...tail,
   ]
 
+  // Title falls back to the bare id when we don't have the full Node
+  // yet (lite header on log pages); avoids a blank h1 mid-load.
+  const title = node ? `${node.ip} / ${node.datacenter}` : id
+
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-8">
       <Breadcrumbs items={crumbs} />
       <div className="space-y-2 w-full sm:w-auto">
         <div className="flex items-center gap-3 sm:gap-4 justify-end">
-          <h1 className="text-2xl sm:text-3xl font-bold font-mono">{id}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold font-mono">{title}</h1>
           {node && (
             <TooltipProvider>
               <Tooltip>
@@ -71,9 +78,9 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
             </TooltipProvider>
           )}
         </div>
-        {node && (
-          <div className="text-sm sm:text-base text-muted-foreground text-right">
-            <span className="font-mono">{node.ip}</span> / {node.datacenter}
+        {node?.host && (
+          <div className="text-sm sm:text-base text-muted-foreground text-right font-mono">
+            {node.host}
           </div>
         )}
       </div>
