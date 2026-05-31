@@ -11,7 +11,9 @@ import {
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { DataTable, type CellSpec, type Column } from '@/components/data-table'
 import { AllocIdBadge } from '@/components/alloc-id-badge'
+import { NodeIdentityTooltip } from '@/components/node-identity-tooltip'
 import { UsageCell } from '@/components/usage-cell'
+import { useClusterStore } from '@/store/cluster'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
 import { uptimeLabel } from '@/lib/uptime'
@@ -53,6 +55,13 @@ export function AllocationsTable({
   const t = useT()
   const navigate = useNavigate()
   const { act, pending } = useAllocationActions()
+  // nodeByID maps node_id → Node for the dc/ip/host tooltip in the
+  // Node column. Empty on cold deep-links until the cluster snapshot
+  // lands; the tooltip self-hides when all three identity fields are
+  // empty.
+  const nodeByID = useClusterStore(
+    (s) => new Map(s.nodes.map((n) => [n.id, n])),
+  )
 
   // act() needs the full alloc but the action cell only sees its id —
   // read the live row from a ref so the wrappers stay stable.
@@ -82,8 +91,24 @@ export function AllocationsTable({
         {
           key: 'node', label: t('allocs.col.node'),
           sort: (a: Allocation, b: Allocation) => a.node_id.localeCompare(b.node_id),
-          render: (a: Allocation) => <span className="font-medium">{a.node_id}</span>,
-          deps: (a: Allocation) => [a.node_id],
+          render: (a: Allocation) => {
+            const n = nodeByID.get(a.node_id)
+            return (
+              <span className="inline-flex items-center gap-1.5 font-medium">
+                {a.node_id}
+                {/* stopPropagation: the row has an onClick that
+                    navigates to the allocation page; clicking the
+                    tooltip icon shouldn't trigger that. */}
+                <span onClick={(e) => e.stopPropagation()}>
+                  <NodeIdentityTooltip dc={n?.datacenter} ip={n?.ip} host={n?.host} />
+                </span>
+              </span>
+            )
+          },
+          deps: (a: Allocation) => {
+            const n = nodeByID.get(a.node_id)
+            return [a.node_id, n?.datacenter, n?.ip, n?.host]
+          },
         },
       ]
       : [
