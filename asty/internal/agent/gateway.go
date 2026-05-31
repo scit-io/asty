@@ -62,7 +62,7 @@ func (a *Agent) runGatewayWith(ctx context.Context, listener net.Listener) error
 
 	serviceRules := a.collectRateLimitRules()
 
-	gw, err := gateway.New(ctx, a.nc, cfg, a.nodeID, serviceRules, log.With().Str("component", "gateway").Logger())
+	gw, err := gateway.New(ctx, a.nc, cfg, a.nodeID, serviceRules, a.clusterState, log.With().Str("component", "gateway").Logger())
 	if err != nil {
 		_ = listener.Close()
 		return err

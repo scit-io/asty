@@ -14,6 +14,7 @@ import (
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
+	"asty/asty/internal/infra/kv"
 
 	"github.com/gorilla/websocket"
 	"github.com/nats-io/nats.go"
@@ -65,6 +66,17 @@ type Gateway struct {
 	// ctx is the gateway-scoped context (the agent's). WS handlers and
 	// HTTP requests observe shutdown when the agent cancels it.
 	ctx context.Context
+
+	// clusterState backs the /_cluster/hosts read endpoint. Optional
+	// (the gateway functions without it for the user-traffic paths) —
+	// when nil the endpoint returns an empty list.
+	clusterState *kv.ClusterState
+
+	// hostsCache caches the projected host list to keep KV listings out
+	// of the hot read path. See clusterHostsCacheTTL for the freshness
+	// bound.
+	hostsCacheMu sync.Mutex
+	hostsCache   hostsCacheEntry
 }
 
 // bumpService increments the per-service surviving-request counter for
@@ -83,7 +95,9 @@ func (gw *Gateway) bumpService(service string) {
 // server can attribute traffic per node. serviceRules are rate-limit
 // rules collected from all loaded .asty service definitions — the
 // gateway enforces them on incoming requests before proxying to NATS.
-func New(ctx context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, log zerolog.Logger) (*Gateway, error) {
+// clusterState is read by the _cluster/hosts endpoint; nil disables
+// that route (it 200s with an empty list).
+func New(ctx context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID string, serviceRules []types.RateLimitRule, clusterState *kv.ClusterState, log zerolog.Logger) (*Gateway, error) {
 	hosts, err := netutil.ParseOriginAllowList(log, cfg.AllowedHosts)
 	if err != nil {
 		return nil, err
@@ -97,6 +111,7 @@ func New(ctx context.Context, nc *nats.Conn, cfg config.GatewayConfig, nodeID st
 		rl:           newRateLimiter(cfg.RateLimit, serviceRules, log, ctx.Done()),
 		log:          log,
 		ctx:          ctx,
+		clusterState: clusterState,
 	}
 	gw.upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
@@ -128,6 +143,11 @@ func (gw *Gateway) Handler() http.Handler {
 	}
 
 	api := http.NewServeMux()
+	// Bare prefix (`/api/v1`, no trailing slash) is the gateway-served
+	// host-list endpoint. The subtree `/api/v1/` keeps its existing role
+	// as the catch-all that hands the trimmed path to gw.route — Go
+	// 1.22 mux treats the two patterns as distinct so they coexist.
+	api.HandleFunc(prefix, gw.handleClusterHosts)
 	api.Handle(prefix+"/", http.StripPrefix(prefix, http.HandlerFunc(gw.route)))
 
 	root := http.NewServeMux()
