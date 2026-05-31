@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { DataTable, type CellSpec, type Column } from '@/components/data-table'
+import { AllocIdBadge } from '@/components/alloc-id-badge'
 import { UsageCell } from '@/components/usage-cell'
 import { formatMB, formatMHz, formatPercent } from '@/lib/format'
 import { routes } from '@/lib/routes'
@@ -75,7 +76,7 @@ export function AllocationsTable({
       ? [
         {
           key: 'id', label: t('allocs.col.allocation'),
-          render: (a: Allocation) => <span className="text-xs">{a.id.slice(0, 12)}</span>,
+          render: (a: Allocation) => <AllocIdBadge id={a.id} />,
           deps: (a: Allocation) => [a.id],
         },
         {

@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { AllocIdBadge } from '@/components/alloc-id-badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { routes } from '@/lib/routes'
 import { useT, allocStatusKey } from '@/lib/i18n'
@@ -87,7 +88,7 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
           )}
         </div>
         <p className="text-muted-foreground text-xs sm:text-sm text-right">
-          {aid}
+          <AllocIdBadge id={aid} />
         </p>
       </div>
     </div>

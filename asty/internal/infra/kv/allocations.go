@@ -1,6 +1,8 @@
 package kv
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -11,10 +13,32 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+// allocIDBytes — random bytes per allocation ID. Hex-encoded gives a
+// 40-char string, matching the Git SHA-1 length the UI renders as a
+// short 7-char hash plus a tooltip with the full value.
+const allocIDBytes = 20
+
+// newAllocID returns a fresh 40-char hex string. crypto/rand is the
+// source — collisions across an entire cluster's lifetime are
+// astronomically unlikely at this width. A read failure makes the
+// whole CreateAllocation call return an error rather than fall back to
+// a predictable suffix.
+func newAllocID() (string, error) {
+	buf := make([]byte, allocIDBytes)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate allocation id: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
 // CreateAllocation creates a service allocation record
 func (cs *ClusterState) CreateAllocation(alloc *types.ServiceAllocation) error {
 	if alloc.ID == "" {
-		alloc.ID = fmt.Sprintf("%s-%s-%d", alloc.ServiceName, alloc.NodeID, time.Now().UnixNano())
+		id, err := newAllocID()
+		if err != nil {
+			return err
+		}
+		alloc.ID = id
 	}
 
 	alloc.CreatedAt = time.Now()
