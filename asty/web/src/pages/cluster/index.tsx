@@ -103,10 +103,10 @@ export default function Cluster() {
                       <TooltipTrigger asChild>
                         <Globe className="h-3.5 w-3.5 opacity-70" />
                       </TooltipTrigger>
-                      <TooltipContent className="text-right">
+                      <TooltipContent className="text-right font-normal">
                         {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
-                        {clusterStatus?.cluster.leader_ip && <div>{clusterStatus.cluster.leader_ip}</div>}
-                        {clusterStatus?.cluster.leader_host && <div className="text-xs text-muted-foreground">{clusterStatus.cluster.leader_host}</div>}
+                        {clusterStatus?.cluster.leader_ip && <div className="font-normal">{clusterStatus.cluster.leader_ip}</div>}
+                        {clusterStatus?.cluster.leader_host && <div className="font-normal text-xs text-muted-foreground">{clusterStatus.cluster.leader_host}</div>}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
