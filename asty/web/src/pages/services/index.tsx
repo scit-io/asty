@@ -28,7 +28,7 @@ export default function Services() {
     {
       key: 'name', label: t('services.col.service'),
       sort: (a, b) => a.Name.localeCompare(b.Name),
-      render: (s) => <span className="text-sm">{s.Name}</span>,
+      render: (s) => <span className="font-semibold">{s.Name}</span>,
     },
     {
       key: 'type', label: t('services.col.type'),
