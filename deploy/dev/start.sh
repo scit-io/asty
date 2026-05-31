@@ -280,9 +280,14 @@ start_asty() {
       announce_peer_to_seed "$i"
     fi
     start_node "$i"
-    # Pause so JetStream confirms the KV bucket before the next agent
-    # races to (re)create it — without it: "nats: no response from stream".
-    sleep 0.5
+    # Pause so JetStream's meta-RAFT can stabilise before the next
+    # join: each new node triggers a meta-leader election + catchup,
+    # and stacking those too tightly is what made the asty-cluster
+    # bucket time out on later joiners (3-of-8 boots, ~3min ensure-
+    # bucket hang on the rest). Two seconds is enough for the small
+    # bucket history we keep; bump if a fresh cluster ever stalls
+    # again at this point.
+    sleep 2
   done
 }
 
