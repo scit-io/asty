@@ -5,17 +5,11 @@ import {
   HardDrive,
   Heart,
   HardDriveDownload,
-  Globe,
   MemoryStick,
   Server,
   Shield,
 } from 'lucide-react'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { NodeIdentityTooltip } from '@/components/node-identity-tooltip'
 import { MetricsChart } from '@/components/metrics-chart'
 import { PageShell } from '@/components/page-shell'
 import { ResourcesBlock } from '@/components/resources-block'
@@ -97,20 +91,10 @@ export default function Cluster() {
             value={
               <span className="inline-flex items-center gap-1.5">
                 {clusterStatus?.cluster.leader || '—'}
-                {(clusterStatus?.cluster.leader_dc || clusterStatus?.cluster.leader_ip || clusterStatus?.cluster.leader_host) && (
-                  <TooltipProvider delayDuration={0}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Globe className="h-3.5 w-3.5 opacity-70" />
-                      </TooltipTrigger>
-                      <TooltipContent className="font-normal">
-                        {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
-                        {clusterStatus?.cluster.leader_ip && <div className="font-normal">{clusterStatus.cluster.leader_ip}</div>}
-                        {clusterStatus?.cluster.leader_host && <div className="font-normal text-xs text-muted-foreground">{clusterStatus.cluster.leader_host}</div>}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                )}
+                <NodeIdentityTooltip
+                  dc={clusterStatus?.cluster.leader_dc}
+                  ip={clusterStatus?.cluster.leader_ip}
+                  host={clusterStatus?.cluster.leader_host} />
               </span>
             }
             hint={clusterStatus?.cluster.leader_ip || '—'} />
