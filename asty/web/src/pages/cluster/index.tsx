@@ -104,8 +104,8 @@ export default function Cluster() {
                       <TooltipTrigger asChild>
                         <Info className="h-3 w-3 opacity-70 cursor-help" />
                       </TooltipTrigger>
-                      <TooltipContent>
-                        {clusterStatus?.cluster.leader_dc && <div>{clusterStatus.cluster.leader_dc}</div>}
+                      <TooltipContent className="text-right">
+                        {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
                         {clusterStatus?.cluster.leader_host && <div>{clusterStatus.cluster.leader_host}</div>}
                       </TooltipContent>
                     </Tooltip>
