@@ -280,15 +280,45 @@ start_asty() {
       announce_peer_to_seed "$i"
     fi
     start_node "$i"
-    # Pause so JetStream's meta-RAFT can stabilise before the next
-    # join: each new node triggers a meta-leader election + catchup,
-    # and stacking those too tightly is what made the asty-cluster
-    # bucket time out on later joiners (3-of-8 boots, ~3min ensure-
-    # bucket hang on the rest). Two seconds is enough for the small
-    # bucket history we keep; bump if a fresh cluster ever stalls
-    # again at this point.
-    sleep 2
+    # Event-driven gate: wait until the just-started node appears in
+    # node 1's /nodes listing. That endpoint reads from KV, so a hit
+    # proves the new agent (a) joined NATS, (b) read the asty-cluster
+    # bucket (= meta-RAFT had it placed wide enough), and (c) wrote
+    # its first heartbeat. The next node won't begin until this is
+    # true, which is what kept an 8-node cold start in budget — pure
+    # `sleep N` would either stall fast nodes or fail slow ones.
+    wait_node_registered "$i"
   done
+}
+
+# wait_node_registered polls node 1's /nodes endpoint until the named
+# node id shows up in the response, or fails out after a generous
+# wall-clock budget. Node 1 is the seed and always available; the
+# response is a JSON {nodes:[{id,...}]} that we grep — no jq dep.
+wait_node_registered() {
+  local i=$1
+  local id="dev-node-$i"
+  local seed_addr="127.0.0.1"
+  local url="http://${seed_addr}:7060/dashboard/v1/nodes"
+  local deadline=$((SECONDS + 60))
+  local probe_interval=0.5
+  # Node 1 starts standalone — there's nothing to wait for, its own
+  # heartbeat populates KV in <1s and we'd just be polling ourselves.
+  if (( i == 1 )); then
+    return 0
+  fi
+  while (( SECONDS < deadline )); do
+    if curl -fsS --max-time 2 \
+         -H "Authorization: Bearer ${A_TOKEN:-}" \
+         "$url" 2>/dev/null \
+       | grep -q "\"id\":\"${id}\""; then
+      info "  ✓ $id registered in KV"
+      return 0
+    fi
+    sleep "$probe_interval"
+  done
+  warn "$id did not register within $((deadline - SECONDS + 60))s — continuing anyway"
+  return 1
 }
 
 # announce_peer_to_seed runs `asty -mode admin add-peer` against node
@@ -430,6 +460,7 @@ add_node() {
   # the route — same path as start_asty's i>=2 branch.
   announce_peer_to_seed "$i"
   start_node "$i"
+  wait_node_registered "$i"
 
   info "node $i started. Existing agents will pick up the new peer via"
   info "cluster KV (WatchNodes) and SIGHUP their nats-server."
