@@ -106,7 +106,7 @@ export default function Cluster() {
                       <TooltipContent className="text-right">
                         {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
                         {clusterStatus?.cluster.leader_ip && <div>{clusterStatus.cluster.leader_ip}</div>}
-                        {clusterStatus?.cluster.leader_host && <div>{clusterStatus.cluster.leader_host}</div>}
+                        {clusterStatus?.cluster.leader_host && <div className="text-xs text-muted-foreground">{clusterStatus.cluster.leader_host}</div>}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
