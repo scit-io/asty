@@ -13,12 +13,18 @@ import (
 // service definitions in ops/deployer/loader.go.
 type Config struct {
 	// Cluster identity
-	Domain     string `yaml:"domain"`
 	Datacenter string `yaml:"datacenter"`
 	NodeID     string `yaml:"node_id"`
 	NodeIP     string `yaml:"node_ip"`
-	Token      string `yaml:"token"`
-	LogLevel   string `yaml:"log_level"`
+	// NodeHost is this node's public DNS name — whatever the operator
+	// chooses (e.g. "edge-eu-1.example.com" in prod, "n1.asty.test" in
+	// the dev start.sh layout). The agent writes it into KV
+	// (NodeInfo.Host) so the dashboard snapshot can hand the name back
+	// to the SPA / external load balancers without any extra round-trip.
+	// Empty when a node is addressed by IP only.
+	NodeHost string `yaml:"node_host"`
+	Token    string `yaml:"token"`
+	LogLevel string `yaml:"log_level"`
 
 	// Development knobs
 	DevMode   bool `yaml:"dev_mode"`
@@ -118,9 +124,6 @@ func (c *Config) Validate() error {
 	}
 	if c.DevMode {
 		return nil
-	}
-	if c.Domain == "" {
-		return fmt.Errorf("domain is required (config.asty: domain, env: A_DOMAIN)")
 	}
 	if c.Token == "" {
 		return fmt.Errorf("token is required (config.asty: token, env: A_TOKEN)")

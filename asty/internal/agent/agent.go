@@ -51,11 +51,21 @@ type Agent struct {
 	natsStats          natsStats
 	natsServerCmd      *exec.Cmd
 
-	// natsRestartCh fires when watchNATSPeers detects a change in the
-	// peer list and the supervisor must rebuild nats.conf and restart
-	// the broker. Buffer 1 — a second tick before the supervisor
-	// services the first is harmless: the restart already picks up the
-	// freshest peer list.
+	// peers tracks the IPs of every other cluster node. Three sources
+	// feed it: cfg.NATS.Seed at construction (bootstrap hint),
+	// CmdAddPeer + peer-announce broadcast at runtime (incoming joiners
+	// before they reach KV), and WatchNodes once the agent connects to
+	// the cluster KV (steady state). Used by the supervisor to render
+	// nats.conf and by survivingClusterPeers for graceful-decommission
+	// decisions. See agent/natspeers.go for the merge semantics.
+	peers *natsPeers
+
+	// natsRestartCh tells the supervisor to rebuild nats.conf and
+	// restart (or SIGHUP) the broker. Three independent producers feed
+	// it: watchNATSPeers (KV WatchNodes), the CmdAddPeer handler, and
+	// the peer-announce subscriber. Buffer 1 — a second tick before
+	// the supervisor services the first is harmless: the restart
+	// already picks up the freshest peer list via a.peers.snapshot().
 	natsRestartCh chan struct{}
 
 	// natsStopCh tells superviseNATS to SIGTERM the nats-server child
@@ -112,7 +122,7 @@ func New(cfg *config.Config) (*Agent, error) {
 		return nil, fmt.Errorf("failed to create work directory: %w", err)
 	}
 
-	return &Agent{
+	a := &Agent{
 		cfg:                cfg,
 		nodeID:             nodeID,
 		processes:          make(map[string]*process.Process),
@@ -122,7 +132,17 @@ func New(cfg *config.Config) (*Agent, error) {
 		failed:             make(chan string, failedServicesBufferSize),
 		natsRestartCh:      make(chan struct{}, 1),
 		natsStopCh:         make(chan struct{}),
-	}, nil
+		peers:              newNATSPeers(),
+	}
+	// Seed the bootstrap-peer set from A_NATS_SEED so the very first
+	// renderNATSConf call already has the operator-provided live-node
+	// hint. We filter with cfg.NodeIP rather than resolveNodeIP() —
+	// the network stack isn't fully initialised this early in startup,
+	// and the operator-set NodeIP is the canonical value anyway.
+	for _, ip := range seedPeers(cfg.NATS.Seed, cfg.NodeIP) {
+		a.peers.addBootstrap(ip, cfg.NodeIP)
+	}
+	return a, nil
 }
 
 // stopNATSSupervisor signals superviseNATS to terminate the nats-server

@@ -149,12 +149,14 @@ Each `asty -mode agent` at startup:
 3. exec's the `nats-server` binary (found next to the asty binary or
    on `$PATH` — install via `make nats-server`).
 4. Probes TCP readiness, then continues with the rest of bootstrap.
-5. `agent/natswatch.go` keeps two goroutines running for the rest of
-   the process lifetime:
-   - `superviseNATS` owns the child: graceful stop on ctx-cancel,
-     restart on peer-list change (see below), Fatal on unexpected exit.
-   - `watchNATSPeers` re-resolves the peer list every 5 s and signals
-     the supervisor when the sorted set changes.
+5. `agent/natswatch.go` runs `superviseNATS` for the rest of the
+   process lifetime: graceful stop on ctx-cancel, restart on peer-set
+   change (see below), Fatal on unexpected exit. Three independent
+   producers feed `natsRestartCh`: the KV-driven `watchNATSPeers`
+   goroutine (steady state), the `CmdAddPeer` handler (incoming SSH'd
+   announce), and the `peer-announce` subscriber (broadcast from
+   another node's add-peer). See "Peer discovery" below and
+   `NODE-DISCOVERY.md` for the end-to-end flow.
 
    On a peer change the supervisor first tries `tryHotReloadNATS`:
    write the new `nats.conf`, then `kill -HUP` the child. NATS applies
@@ -191,29 +193,88 @@ credentials to spawned services:
 
 #### Peer discovery
 
-`resolveNATSPeers` has one source: DNS `LookupIP(cfg.Domain)`. Self-IP
-is filtered out so a node never routes to itself. Agents re-resolve on
-every watcher tick, so operators grow/shrink the cluster by editing the
-domain's A-records.
+Full breakdown in `NODE-DISCOVERY.md` (Russian). Summary:
 
-- **Prod**: `cfg.Domain` is the cluster domain; its A-records are the
-  nodes.
-- **Dev**: `cfg.Domain` is `asty.test`, which `start.sh`'s `sync_hosts`
-  points at every node's loopback alias in `/etc/hosts` (rebuilt from
-  the peer-IP list on start / `add` / `remove`). Same `LookupIP` code
-  path as prod — no file/env stand-in.
+1. **Pre-deploy announce — `asty -mode admin add-peer`.** Before a new
+   node boots its own NATS, the deploying operator SSHes into one
+   already-running cluster node and runs `asty admin add-peer`. The
+   CLI takes no flags — the new node's IP is read from `$SSH_CLIENT`
+   (set by sshd) so an attacker cannot forge it via a CLI argument.
+   The CLI connects to the local nats-server with the agent's own
+   credentials and publishes `CmdAddPeer` to the local agent. The
+   agent then does THREE things:
+
+   a. Records the IP in its bootstrap-peer set
+      (`agent/natspeers.go::natsPeers.bootstrap`).
+   b. SIGHUPs (or cold-restarts) nats-server so cluster.routes opens
+      up for the incoming join.
+   c. Re-publishes the IP on `asty.v1.cluster.peer_announce` so every
+      other agent does the same in parallel — full route mesh, exactly
+      as the DNS-era A-record scheme gave for free.
+
+   This is what breaks the standalone→clustered cold-start deadlock:
+   NATS refuses an empty-routes `cluster{}` at cold start, so a
+   fresh-cluster first node has no `cluster{}` and no :6222 open.
+   Without `CmdAddPeer`, the second node would route-refuse forever,
+   never reach the KV, and the first node would never learn about it.
+   SSH + restricted `authorized_keys command=` gates access — there
+   is no network endpoint for this action.
+
+2. **Cold bootstrap on the joining node — `A_NATS_SEED`.** Every node
+   beyond the first is deployed with the IP of one already-running
+   cluster node in `A_NATS_SEED` (mirrored into `cfg.NATS.Seed` —
+   env-only, no YAML tag). The agent renders `cluster.routes` with
+   that single peer so its `nats-server` joins the existing JetStream
+   meta-group. The very first node in a fresh cluster has Seed empty
+   and renders without a `cluster{}` block (standalone JetStream).
+   Self-IP is filtered out, so an operator that accidentally passes
+   this node's own IP gets a clean conf.
+
+3. **Post-join — cluster KV.** `agent/natspeers.go:watchNATSPeers`
+   subscribes to `WatchNodes` on the cluster KV bucket and maintains
+   an in-memory `nodeID → IP` map (`natsPeers.byNode`). Any membership
+   change (KV upsert or delete) re-renders `nats.conf` and SIGHUPs the
+   broker — event-driven, no polling. The KV `node.<id>` entries are
+   the same ones the agent writes on every heartbeat, so they are the
+   authoritative membership view used by the rest of the system too.
+   `snapshot()` merges the bootstrap set with `byNode` and de-dupes;
+   bootstrap entries become redundant once KV catches up and are
+   harmless to leave behind.
+
+4. **Replicas upgrade — `DiscoveredServersHandler`.** The leader
+   (only) raises KV-bucket replicas as the cluster grows
+   (`server/streamreplicas.go`). The reconcile is driven off TWO
+   signals: `WatchNodes` (KV) AND `Server.gossipChanged`, the latter
+   fed by NATS's own discovered-servers callback wired in
+   `server/nats.go::connectNATS`. The gossip signal is the early one:
+   the joining node can't write to KV until the bucket reaches it, so
+   KV-only triggering would deadlock. NATS gossip arrives before that
+   chicken-and-egg even forms.
+
+The KV peer watcher starts AFTER `connectAndWireNATS` because it
+depends on the cluster KV being reachable; until then, bootstrap
+routes are the sole source.
 
 Render-time asymmetry: cold bootstrap with an empty peer list (i.e.
-single-node startup) omits the `cluster{}` block and NATS runs in
-standalone JetStream mode. Hot reload of an already-clustered process
-keeps the block on (see `KeepClusterBlock` above), so a shrink to 1
-node does NOT flip back to standalone. KV buckets land with
-`replicas=1` initially; when peers appear and the broker restarts in
-clustered mode, `server/streamreplicas.go` (leader-only) upgrades
-existing streams via `UpdateStream`. The pair forms a symmetric loop:
-`server/kv.go:ensureKVBucket` degrades on create when the cluster
-can't place the requested replicas (10005 or 10074), and
-`watchStreamReplicas` raises them back up later.
+single-node startup with no seed) omits the `cluster{}` block and NATS
+runs in standalone JetStream mode. Hot reload of an already-clustered
+process keeps the block on (see `KeepClusterBlock` in
+`core/natsconf/render.go`), so a shrink to 1 node does NOT flip back
+to standalone. KV buckets land with `replicas=1` initially; when peers
+appear and the broker restarts in clustered mode,
+`server/streamreplicas.go` (leader-only) upgrades existing streams via
+`UpdateStream`. The pair forms a symmetric loop: `server/kv.go:ensureKVBucket`
+degrades on create when the cluster can't place the requested replicas
+(10005 or 10074), and `watchStreamReplicas` raises them back up later.
+
+#### Node identity in KV
+
+Beyond `IP`, each `node.<id>` record carries an optional `Host` — the
+node's public DNS name. Operators pass it in via `A_NODE_HOST`
+(`cfg.NodeHost`) at deploy time; the agent stamps it into `NodeInfo`
+on every heartbeat. The dashboard snapshot and external frontends use
+this name to address a specific node (e.g. for sticky balancing).
+Asty itself never resolves it — discovery is IP-based via the KV.
 
 #### Graceful node decommission
 
@@ -235,14 +296,11 @@ non-empty, `agent/natsleave.go` runs before `stopNATSSupervisor`:
   update has to land before it.
 - The `surviving` count comes from `survivingClusterPeers()`
   (`agent/natsleave.go`), which reads live `node.<id>` entries from
-  cluster KV minus self — not from DNS. The DNS A-records update only
-  on a `start.sh remove` or an operator editing them; a dashboard kill
-  touches neither, so trusting them would miscount the 2→1 step and
-  skip the shrink, pinning streams at R=3 with one alive peer (no
-  quorum → `nats: no response from stream` on every write). KV is the
-  orchestrator's own membership view, kept current by every agent's
-  `RemoveNode` on graceful exit. Falls back to the DNS count only when
-  KV is unreachable.
+  cluster KV minus self. KV is the orchestrator's authoritative
+  membership view, kept current by every agent's `RemoveNode` on
+  graceful exit. Falls back to the in-memory peer set (last successful
+  WatchNodes replay) only when ListNodes itself fails — strictly
+  better than 0, which would skip both shrink and decommission.
 
 Permissions: the `asty-observer` SYS user is granted publish on
 `$JS.API.SERVER.REMOVE` and subscribe on
@@ -742,8 +800,10 @@ listed below; together they are everything `A_*` Asty actually consumes.
 
 Routed through `Config` (`core/config/env.go`):
 
-- `A_DOMAIN`, `A_TOKEN` — required outside `dev_mode`.
-- `A_DATACENTER`, `A_NODE_ID`, `A_NODE_IP`, `A_LOG_LEVEL`.
+- `A_TOKEN` — required outside `dev_mode`.
+- `A_DATACENTER`, `A_NODE_ID`, `A_NODE_IP`, `A_NODE_HOST`, `A_LOG_LEVEL`.
+  `A_NODE_HOST` is the optional public DNS name the agent writes into
+  `NodeInfo.Host` (see "Node identity in KV" above).
 - `A_DEV_MODE` (bool) — opt out of `Validate`; also flips `codec.Wire`
   and `codec.State` to JSON for human-readable NATS payloads.
 - `A_MOCK_NODES` (int) — seed N fake `NodeReady` entries into KV for
@@ -754,6 +814,9 @@ Routed through `Config` (`core/config/env.go`):
   read-only connection the agent uses for `$SYS.REQ.SERVER.*.STATSZ`/`JSZ`.
 - `A_NATS_APP_USER`, `A_NATS_APP_PASSWORD` — ASTY-account credentials
   handed to spawned services. MUST differ from `A_NATS_USER`.
+- `A_NATS_SEED` — IP of any one live cluster node, used by the agent
+  at cold bootstrap to populate `cluster.routes`. Empty on the very
+  first node (it boots standalone). See "Peer discovery" above.
 - `A_NATS_*_PASSWORD` env vars are also substituted into
   `nats.accounts.*.users[].password` in `config.asty` at load time via
   `${VAR}` expansion (bare `$NAME` is left alone so NATS subjects like
@@ -775,7 +838,11 @@ Routed through `Config` (`core/config/env.go`):
   `A_NATS_DISK_BASELINE`, `A_DISK_TYPE`.
 - Artifact URL templating (server-side): `A_ARCH` (fallback
   `runtime.GOARCH`), `A_GITHUB_REPO`.
-- NATS peer discovery: none — resolved from `A_DOMAIN`'s DNS A-records.
+- NATS peer discovery: `A_NATS_SEED` for cold bootstrap; CmdAddPeer
+  (via `asty -mode admin add-peer` over SSH) to register an incoming
+  joiner with one live node; `asty.v1.cluster.peer_announce` broadcast
+  to mirror it on every other node; cluster KV WatchNodes for steady
+  state. No DNS lookup. Full details in `NODE-DISCOVERY.md`.
 - Agent paths: `A_WORK_DIR` (default `/var/lib/asty`), `A_SERVICE_DIR`
   (default `/etc/asty/services`).
 
@@ -800,12 +867,24 @@ appears outside `core/config` (`Makefile:layer-check` target).
 
 **Local development with multiple nodes**: `start.sh` first sources
 `deploy/dev/.env` (secrets + simulated-hardware tunables), then
-exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_DASHBOARD_PORT`,
-`A_GATEWAY_PORT`, `A_WORK_DIR`, `A_DISK_TYPE` on top of the shared
-`config.asty`. Peer discovery is the prod DNS path: `config.asty` sets
-`domain: asty.test`, and `start.sh`'s `sync_hosts` maps `asty.test` to
-every live node's `127.0.0.$i` in `/etc/hosts` (one A-record each),
-rebuilt on start / `add` / `remove` from the per-node pidfiles.
+exports per-node `A_NODE_ID`, `A_NODE_IP`, `A_NODE_HOST`,
+`A_NATS_SEED`, `A_DASHBOARD_PORT`, `A_GATEWAY_PORT`, `A_WORK_DIR`,
+`A_DISK_TYPE` on top of the shared `config.asty`. Peer discovery uses
+the prod path: node 1 boots with `A_NATS_SEED` empty (standalone);
+every later node gets `A_NATS_SEED=127.0.0.1` to join through node 1,
+then switches to cluster-KV WatchNodes for ongoing membership.
+
+`/etc/hosts` is still maintained by `start.sh`'s `sync_hosts`, but for
+frontend addressing only — not peer discovery:
+
+- `asty.test` carries one A-record per live node (round-robin pick
+  for the SPA; `VITE_ASTY_ORIGIN=http://asty.test:7060`).
+- `n<i>.asty.test` carries one A-record per node (the frontend
+  balancer can pin a request to a specific node; the same name is
+  exported as `A_NODE_HOST` so it lands in `NodeInfo.Host` in KV).
+
+Both blocks are rebuilt on start / `add` / `remove` from the per-node
+pidfiles.
 
 ```
 deploy/dev/start.sh             # 1 node
@@ -815,21 +894,22 @@ deploy/dev/start.sh remove [N]  # shrink (graceful: SERVER.REMOVE on the leaver)
 deploy/dev/start.sh stop        # tear down everything
 ```
 
-`add` publishes the new node's `asty.test` A-record, brings up its
-loopback alias (`127.0.0.$i`), and starts a fresh server+agent pair.
-Existing agents notice the DNS change on their next watcher tick
-(~5 s). For a cluster already at N>1 they SIGHUP their `nats-server`
-to apply the routes delta live (no downtime); growing from N=1 takes
-a cold restart on the existing node because JetStream flips from
-standalone to clustered. Either way the leader's `watchStreamReplicas`
-then raises replicas on existing KV buckets so the cluster has grown.
+`add` publishes the new node's `asty.test` and `n<i>.asty.test`
+A-records, brings up its loopback alias (`127.0.0.$i`), and starts a
+fresh server+agent pair with `A_NATS_SEED=127.0.0.1`. The new agent
+joins through node 1; existing agents see its `node.<id>` KV upsert
+via WatchNodes and SIGHUP their `nats-server` to add the route.
+Growing from N=1 still takes a cold restart on the existing node
+because JetStream flips from standalone to clustered. Either way the
+leader's `watchStreamReplicas` then raises replicas on existing KV
+buckets so the cluster has grown.
 
 `remove` shrinks the cluster. The SIGTERM'd agent runs the
 graceful-decommission flow in `agent/natsleave.go` before its
 `nats-server` is stopped (see "Graceful node decommission" above).
-Surviving agents see the peer-list change and SIGHUP their broker
-WITH the `cluster{}` block pinned — the surviving cluster stays
-clustered even down to one node.
+The departing `node.<id>` KV delete propagates via WatchNodes and
+surviving agents SIGHUP their broker WITH the `cluster{}` block
+pinned — the surviving cluster stays clustered even down to one node.
 
 **Web UI in dev**: `cd asty/web && npm run dev` starts Vite on
 `localhost:5173` and proxies `/dashboard` to `localhost:7060`. The
@@ -1081,16 +1161,27 @@ asty/internal/
 │                                  #   deploy.progress.> (per-service).
 └── agent/                         # Agent sub-package
     ├── agent.go                   # Agent struct + Start
-    ├── natssup.go                 # bootstrapNATS, resolveNATSPeers,
+    ├── natssup.go                 # bootstrapNATS (renders nats.conf
+    │                              #   from a.peers.snapshot()),
     │                              #   resolveNodeIP, findNATSServerBinary
-    ├── natswatch.go               # superviseNATS + watchNATSPeers —
-    │                              #   live restart of the nats-server
-    │                              #   child on peer-list changes
+    ├── natspeers.go               # natsPeers (bootstrap + byNode peer
+    │                              #   maps), seedPeers parser,
+    │                              #   watchNATSPeers (subscribes to
+    │                              #   cluster-KV WatchNodes → signals
+    │                              #   supervisor on change)
+    ├── natswatch.go               # superviseNATS — live restart of
+    │                              #   the nats-server child on every
+    │                              #   peer-set change (SIGHUP-first,
+    │                              #   cold restart on JS mode flip);
+    │                              #   producers feeding natsRestartCh
+    │                              #   live in natspeers.go (KV) and
+    │                              #   commands.go (CmdAddPeer +
+    │                              #   peer-announce subscriber)
     ├── natsleave.go               # graceful shutdown:
     │                              #   SERVER.REMOVE + shrinkStreamsToSingle
     │                              #   + transferStreamLeader +
     │                              #   survivingClusterPeers (cluster KV
-    │                              #   is the source of truth, not DNS)
+    │                              #   is the source of truth)
     ├── natsstats.go               # STATSZ/JSZ poller → asty_node_nats_*
     ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService
@@ -1142,14 +1233,15 @@ safety net: leader TTL refresh (5 s), controller resync safety net
 `KV.Watch` notify, with a safety-net ticker behind it), agent
 heartbeat (5 s), process metrics sampling (10 s), gateway RPS
 sample-and-report (5 s), HTTP health probes (1 s), TailLogs file
-polling (100 ms), proximity validation (1 h), NATS peer re-resolve
-(5 s — DNS exposes no watch API), NATS server-stats poll (STATSZ/JSZ,
-5 s — NATS monitoring is request-reply, not push). The leader's
-stream-replica upgrade is event-driven off `WatchNodes` — a join is the
-only thing that lets a stream place more replicas — with a bounded retry
-only when a just-grown cluster can't place them yet. Protocol keepalives
-(SSE/WS pings) and the rate-limiter LRU eviction are timers but not
-state polling. Each is documented at its definition.
+polling (100 ms), proximity validation (1 h), NATS server-stats poll
+(STATSZ/JSZ, 5 s — NATS monitoring is request-reply, not push). NATS
+peer discovery is event-driven off cluster-KV `WatchNodes` — no timer
+involved. The leader's stream-replica upgrade is event-driven off the
+same `WatchNodes` — a join is the only thing that lets a stream place
+more replicas — with a bounded retry only when a just-grown cluster
+can't place them yet. Protocol keepalives (SSE/WS pings) and the
+rate-limiter LRU eviction are timers but not state polling. Each is
+documented at its definition.
 
 ### Orchestrator Entrypoints
 - `asty/cmd/main.go` — imports `agent`, `server`, `config` packages directly (no root asty package).

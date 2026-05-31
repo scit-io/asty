@@ -64,11 +64,16 @@ func (a *Agent) Start(ctx context.Context) error {
 	// makes the second close a no-op.
 	defer a.stopNATSSupervisor()
 	go a.superviseNATS(ctx)
-	go a.watchNATSPeers(ctx)
 
 	if err := a.connectAndWireNATS(ctx); err != nil {
 		return err
 	}
+	// Peer watcher must start AFTER connectAndWireNATS — it subscribes
+	// to cluster KV (a.clusterState) for ongoing membership updates.
+	// Bootstrap routes were rendered upstream from a.peers (Seed +
+	// CmdAddPeer); the watcher now keeps a.peers in sync with the
+	// authoritative node.<id> records in KV.
+	go a.watchNATSPeers(ctx)
 	defer a.nc.Close()
 	if a.ncSys != nil {
 		defer a.ncSys.Close()
@@ -88,6 +93,9 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	if err := a.subscribeCommands(); err != nil {
 		return fmt.Errorf("failed to subscribe to commands: %w", err)
+	}
+	if err := a.subscribePeerAnnounce(); err != nil {
+		return fmt.Errorf("failed to subscribe to peer-announce: %w", err)
 	}
 	if err := a.subscribePing(); err != nil {
 		return fmt.Errorf("failed to subscribe to ping: %w", err)

@@ -26,13 +26,33 @@ type NATSConfig struct {
 	AppUser          string `yaml:"app_user"`
 	AppPassword      string `yaml:"app_password"`
 
+	// Seed is the IP of any one live cluster node — passed in via env
+	// (A_NATS_SEED) when deploying a new node. The agent uses it once,
+	// at cold bootstrap, to populate cluster.routes so the new
+	// nats-server joins the existing JetStream meta-group. From then on
+	// the agent watches cluster KV (node.* entries) and rewrites routes
+	// on every membership change (SIGHUP-driven hot reload). The very
+	// first node in a fresh cluster has Seed empty and renders
+	// standalone; the second and later nodes always get a seed.
+	//
+	// Env-only intentionally — no yaml tag. The value depends on which
+	// node is being deployed (and which other one is already up), so
+	// committing it to config.asty would mean a per-node file. Env
+	// keeps the YAML node-agnostic.
+	//
+	// Accepts a single IP (documented form) or a comma-separated list
+	// (the parser is liberal — passing two seeds for redundancy costs
+	// nothing).
+	Seed string `yaml:"-"`
+
 	Server NATSServerConfig `yaml:"server"`
 }
 
 // NATSServerConfig collects every field that ends up in the rendered
 // nats.conf file. Per-node values (server_name, listen address,
 // cluster.listen, cluster.routes) are not here — they're filled at
-// render time from NodeID / NodeIP / DNS discovery.
+// render time from NodeID / NodeIP and the dynamic peer set (seed at
+// cold bootstrap, cluster-KV WatchNodes from then on).
 type NATSServerConfig struct {
 	Port          int                    `yaml:"port"`
 	JetStream     NATSJetStreamConfig    `yaml:"jetstream"`

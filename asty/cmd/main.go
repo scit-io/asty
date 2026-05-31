@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -15,12 +16,14 @@ import (
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/natsconf"
+	"asty/asty/internal/core/netutil"
+	"asty/asty/internal/core/types"
 	"asty/asty/internal/infra/logs"
 	"asty/asty/internal/server"
 )
 
 func main() {
-	mode := flag.String("mode", "agent", "Run mode: agent, server, or nats-conf")
+	mode := flag.String("mode", "agent", "Run mode: agent, server, nats-conf, or admin")
 	configPath := flag.String("config", "", "Path to config.asty (default: ./config.asty)")
 	peersFlag := flag.String("peers", "", "Comma-separated peer IPs (nats-conf mode only)")
 	flag.Parse()
@@ -45,13 +48,24 @@ func main() {
 	}
 
 	// nats-conf only renders the NATS server config; it skips top-level
-	// validation (domain/token) so it can be run against a partial dev
-	// config without forcing the operator to set every prod-required key.
+	// validation (token) so it can be run against a partial dev config
+	// without forcing the operator to set every prod-required key.
 	if *mode == "nats-conf" {
 		if err := cfg.NATS.Validate(); err != nil {
 			log.Fatal().Err(err).Msg("invalid nats config")
 		}
 		renderNATSConf(cfg, *peersFlag)
+		return
+	}
+
+	// admin subcommands talk to the local NATS using nats creds, not the
+	// dashboard token — skip the top-level Validate (which requires
+	// A_TOKEN) but still enforce NATS-section sanity.
+	if *mode == "admin" {
+		if err := cfg.NATS.Validate(); err != nil {
+			log.Fatal().Err(err).Msg("invalid nats config")
+		}
+		runAdmin(cfg, flag.Args())
 		return
 	}
 
@@ -119,11 +133,87 @@ func runServer(ctx context.Context, cfg *config.Config) {
 	log.Info().Msg("server stopped")
 }
 
+// runAdmin dispatches `asty -mode admin <subcommand>`. The admin path
+// is the operator-side companion of the agent: invoked over SSH
+// against a running node to perform privileged setup that the
+// network-exposed dashboard intentionally does NOT cover. Today it
+// has one subcommand — `add-peer` — used during cluster growth.
+func runAdmin(cfg *config.Config, args []string) {
+	if len(args) < 1 {
+		log.Fatal().Msg("usage: asty -mode admin <subcommand>  (subcommands: add-peer)")
+	}
+	switch sub := args[0]; sub {
+	case "add-peer":
+		runAdminAddPeer(cfg)
+	default:
+		log.Fatal().Str("subcommand", sub).Msg("unknown admin subcommand")
+	}
+}
+
+// runAdminAddPeer connects to the LOCAL nats-server with the agent's
+// own credentials and publishes a CmdAddPeer to the local agent. The
+// agent records the IP in its bootstrap-peer set and SIGHUPs (or
+// cold-restarts) nats-server so cluster.routes opens up for the
+// incoming join. Designed to be the body of an `authorized_keys`
+// command=" ..." entry — the SSH key restriction is what gates access.
+//
+// The peer IP comes from $SSH_CLIENT (first whitespace-separated
+// field), set by sshd on the receiving side. This is the only input
+// channel — no flag — so an attacker cannot lie about the IP by
+// passing a forged argument. Local invocations (dev tests) simulate
+// it by setting SSH_CLIENT in the environment.
+func runAdminAddPeer(cfg *config.Config) {
+	var ip string
+	if v := os.Getenv("SSH_CLIENT"); v != "" {
+		if f := strings.Fields(v); len(f) > 0 {
+			ip = f[0]
+		}
+	}
+	if ip == "" {
+		log.Fatal().Msg("add-peer: $SSH_CLIENT is empty — invoke via SSH (or set SSH_CLIENT=<ip> ... in local tests)")
+	}
+	if cfg.NodeID == "" {
+		log.Fatal().Msg("add-peer: node_id is required (set via config.asty or A_NODE_ID)")
+	}
+
+	host := cfg.NodeIP
+	if host == "" {
+		host = netutil.LocalIPv4("")
+	}
+	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
+		Host: host, Port: cfg.NATS.Server.Port,
+		User: cfg.NATS.User, Password: cfg.NATS.Password,
+	}, "asty-admin-add-peer")
+	if err != nil {
+		log.Fatal().Err(err).Msg("add-peer: connect to local NATS failed")
+	}
+	defer nc.Close()
+
+	payload, err := types.MarshalAddPeerCommand(ip)
+	if err != nil {
+		log.Fatal().Err(err).Msg("add-peer: marshal failed")
+	}
+	subject := types.CommandSubject(cfg.NodeID, types.CmdAddPeer)
+	reply, err := nc.Request(subject, payload, 5*time.Second)
+	if err != nil {
+		log.Fatal().Err(err).Str("subject", subject).Msg("add-peer: NATS request failed")
+	}
+	var resp types.CommandResponse
+	if err := codec.Wire.Unmarshal(reply.Data, &resp); err != nil {
+		log.Fatal().Err(err).Msg("add-peer: parse response failed")
+	}
+	if !resp.Success {
+		log.Fatal().Str("error", resp.Error).Msg("add-peer: agent rejected")
+	}
+	fmt.Printf("add-peer ok: %s (ip=%s)\n", resp.Message, ip)
+}
+
 // renderNATSConf prints to stdout the nats-server configuration that
 // the agent would write at startup for this node. NodeID and NodeIP
 // come from the loaded config (which already absorbed env overrides).
-// Peers must be supplied via -peers because this subcommand does not
-// run DNS discovery — its purpose is offline inspection.
+// Peers must be supplied via -peers because this subcommand has no
+// access to the cluster KV the agent normally watches — its purpose
+// is offline inspection.
 func renderNATSConf(cfg *config.Config, peers string) {
 	if cfg.NodeID == "" {
 		log.Fatal().Msg("node_id is required (set via config.asty or A_NODE_ID)")

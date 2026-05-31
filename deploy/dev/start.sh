@@ -26,14 +26,24 @@ DATA_BASE="/tmp/asty-dev"
 # ps, and each add/remove leaves a self-contained record; stop_all
 # iterates the whole set.
 PID_FILE_TMPL="$DATA_BASE/pids"
-# /etc/hosts name that is BOTH the dashboard SPA target (VITE_ASTY_ORIGIN
-# = http://asty.test:7060) and the cluster domain agents resolve for
-# NATS peer discovery (LookupIP — the same code path as prod). sync_hosts
-# maps it to 127.0.0.<i> for every live node (one A-record each), so the
-# browser and the agents fail over across nodes at the DNS layer. The
-# node set comes from the per-node pidfiles, so no separate peer file is
-# kept. .test is RFC 6761 reserved and (unlike .dev) not HSTS-forced to
-# HTTPS.
+# /etc/hosts publishes TWO kinds of names for the dev cluster:
+#
+#   - HOSTS_NAME ("asty.test")        — common round-robin name with one
+#                                       A-record per live node. The SPA
+#                                       (VITE_ASTY_ORIGIN) hits this so
+#                                       the browser picks a node by RR.
+#   - n<i>.asty.test                  — per-node name with a single
+#                                       A-record (127.0.0.<i>). Used by
+#                                       the frontend balancer to address
+#                                       a specific node when it wants to
+#                                       pin a session, and exported into
+#                                       each agent as A_NODE_HOST so the
+#                                       agent writes it into KV
+#                                       (NodeInfo.Host). Asty itself
+#                                       does NOT resolve these for peer
+#                                       discovery — that flows through
+#                                       A_NATS_SEED + cluster KV.
+# .test is RFC 6761 reserved and (unlike .dev) not HSTS-forced to HTTPS.
 HOSTS_NAME="asty.test"
 HOSTS_BEGIN="# >>> asty-dev (asty.test) >>>"
 HOSTS_END="# <<< asty-dev <<<"
@@ -154,17 +164,27 @@ node_indices() {
   done
 }
 
-# sync_hosts <index...> rewrites the asty.test block in /etc/hosts to
-# "127.0.0.<index> asty.test" for each given node. The resolver returns
-# all addresses for the name, so agents (LookupIP) and the browser fail
-# over across nodes. Built from explicit indices, not pidfiles, because
-# at initial start the pidfiles don't exist yet and agents must resolve
-# the full set on first boot. Requires sudo.
+# sync_hosts <index...> rewrites the asty-dev block in /etc/hosts so it
+# carries TWO kinds of records for every given node index <i>:
+#
+#   127.0.0.<i> asty.test           ← appended once per node; the
+#                                     resolver returns the whole set,
+#                                     giving the SPA a round-robin pick
+#                                     across nodes.
+#   127.0.0.<i> n<i>.asty.test      ← one A-record per node, exported
+#                                     into the agent as A_NODE_HOST so
+#                                     it lands in KV (NodeInfo.Host)
+#                                     and the frontend balancer can
+#                                     pin a request to a specific node.
+#
+# Built from explicit indices, not pidfiles, because at initial start
+# the pidfiles don't exist yet. Requires sudo.
 sync_hosts() {
   local block tmp i count=0
   block="$HOSTS_BEGIN"$'\n'
   for i in "$@"; do
     block+="127.0.0.$i $HOSTS_NAME"$'\n'
+    block+="127.0.0.$i n${i}.${HOSTS_NAME}"$'\n'
     count=$((count + 1))
   done
   block+="$HOSTS_END"
@@ -175,7 +195,7 @@ sync_hosts() {
   printf '%s\n' "$block" >> "$tmp"
   sudo cp "$tmp" /etc/hosts
   rm -f "$tmp"
-  info "$HOSTS_NAME → $count node(s) in /etc/hosts"
+  info "$HOSTS_NAME (RR) + n<i>.$HOSTS_NAME → $count node(s) in /etc/hosts"
 }
 
 # teardown_hosts removes the asty.test block from /etc/hosts.
@@ -242,14 +262,23 @@ start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
 
-  # Publish asty.test → all node IPs in /etc/hosts BEFORE the agents
-  # boot, so each resolves the full peer set on its first bootstrap and
-  # comes up clustered (not standalone-then-cold-restart). Agents
-  # self-filter their own IP.
+  # Publish asty.test + n<i>.asty.test in /etc/hosts BEFORE the agents
+  # boot. The names exist for the SPA (RR) and the frontend balancer
+  # (per-node). Asty's NATS peer discovery does NOT use them — it uses
+  # A_NATS_SEED + cluster KV (see start_node below).
   mkdir -p "$DATA_BASE"
   sync_hosts $(seq 1 "$nodes")
 
   for ((i=1; i<=nodes; i++)); do
+    # For i>=2: before starting node i, tell node 1's agent "expect a
+    # route from 127.0.0.$i". Without this, node 1 (which bootstrapped
+    # standalone) has port 6222 closed and node i's nats-server can't
+    # join. We bypass SSH in dev — the CLI runs against the local NATS
+    # using the same creds the agent uses. In prod the same call goes
+    # over SSH from the deploying node's cloud-init.
+    if (( i >= 2 )); then
+      announce_peer_to_seed "$i"
+    fi
     start_node "$i"
     # Pause so JetStream confirms the KV bucket before the next agent
     # races to (re)create it — without it: "nats: no response from stream".
@@ -257,14 +286,45 @@ start_asty() {
   done
 }
 
+# announce_peer_to_seed runs `asty -mode admin add-peer` against node
+# 1's agent (the seed). In prod the same CLI is invoked over SSH and
+# reads the client IP from $SSH_CLIENT (set by sshd). In dev we
+# bypass SSH and synthesise SSH_CLIENT ourselves so the CLI takes the
+# same code path. The CLI then connects to the local NATS
+# (127.0.0.1:4222) with the agent's own credentials and publishes
+# CmdAddPeer to node 1's command subject; node 1 records the IP and
+# SIGHUP/cold-restarts its nats-server so :6222 opens (or now lists
+# the extra route).
+announce_peer_to_seed() {
+  local i=$1
+  local addr="127.0.0.$i"
+  local config_file="$SCRIPT_DIR/config.asty"
+  log "announcing node $i ($addr) to seed (node 1)..."
+  # SSH_CLIENT format: "<client-ip> <client-port> <server-port>".
+  SSH_CLIENT="$addr 0 0" \
+    A_NODE_ID=dev-node-1 A_NODE_IP=127.0.0.1 \
+    "$BIN_DIR/asty" -mode admin -config "$config_file" add-peer \
+    || warn "announce failed; node $i may take longer to join"
+  # Tiny pause for node 1 to finish the cold-restart triggered by the
+  # standalone→clustered flip. NATS itself retries the inbound route,
+  # so we don't have to be perfectly synchronous; this just shortens
+  # the visible "Waiting for routing to be established" window.
+  sleep 1
+}
+
 # start_node brings up one server + agent pair with the per-node env
-# (NODE_ID/IP/UI/gateway address, fake disk type). Shared by start_asty
-# (initial fan-out) and add_node (live cluster growth). The agent
-# resolves peers via DNS (asty.test in /etc/hosts) — see watchNATSPeers
-# in the asty agent for how live changes propagate.
+# (NODE_ID/IP/HOST/UI/gateway address, fake disk type). Shared by
+# start_asty (initial fan-out) and add_node (live cluster growth).
+#
+# NATS peer discovery: i=1 boots standalone (A_NATS_SEED unset).
+# i>=2 joins the cluster through 127.0.0.1 (node 1) as the seed —
+# from there on the agent watches cluster KV for membership and
+# rewrites cluster.routes via SIGHUP on every change. No DNS lookup
+# is involved.
 start_node() {
   local i=$1
   local addr="127.0.0.$i"
+  local node_host="n${i}.${HOSTS_NAME}"
   local server_log="/tmp/asty-dev-server-$i.log"
   local agent_log="/tmp/asty-dev-agent-$i.log"
   local config_file="$SCRIPT_DIR/config.asty"
@@ -283,6 +343,14 @@ start_node() {
   local dashboard_host="$addr"
   local gateway_host="$addr"
 
+  # Seed for NATS cluster join: every node after the first uses
+  # 127.0.0.1 (node 1) as its bootstrap peer. Empty for node 1 — it
+  # bootstraps the cluster standalone.
+  local nats_seed=""
+  if (( i >= 2 )); then
+    nats_seed="127.0.0.1"
+  fi
+
   # Random disk type per node so the cluster aggregates exercise
   # both ssd and hdd branches. Server inherits no disk-type env —
   # only the agent reports physical hardware.
@@ -293,7 +361,8 @@ start_node() {
   # no-op (resolveDropTarget sees euid != 0). Dashboard listens on
   # the per-node loopback alias so multiple servers don't race for
   # the same socket.
-  A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+  A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NODE_HOST="$node_host" \
+    A_NATS_SEED="$nats_seed" \
     A_DASHBOARD_HOST="$dashboard_host" A_PROMETHEUS_HOST="$dashboard_host" \
     A_WORK_DIR="$DATA_BASE/work" \
     "$BIN_DIR/asty" -mode server -config "$config_file" >> "$server_log" 2>&1 &
@@ -304,7 +373,8 @@ start_node() {
   # boxes without an `asty` user the drop is a no-op and the agent
   # stays as root for the session — start.sh-only convenience, see
   # asty/internal/agent/privileges.go.
-  sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" \
+  sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NODE_HOST="$node_host" \
+    A_NATS_SEED="$nats_seed" \
     A_WORK_DIR="$DATA_BASE/work" \
     A_GATEWAY_HOST="$gateway_host" \
     A_DISK_TYPE="$disk_type" \
@@ -313,16 +383,16 @@ start_node() {
 
   printf '%s\n%s\n' "$server_pid" "$agent_pid" > "${PID_FILE_TMPL}-$i"
 
-  info "Node $i: id=dev-node-$i | ip=$addr | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
+  info "Node $i: id=dev-node-$i | ip=$addr | host=$node_host | seed=${nats_seed:-<none>} | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
   info "  logs: $server_log | $agent_log"
 }
 
 # add_node grows a running cluster by one. Picks the next free index,
-# brings up its loopback alias, publishes its asty.test A-record, then
-# starts the new node. Existing agents notice the DNS change on their
-# next watcher tick (~5 s), re-render nats.conf with the new peer, and
-# restart their nats-server child. Reaching steady-state takes the
-# rendered-conf change + JetStream meta-leader re-election (~10–15 s).
+# brings up its loopback alias, publishes its A-records, then starts
+# the new node — which joins NATS through A_NATS_SEED=127.0.0.1 (node
+# 1). Existing agents notice the new node KV-side via WatchNodes and
+# SIGHUP their nats-server to add the new route. Steady-state is the
+# routes-list update + JetStream meta-leader rebalance (~5–10 s).
 add_node() {
   sweep_orphan_nodes
   if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
@@ -339,27 +409,28 @@ add_node() {
 
   log "adding node $i (id=dev-node-$i, ip=$addr)..."
 
-  # Publish the new A-record (existing nodes + i) before booting the new
-  # agent so it resolves the full peer set on its first bootstrap.
+  # Publish the new A-records (existing nodes + i) before booting so
+  # the SPA/frontend can address it by name immediately.
   sync_hosts $(node_indices) "$i"
+  # Announce the new IP to node 1 (the seed) so its nats-server adds
+  # the route — same path as start_asty's i>=2 branch.
+  announce_peer_to_seed "$i"
   start_node "$i"
 
-  info "node $i started. Existing agents will pick up the new peer on"
-  info "the next nats-watch tick (~5 s) and restart their nats-server."
+  info "node $i started. Existing agents will pick up the new peer via"
+  info "cluster KV (WatchNodes) and SIGHUP their nats-server."
 }
 
 # remove_node shrinks a running cluster by tearing down one node and
-# dropping it from the asty.test records. Without args, removes the
-# highest-numbered node (symmetric with add_node). With an explicit
-# index, removes that one. Removing the last node prompts for an
-# explicit 'yes' — the cluster is fully dismantled in that case and
-# data dirs go with it.
+# dropping its A-records. Without args, removes the highest-numbered
+# node (symmetric with add_node). With an explicit index, removes that
+# one. Removing the last node prompts for an explicit 'yes' — the
+# cluster is fully dismantled in that case and data dirs go with it.
 #
-# Surviving agents pick up the file change on their next watcher tick
-# (~5 s) and shrink their cluster.routes via SIGHUP (or cold restart
-# on the 2→1 step). The departing agent's graceful-shutdown path drops
-# its node.<id> entry from the asty-cluster KV, so /metrics and the
-# dashboard stop listing it within one scrape cycle.
+# The departing agent's graceful-shutdown path drops its node.<id>
+# entry from the asty-cluster KV. Surviving agents see the KV delete
+# through WatchNodes and SIGHUP their nats-server to drop the route
+# (cold restart only on the 2→1 step, where JS goes standalone).
 remove_node() {
   local target="${1:-}"
 
@@ -458,9 +529,10 @@ remove_node() {
   rm -f "$pidfile"
   sudo rm -rf "$DATA_BASE/work/dev-node-$target" "$DATA_BASE/jetstream/dev-node-$target" "$DATA_BASE/node$target"
 
-  # 4) Rebuild asty.test from the survivors so they notice on their next
-  #    watcher tick and shrink their cluster.routes (SIGHUP hot reload
-  #    when 2+ remain, cold restart on the 2→1 step).
+  # 4) Rebuild the /etc/hosts block from the survivors so the SPA
+  #    round-robin set and the per-node names match reality. Asty
+  #    itself shrinks via the cluster-KV WatchNodes signal — the
+  #    departing agent's graceful path already deleted node.<id>.
   sync_hosts $(node_indices)
 
   info "node $target removed. Loopback alias $addr left up; stop_all"
@@ -512,7 +584,8 @@ print_status() {
   echo -e "${GREEN}  Asty dev environment is up${NC}"
   echo -e "${GREEN}═══════════════════════════════════════${NC}"
   echo ""
-  info "Dashboard:  http://asty.test:7060/dashboard/v1  (all nodes; SPA target, DNS failover)"
+  info "Dashboard:  http://asty.test:7060/dashboard/v1  (SPA target; /etc/hosts round-robin across nodes)"
+  info "Per-node:   http://n<i>.asty.test:7060/dashboard/v1  (frontend balancer can pin a specific node)"
   info "Prometheus: http://127.0.0.1:7060/metrics       (shared listener)"
   info "Health:     http://127.0.0.1:7060/health"
   info "Gateway:    http://127.0.0.1:80/api/v1          (node 1; user traffic)"

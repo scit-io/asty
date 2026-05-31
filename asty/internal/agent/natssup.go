@@ -83,12 +83,19 @@ func (a *Agent) natsConfPath() string {
 	return filepath.Join(a.workDir, "nats.conf")
 }
 
+// renderNATSConf produces the nats.conf for cold bootstrap. Peers come
+// from the unified a.peers set: it holds the cfg.NATS.Seed entries
+// from New() (initial bootstrap hint), every CmdAddPeer-registered IP
+// from incoming SSH announces, and every node learned via KV WatchNodes.
+// Same source as tryHotReloadNATS uses — so a cold restart and a
+// SIGHUP produce the same conf, and bootstrap peers persist across
+// either path.
 func (a *Agent) renderNATSConf(nodeIP string) string {
 	return natsconf.Render(natsconf.Input{
 		Config: a.cfg.NATS,
 		NodeID: a.nodeID,
 		NodeIP: nodeIP,
-		Peers:  a.resolveNATSPeers(nodeIP),
+		Peers:  a.peers.snapshot(),
 	})
 }
 
@@ -120,8 +127,8 @@ func (a *Agent) resolveNodeIP() string {
 	return ""
 }
 
-// Peer resolution helpers (resolveNATSPeers, filterSelf) live in
-// natspeers.go.
+// Peer-tracking helpers (natsPeers, seedPeers, watchNATSPeers) live
+// in natspeers.go.
 
 // findNATSServerBinary locates the nats-server binary the supervisor
 // exec's. Order: same directory as the running asty binary (handles the

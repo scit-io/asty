@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"asty/asty/internal/core/netutil"
+
+	"github.com/nats-io/nats.go"
 )
 
 // pingProbeTimeout caps a single peer-to-peer ping round-trip. The agent's
@@ -16,15 +18,27 @@ const pingProbeTimeout = 3 * time.Second
 
 // connectNATS opens the NATS connection used by the server. Thin wrapper
 // over core/netutil — agent does the same so they share startup options.
+// The DiscoveredServersHandler is wired here so the leader's stream-
+// replicas reconcile fires on the earliest reliable "peer joined"
+// signal (NATS gossip), not on the much-later KV WatchNodes event
+// which can't fire until the joiner has bucket access — a chicken-and-
+// egg that left streams stuck at the old replica count and bricked
+// the joiner's bucket-init.
 func (s *Server) connectNATS() error {
 	host := s.cfg.NodeIP
 	if host == "" {
 		host = netutil.LocalIPv4("")
 	}
+	notify := func(*nats.Conn) {
+		select {
+		case s.gossipChanged <- struct{}{}:
+		default:
+		}
+	}
 	nc, err := netutil.ConnectNATS(netutil.NATSCreds{
 		Host: host, Port: s.cfg.NATS.Server.Port,
 		User: s.cfg.NATS.User, Password: s.cfg.NATS.Password,
-	}, "asty-server-"+s.nodeID)
+	}, "asty-server-"+s.nodeID, nats.DiscoveredServersHandler(notify))
 	if err != nil {
 		return err
 	}

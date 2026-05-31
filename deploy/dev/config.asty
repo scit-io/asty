@@ -9,7 +9,8 @@
 # by start.sh into the process env.
 
 # Cluster identity.
-domain: asty.test   # Cluster domain — resolved via DNS A-records for NATS peer discovery (dev: /etc/hosts → every node, maintained by start.sh)
+# node_id, node_ip, node_host are set per node via A_NODE_ID, A_NODE_IP,
+# A_NODE_HOST (start.sh wires them; in prod the deployer does the same).
 datacenter: dc1     # This node's DC; used by proximity-aware scheduling
 log_level: debug    # Zerolog level (debug — verbose; in prod typically info)
 dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod-like CBOR)
@@ -35,6 +36,9 @@ nats:
   observer_password: "${A_NATS_OBSERVER_PASSWORD}" # Substituted from env (see .env)
   app_user: asty-app                               # Client: credentials handed to spawned services
   app_password: "${A_NATS_APP_PASSWORD}"           # Substituted from env (see .env)
+  # nats.seed lives in env only (A_NATS_SEED) — the IP of one live
+  # cluster node, passed at deploy time. start.sh sets it for node>=2;
+  # node 1 leaves it empty and bootstraps standalone.
   server:
     port: 4222                                     # nats-server client port
     jetstream:

@@ -82,6 +82,12 @@ type NodeInfo struct {
 	ID         string     `json:"id"`
 	Datacenter string     `json:"datacenter"`
 	IP         string     `json:"ip"`
+	// Host is the node's public DNS name when it has one — any name the
+	// operator publishes for this node (e.g. "edge-eu-1.example.com" in
+	// prod, "n1.asty.test" in the dev start.sh layout). Empty when the
+	// node is addressed by IP only. Populated by the agent from its
+	// A_NODE_HOST env / config.node_host.
+	Host       string     `json:"host,omitempty"`
 	Status     NodeStatus `json:"status"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastSeen   time.Time  `json:"last_seen"`

@@ -32,14 +32,19 @@ type NATSCreds struct {
 // peer process (agent supervises NATS) can finish bootstrapping the
 // broker without taking the caller down.
 //
+// extraOpts are appended verbatim to the standard option set, letting
+// callers attach DiscoveredServersHandler / ReconnectHandler / etc.
+// without forking ConnectNATS.
+//
 // The caller owns the returned connection and must Close it when done.
-func ConnectNATS(creds NATSCreds, name string) (*nats.Conn, error) {
+func ConnectNATS(creds NATSCreds, name string, extraOpts ...nats.Option) (*nats.Conn, error) {
 	url := fmt.Sprintf("nats://%s:%d", creds.Host, creds.Port)
 
 	opts := []nats.Option{nats.Name(name)}
 	if creds.User != "" {
 		opts = append(opts, nats.UserInfo(creds.User, creds.Password))
 	}
+	opts = append(opts, extraOpts...)
 
 	deadline := time.Now().Add(natsConnectTimeout)
 	var lastErr error

@@ -67,6 +67,11 @@ func (s *Server) watchStreamReplicas(ctx context.Context) {
 			return
 		case <-nodeChanged:
 			arm(s.reconcileStreamReplicas(ctx))
+		case <-s.gossipChanged:
+			// NATS gossip noticed a peer come or go before that peer
+			// could write to KV. Reconcile immediately so the joiner
+			// finds a bucket placed wide enough to include its node.
+			arm(s.reconcileStreamReplicas(ctx))
 		case <-retryC:
 			arm(s.reconcileStreamReplicas(ctx))
 		}

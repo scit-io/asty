@@ -60,6 +60,15 @@ type Server struct {
 	// launched by the dashboard) uses it instead of context.Background
 	// so a clean shutdown cancels them too.
 	lifeCtx context.Context
+
+	// gossipChanged fires every time NATS's discovered-servers set
+	// changes (a peer joined or left the local nats-server's gossip
+	// view). The leader's watchStreamReplicas uses it to drive replica
+	// upgrades: replicas target is computed from DiscoveredServers,
+	// but the controlling event was previously KV WatchNodes — which
+	// lags during cold join (the joining node can't write to KV until
+	// the bucket reaches it). gossip is the earliest reliable signal.
+	gossipChanged chan struct{}
 }
 
 // New creates a new Server. NodeID falls back to the OS hostname if the
@@ -71,8 +80,9 @@ func New(cfg *config.Config) (*Server, error) {
 		nodeID = netutil.Hostname()
 	}
 	return &Server{
-		cfg:    cfg,
-		nodeID: nodeID,
+		cfg:           cfg,
+		nodeID:        nodeID,
+		gossipChanged: make(chan struct{}, 1),
 	}, nil
 }
 

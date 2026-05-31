@@ -12,10 +12,10 @@ import (
 // a single tweak (A_LOG_LEVEL=debug) is friendlier than editing YAML.
 // Anything not set in the environment is left untouched.
 func applyEnvOverrides(c *Config) {
-	envStr("A_DOMAIN", &c.Domain)
 	envStr("A_DATACENTER", &c.Datacenter)
 	envStr("A_NODE_ID", &c.NodeID)
 	envStr("A_NODE_IP", &c.NodeIP)
+	envStr("A_NODE_HOST", &c.NodeHost)
 	envStr("A_TOKEN", &c.Token)
 	envStr("A_LOG_LEVEL", &c.LogLevel)
 	envBool("A_DEV_MODE", &c.DevMode)
@@ -27,6 +27,7 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_NATS_OBSERVER_PASSWORD", &c.NATS.ObserverPassword)
 	envStr("A_NATS_APP_USER", &c.NATS.AppUser)
 	envStr("A_NATS_APP_PASSWORD", &c.NATS.AppPassword)
+	envStr("A_NATS_SEED", &c.NATS.Seed)
 
 	envInt("A_MIN_COPIES", &c.Autoscale.MinCopies)
 	envInt("A_MAX_COPIES", &c.Autoscale.MaxCopies)

@@ -4,8 +4,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"slices"
-	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -14,12 +12,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 )
-
-// natsPeerWatchInterval — how often watchNATSPeers re-resolves the peer
-// list. 5s matches the agent's own heartbeat cadence: a node joining
-// the cluster shows up in everyone else's peer list within one tick of
-// its first heartbeat.
-const natsPeerWatchInterval = 5 * time.Second
 
 // natsRestartGrace is the SIGTERM-to-SIGKILL window during a planned
 // nats-server restart. NATS shuts down JetStream cleanly in well under
@@ -33,10 +25,13 @@ const natsRestartGrace = 10 * time.Second
 //     SIGTERM the child and return. Listening on this channel instead
 //     of ctx.Done() preserves the ordering: deregister hits the local
 //     KV via a still-live broker, *then* the broker dies.
-//   - natsRestartCh fires (watchNATSPeers) → try a hot reload via
-//     SIGHUP; fall back to a cold restart only when the JetStream
-//     mode itself flips (standalone↔clustered). The cold-restart
-//     bootstrap still uses ctx so a parent cancellation aborts it.
+//   - natsRestartCh fires → try a hot reload via SIGHUP; fall back to
+//     a cold restart only when the JetStream mode itself flips
+//     (standalone↔clustered). Three independent producers signal this
+//     channel: watchNATSPeers (KV WatchNodes), handleAddPeerCommand
+//     (SSH'd add-peer), and the peer-announce subscriber (broadcast
+//     from another node's add-peer). They share the same buffered
+//     channel — duplicate signals collapse into one restart.
 //   - the child exits on its own → fatal: running without the local
 //     broker is meaningless, and we already issue restarts ourselves
 //     on config changes.
@@ -95,7 +90,7 @@ func (a *Agent) tryHotReloadNATS(cmd *exec.Cmd) bool {
 		Config:           a.cfg.NATS,
 		NodeID:           a.nodeID,
 		NodeIP:           nodeIP,
-		Peers:            a.resolveNATSPeers(nodeIP),
+		Peers:            a.peers.snapshot(),
 		KeepClusterBlock: true,
 	})
 
@@ -152,47 +147,5 @@ func (a *Agent) stopNATSChild(cmd *exec.Cmd, exitCh <-chan error) {
 	}
 }
 
-// watchNATSPeers polls the peer source (DNS lookup of cfg.Domain) and
-// signals the supervisor to restart
-// nats-server when the resolved set changes. The supervisor reads the
-// fresh peer list via bootstrapNATS, so the watcher only carries the
-// "something changed" signal — never the list itself.
-func (a *Agent) watchNATSPeers(ctx context.Context) {
-	nodeIP := a.resolveNodeIP()
-	if nodeIP == "" {
-		log.Warn().Msg("nats peer watcher disabled: cannot resolve local node IP")
-		return
-	}
-	current := sortedPeers(a.resolveNATSPeers(nodeIP))
-
-	ticker := time.NewTicker(natsPeerWatchInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			next := sortedPeers(a.resolveNATSPeers(nodeIP))
-			if slices.Equal(current, next) {
-				continue
-			}
-			log.Info().Strs("from", current).Strs("to", next).Msg("nats-server peers changed, requesting restart")
-			current = next
-			select {
-			case a.natsRestartCh <- struct{}{}:
-			default:
-				// A restart is already queued; the supervisor will pick
-				// up the freshest peer list when it services that
-				// restart, so dropping this signal loses nothing.
-			}
-		}
-	}
-}
-
-// sortedPeers returns a deep copy of in with entries sorted, so two
-// peer lists differing only by order compare equal.
-func sortedPeers(in []string) []string {
-	out := append([]string(nil), in...)
-	sort.Strings(out)
-	return out
-}
+// watchNATSPeers lives in natspeers.go — it subscribes to cluster KV
+// WatchNodes and signals natsRestartCh on every membership change.

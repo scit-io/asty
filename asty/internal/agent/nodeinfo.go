@@ -152,6 +152,7 @@ func (a *Agent) getNodeInfo() *types.NodeInfo {
 		ID:                    a.nodeID,
 		Datacenter:            a.cfg.Datacenter,
 		IP:                    nodeIP,
+		Host:                  a.cfg.NodeHost,
 		Status:                status,
 		LastSeen:              time.Now(),
 		CPUTotal:              cpuTotal,

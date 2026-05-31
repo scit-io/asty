@@ -8,7 +8,10 @@
 # This file is committed to the repo and should contain no sensitive values.
 
 # Cluster identity.
-domain: ""          # Cluster domain — resolved via DNS A-records for NATS peer discovery (set via A_DOMAIN, e.g. "prod.example.com")
+# node_id, node_ip, node_host are set per node via A_NODE_ID, A_NODE_IP,
+# A_NODE_HOST (e.g. "edge-eu-1.example.com"). NodeHost is whatever DNS
+# name the operator publishes for this node; the agent writes it to KV
+# so the dashboard/frontend can address it by name.
 datacenter: ""      # This node's DC (set via A_DATACENTER per node, e.g. "eu-west-1")
 log_level: info     # Zerolog level (info — production default)
 dev_mode: false     # Debug mode (true — skip required-field validation AND use JSON codecs for NATS/KV so `nats sub` and `nats kv get` show readable payloads; false — prod default with CBOR for size and speed)
@@ -34,6 +37,11 @@ nats:
   observer_password: "${A_NATS_OBSERVER_PASSWORD}" # Operator injects this secret via env
   app_user: asty-app                               # Client: credentials handed to spawned services
   app_password: "${A_NATS_APP_PASSWORD}"           # Operator injects this secret via env
+  # nats.seed lives in env only (A_NATS_SEED) — the IP of one already-
+  # running cluster node, passed at deploy time. Empty on the very
+  # first node (it boots standalone); every subsequent node uses any
+  # peer's IP to join the JetStream meta-group, then switches to
+  # cluster-KV WatchNodes for membership.
   server:
     port: 4222                                     # nats-server client port
     jetstream:

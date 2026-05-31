@@ -17,12 +17,14 @@ import (
 const natsLeaveTimeout = 5 * time.Second
 
 // survivingClusterPeers counts live `node.<id>` entries minus self.
-// DNS discovery only updates on a start.sh remove or a DNS edit — a
-// dashboard kill doesn't, so it lies about membership the moment kills
-// go through the UI. KV is updated by every agent's graceful path
-// (RemoveNode before exit), so it tracks reality. Fallback to the DNS
-// count on KV failure beats returning 0, which would skip both shrink
-// AND decommission.
+// KV is the orchestrator's authoritative membership view, updated by
+// every agent's graceful path (RemoveNode before exit), so it tracks
+// reality through dashboard kills and crashes alike. When KV is
+// unreachable we fall back to the in-memory byNode map (last
+// successful WatchNodes replay) — slightly stale but strictly better
+// than 0, which would skip both shrink AND decommission. Bootstrap
+// IPs (pending joiners) are deliberately excluded — they are not yet
+// cluster members.
 func (a *Agent) survivingClusterPeers() int {
 	if a.clusterState != nil {
 		nodes, err := a.clusterState.ListNodes()
@@ -35,9 +37,9 @@ func (a *Agent) survivingClusterPeers() int {
 			}
 			return n
 		}
-		log.Warn().Err(err).Msg("pre-departure: ListNodes failed, falling back to DNS peer count")
+		log.Warn().Err(err).Msg("pre-departure: ListNodes failed, falling back to in-memory peer set")
 	}
-	return len(a.resolveNATSPeers(a.resolveNodeIP()))
+	return a.peers.countByNode()
 }
 
 // shrinkStreamsToSingle runs only when the surviving cluster size will
