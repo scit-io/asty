@@ -23,17 +23,18 @@ export default function ServiceAllocations() {
   const tabs = useServiceTabs(name ?? '')
   const subscribeService = useClusterStore((s) => s.subscribeService)
   const cached = useClusterStore((s) => name ? s.serviceCache[name] : undefined)
-  // Subscribe to CPU and Memory as primitives so the selector returns
-  // referentially stable values across SSE flushes (JSON.parse rebuilds
-  // the Resources object every tick, but the numbers inside rarely
-  // move). Reconstitute via useMemo so the `resources` callback below
-  // is stable too — that is what lets AllocationsTable's memo'd
+  // Subscribe to each resource limit as a primitive so the selector
+  // returns referentially stable values across SSE flushes (JSON.parse
+  // rebuilds the Resources object every tick, but the numbers inside
+  // rarely move). Reconstitute via useMemo so the `resources` callback
+  // below is stable too — that is what lets AllocationsTable's memo'd
   // columns and per-cell memo actually skip work.
   const cpuLimit = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources?.CPU : undefined)
   const memLimit = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources?.Memory : undefined)
+  const diskLimit = useClusterStore((s) => name ? s.services.find((x) => x.Name === name)?.Resources?.Disk : undefined)
   const res = useMemo<ServiceDefinition['Resources'] | undefined>(
-    () => (cpuLimit !== undefined && memLimit !== undefined ? { CPU: cpuLimit, Memory: memLimit } : undefined),
-    [cpuLimit, memLimit],
+    () => (cpuLimit !== undefined && memLimit !== undefined ? { CPU: cpuLimit, Memory: memLimit, Disk: diskLimit } : undefined),
+    [cpuLimit, memLimit, diskLimit],
   )
   const resources = useCallback(() => res, [res])
   const allocations = cached?.allocations || []
