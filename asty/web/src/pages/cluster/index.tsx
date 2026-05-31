@@ -5,7 +5,7 @@ import {
   HardDrive,
   Heart,
   HardDriveDownload,
-  Info,
+  Globe,
   MemoryStick,
   Server,
   Shield,
@@ -102,7 +102,7 @@ export default function Cluster() {
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Info className="h-3 w-3 opacity-70 cursor-help" />
+                        <Globe className="h-3 w-3 opacity-70" />
                       </TooltipTrigger>
                       <TooltipContent className="text-right">
                         {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
