@@ -17,6 +17,10 @@ type ClusterSnapshot struct {
 type ClusterStatusPayload struct {
 	Leader       string `json:"leader"`
 	LeaderIP     string `json:"leader_ip"`
+	// LeaderDC is the leader's datacenter (NodeInfo.Datacenter on the
+	// leader). Surfaced so the cluster page can show the leader's
+	// location without a second lookup against snap.Nodes.
+	LeaderDC     string `json:"leader_dc,omitempty"`
 	// LeaderHost is the leader's public DNS name (NodeInfo.Host on the
 	// leader). Empty when the leader hasn't been assigned a host name.
 	// Surfaced alongside LeaderIP so frontends that address nodes by

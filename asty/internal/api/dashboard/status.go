@@ -26,7 +26,7 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 	isLeader := api.ctx.LeaderElection().IsLeader()
 
 	healthyNodes := 0
-	var leaderNodeID, leaderHost string
+	var leaderNodeID, leaderDC, leaderHost string
 	leaderHost = leaderInfo.Host
 	now := time.Now()
 	for _, node := range nodes {
@@ -35,6 +35,7 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 		}
 		if node.IP == leaderInfo.IP {
 			leaderNodeID = node.ID
+			leaderDC = node.Datacenter
 			// Freshest Host comes from the leader's current heartbeat
 			// (NodeInfo.Host), not the KV-stored leader.Host snapshot.
 			if node.Host != "" {
@@ -50,6 +51,7 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 		"cluster": map[string]any{
 			"leader":        leaderNodeID,
 			"leader_ip":     leaderInfo.IP,
+			"leader_dc":     leaderDC,
 			"leader_host":   leaderHost,
 			"is_leader":     isLeader,
 			"nodes_total":   len(nodes),

@@ -88,7 +88,11 @@ export default function Cluster() {
           <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm" mono
             title={t('tile.leader')} icon={<Shield className="h-4 w-4" />}
             value={clusterStatus?.cluster.leader || '—'}
-            hint={[clusterStatus?.cluster.leader_ip, clusterStatus?.cluster.leader_host].filter(Boolean).join(' · ') || '—'} />
+            hint={(() => {
+              const c = clusterStatus?.cluster
+              const left = [c?.leader_ip, c?.leader_dc].filter(Boolean).join('/')
+              return [left, c?.leader_host].filter(Boolean).join(' · ') || '—'
+            })()} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title={t('tile.health')} icon={<Heart className="h-4 w-4" />}
             value={`${healthPct}%`} hint={t('tile.hint.x_of_y_healthy', { healthy: nodesHealthy, total: nodesTotal })} />

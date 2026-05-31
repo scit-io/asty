@@ -78,6 +78,7 @@ export interface ClusterStatus {
   cluster: {
     leader: string
     leader_ip: string
+    leader_dc?: string    // leader's datacenter
     leader_host?: string  // operator-provided public DNS name of the leader; empty when unset
     is_leader: boolean
     nodes_total: number
