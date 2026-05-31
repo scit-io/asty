@@ -85,7 +85,7 @@ export default function Nodes() {
     },
     {
       key: 'dc', label: t('nodes.col.dc'),
-      render: (n) => n.datacenter,
+      render: (n) => <span className="font-semibold">{n.datacenter}</span>,
       deps: (n) => [n.datacenter],
     },
     {
@@ -93,7 +93,7 @@ export default function Nodes() {
       render: (n) => (
         <div className="space-y-1">
           <div className="text-sm font-medium font-mono">{n.ip || '—'}</div>
-          {n.host && <div className="text-xs text-muted-foreground font-mono">{n.host}</div>}
+          {n.host && <div className="text-xs text-muted-foreground">{n.host}</div>}
         </div>
       ),
       deps: (n) => [n.ip, n.host],
