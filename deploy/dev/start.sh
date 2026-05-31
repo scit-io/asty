@@ -357,11 +357,19 @@ start_node() {
   local disk_type
   if (( RANDOM % 2 == 0 )); then disk_type="ssd"; else disk_type="hdd"; fi
 
+  # Per-node datacenter so the proximity-aware scheduler has something
+  # non-trivial to work with — without this every node ends up in dc1
+  # (the YAML default) and DC-diversity / proximity matrix degrade to
+  # no-ops. dc$i is just a label; the matrix's latency entries (or
+  # lack thereof) decide actual placement preference.
+  local node_dc="dc$i"
+
   # Server runs WITHOUT sudo — no privileged ports, drop-root is a
   # no-op (resolveDropTarget sees euid != 0). Dashboard listens on
   # the per-node loopback alias so multiple servers don't race for
   # the same socket.
   A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NODE_HOST="$node_host" \
+    A_DATACENTER="$node_dc" \
     A_NATS_SEED="$nats_seed" \
     A_DASHBOARD_HOST="$dashboard_host" A_PROMETHEUS_HOST="$dashboard_host" \
     A_WORK_DIR="$DATA_BASE/work" \
@@ -374,6 +382,7 @@ start_node() {
   # stays as root for the session — start.sh-only convenience, see
   # asty/internal/agent/privileges.go.
   sudo -E A_NODE_ID="dev-node-$i" A_NODE_IP="$addr" A_NODE_HOST="$node_host" \
+    A_DATACENTER="$node_dc" \
     A_NATS_SEED="$nats_seed" \
     A_WORK_DIR="$DATA_BASE/work" \
     A_GATEWAY_HOST="$gateway_host" \
@@ -383,7 +392,7 @@ start_node() {
 
   printf '%s\n%s\n' "$server_pid" "$agent_pid" > "${PID_FILE_TMPL}-$i"
 
-  info "Node $i: id=dev-node-$i | ip=$addr | host=$node_host | seed=${nats_seed:-<none>} | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
+  info "Node $i: id=dev-node-$i | ip=$addr | host=$node_host | dc=$node_dc | seed=${nats_seed:-<none>} | disk=${A_DISK_TOTAL}M ${disk_type} | swap=${A_SWAP_TOTAL}M | server PID=$server_pid | agent PID=$agent_pid"
   info "  logs: $server_log | $agent_log"
 }
 
