@@ -99,7 +99,7 @@ export default function Cluster() {
               <span className="inline-flex items-center gap-1">
                 {clusterStatus?.cluster.leader_ip || '—'}
                 {(clusterStatus?.cluster.leader_dc || clusterStatus?.cluster.leader_host) && (
-                  <TooltipProvider>
+                  <TooltipProvider delayDuration={0}>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Globe className="h-3 w-3 opacity-70" />
