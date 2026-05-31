@@ -94,25 +94,26 @@ export default function Cluster() {
             value={`${servicesActive} / ${servicesTotal}`} hint={t('tile.hint.active_loaded')} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm" mono
             title={t('tile.leader')} icon={<Shield className="h-4 w-4" />}
-            value={clusterStatus?.cluster.leader || '—'}
-            hint={
-              <span className="inline-flex items-center gap-1">
-                {clusterStatus?.cluster.leader_ip || '—'}
-                {(clusterStatus?.cluster.leader_dc || clusterStatus?.cluster.leader_host) && (
+            value={
+              <span className="inline-flex items-center gap-1.5">
+                {clusterStatus?.cluster.leader || '—'}
+                {(clusterStatus?.cluster.leader_dc || clusterStatus?.cluster.leader_ip || clusterStatus?.cluster.leader_host) && (
                   <TooltipProvider delayDuration={0}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Globe className="h-3 w-3 opacity-70" />
+                        <Globe className="h-3.5 w-3.5 opacity-70" />
                       </TooltipTrigger>
                       <TooltipContent className="text-right">
                         {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
+                        {clusterStatus?.cluster.leader_ip && <div>{clusterStatus.cluster.leader_ip}</div>}
                         {clusterStatus?.cluster.leader_host && <div>{clusterStatus.cluster.leader_host}</div>}
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
                 )}
               </span>
-            } />
+            }
+            hint={clusterStatus?.cluster.leader_ip || '—'} />
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title={t('tile.health')} icon={<Heart className="h-4 w-4" />}
             value={`${healthPct}%`} hint={t('tile.hint.x_of_y_healthy', { healthy: nodesHealthy, total: nodesTotal })} />
