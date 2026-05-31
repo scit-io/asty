@@ -2,6 +2,7 @@ export interface Node {
   id: string
   datacenter: string
   ip: string
+  host?: string  // operator-provided public DNS name (A_NODE_HOST); empty when unset
   status: 'ready' | 'down' | 'draining' | 'drained' | 'paused'
   cpu_total: number          // MHz
   cpu_available: number      // MHz

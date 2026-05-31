@@ -68,7 +68,12 @@ export default function Nodes() {
   // page wouldn't otherwise pass a stable `search` reference.
   const search = useMemo(() => ({
     placeholder: t('nodes.search_placeholder'),
-    match: (n: Node, q: string) => n.id.toLowerCase().includes(q.toLowerCase()) || (n.ip ?? '').includes(q),
+    match: (n: Node, q: string) => {
+      const needle = q.toLowerCase()
+      return n.id.toLowerCase().includes(needle)
+        || (n.ip ?? '').includes(q)
+        || (n.host ?? '').toLowerCase().includes(needle)
+    },
   }), [t])
 
   const columns = useMemo<Column<Node>[]>(() => [
@@ -85,8 +90,13 @@ export default function Nodes() {
     },
     {
       key: 'ip', label: t('nodes.col.ip'),
-      render: (n) => <span className="font-mono text-sm">{n.ip || '—'}</span>,
-      deps: (n) => [n.ip],
+      render: (n) => (
+        <div className="space-y-1">
+          <div className="text-sm font-medium font-mono">{n.ip || '—'}</div>
+          {n.host && <div className="text-xs text-muted-foreground font-mono">{n.host}</div>}
+        </div>
+      ),
+      deps: (n) => [n.ip, n.host],
     },
     {
       key: 'status', label: t('nodes.col.status'),
