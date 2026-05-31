@@ -56,11 +56,14 @@ export function AllocationsTable({
   const navigate = useNavigate()
   const { act, pending } = useAllocationActions()
   // nodeByID maps node_id → Node for the dc/ip/host tooltip in the
-  // Node column. Empty on cold deep-links until the cluster snapshot
-  // lands; the tooltip self-hides when all three identity fields are
-  // empty.
-  const nodeByID = useClusterStore(
-    (s) => new Map(s.nodes.map((n) => [n.id, n])),
+  // Node column. Select the array reference (stable while the store
+  // hasn't published a new list) and derive the Map in a memo —
+  // returning `new Map(...)` directly from the selector would build a
+  // fresh object every render and trip Zustand into an infinite loop.
+  const nodes = useClusterStore((s) => s.nodes)
+  const nodeByID = useMemo(
+    () => new Map(nodes.map((n) => [n.id, n])),
+    [nodes],
   )
 
   // act() needs the full alloc but the action cell only sees its id —
