@@ -21,7 +21,7 @@ type Base = { title: string; icon?: ReactNode; className?: string }
 
 type TileProps = Base & (
   | { variant: 'metric'; usage: number; total: number; format?: (n: number) => string; unit?: string }
-  | { variant: 'stat'; value: ReactNode; hint?: ReactNode; size?: 'lg' | 'sm'; mono?: boolean; bar?: boolean }
+  | { variant: 'stat'; value: ReactNode; hint?: ReactNode; size?: 'lg' | 'sm'; bar?: boolean }
   | { variant: 'timestamp'; timestamp?: string }
   | { variant: 'actions'; actions: ReactNode; hint?: ReactNode }
 )
@@ -62,8 +62,7 @@ function Top(props: TileProps, dateLocale: DateFnsLocale | undefined): ReactNode
       const small = props.size === 'sm'
       const size = small ? 'text-sm' : 'text-2xl'
       const lead = small ? '' : ' leading-none'
-      const mono = props.mono ? ' font-mono' : ''
-      return <div className={`${size} font-bold${lead} mb-2${mono}`}>{props.value}</div>
+      return <div className={`${size} font-bold${lead} mb-2`}>{props.value}</div>
     }
     case 'timestamp': {
       const valid = !!props.timestamp && !props.timestamp.startsWith('0001-')
@@ -146,7 +145,7 @@ function tilePropsEqual(prev: TileProps, next: TileProps): boolean {
     case 'stat': {
       const n = next as Extract<TileProps, { variant: 'stat' }>
       return prev.value === n.value && prev.hint === n.hint
-        && prev.size === n.size && prev.mono === n.mono && prev.bar === n.bar
+        && prev.size === n.size && prev.bar === n.bar
     }
     case 'timestamp': {
       const n = next as Extract<TileProps, { variant: 'timestamp' }>

@@ -23,7 +23,7 @@ export function LocaleToggle() {
     <Select value={locale} onValueChange={(v) => setLocale(v as Locale)}>
       <SelectTrigger
         aria-label={t('toggle.language')}
-        className="w-[72px] gap-1.5 px-2.5 font-mono text-xs uppercase"
+        className="w-[72px] gap-1.5 px-2.5 text-xs uppercase"
       >
         {/* SelectValue uses the selected item's children by default; we
             want the trigger to read as a compact "EN"/"RU" code while
@@ -35,7 +35,7 @@ export function LocaleToggle() {
       <SelectContent align="end">
         {OPTIONS.map((opt) => (
           <SelectItem key={opt.value} value={opt.value}>
-            <span className="mr-2 font-mono text-xs text-muted-foreground">{opt.value.toUpperCase()}</span>
+            <span className="mr-2 text-xs text-muted-foreground">{opt.value.toUpperCase()}</span>
             {opt.label}
           </SelectItem>
         ))}

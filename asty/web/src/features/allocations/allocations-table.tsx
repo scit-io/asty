@@ -75,13 +75,13 @@ export function AllocationsTable({
       ? [
         {
           key: 'id', label: t('allocs.col.allocation'),
-          render: (a: Allocation) => <span className="font-mono text-xs">{a.id.slice(0, 12)}</span>,
+          render: (a: Allocation) => <span className="text-xs">{a.id.slice(0, 12)}</span>,
           deps: (a: Allocation) => [a.id],
         },
         {
           key: 'node', label: t('allocs.col.node'),
           sort: (a: Allocation, b: Allocation) => a.node_id.localeCompare(b.node_id),
-          render: (a: Allocation) => <span className="font-mono font-medium">{a.node_id}</span>,
+          render: (a: Allocation) => <span className="font-medium">{a.node_id}</span>,
           deps: (a: Allocation) => [a.node_id],
         },
       ]
@@ -102,7 +102,7 @@ export function AllocationsTable({
     ...(scope === 'node'
       ? [{
         key: 'version', label: t('allocs.col.version'),
-        render: (a: Allocation) => <span className="font-mono text-xs">{a.version || '—'}</span>,
+        render: (a: Allocation) => <span className="text-xs">{a.version || '—'}</span>,
         deps: (a: Allocation) => [a.version],
       }]
       : []),

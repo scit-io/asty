@@ -103,7 +103,7 @@ export function NodeKillDialog({ open, nodeId, isLastNode, onOpenChange, onConfi
             onChange={(e) => setConfirmName(e.target.value)}
             placeholder={nodeId}
             disabled={killing}
-            className="font-mono mt-4"
+            className="mt-4"
           />
           {isLastNode && (
             <label className="flex items-start gap-2 text-sm mt-4 cursor-pointer">

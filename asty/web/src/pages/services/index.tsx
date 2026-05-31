@@ -28,7 +28,7 @@ export default function Services() {
     {
       key: 'name', label: t('services.col.service'),
       sort: (a, b) => a.Name.localeCompare(b.Name),
-      render: (s) => <span className="font-mono text-sm">{s.Name}</span>,
+      render: (s) => <span className="text-sm">{s.Name}</span>,
     },
     {
       key: 'type', label: t('services.col.type'),
@@ -91,7 +91,7 @@ export default function Services() {
             : 'default'
           return (
             <span className="inline-flex items-center gap-1 text-xs">
-              <span>{t('action.deploy')} <span className="font-mono">{s.last_deploy_version}</span></span>
+              <span>{t('action.deploy')} <span>{s.last_deploy_version}</span></span>
               <Badge variant={variant} className="text-[10px]">{t(deployStatusKey(status))}</Badge>
               <span className="text-muted-foreground">·</span>
               <span>{new Date(deployTs * 1000).toLocaleTimeString()}</span>

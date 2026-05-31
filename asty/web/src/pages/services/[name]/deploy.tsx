@@ -31,7 +31,7 @@ export default function ServiceDeployHistory() {
     {
       key: 'version', label: t('deploy.col.version'),
       sort: (a, b) => a.version.localeCompare(b.version),
-      render: (r) => <span className="font-mono text-xs">{r.version}</span>,
+      render: (r) => <span className="text-xs">{r.version}</span>,
     },
     {
       key: 'strategy', label: t('deploy.col.strategy'),

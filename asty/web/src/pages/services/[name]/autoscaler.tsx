@@ -54,7 +54,7 @@ export default function ServiceScalingEvents() {
       key: 'node', label: t('scaling.col.node'),
       sort: (a, b) => (a.node_id ?? '').localeCompare(b.node_id ?? ''),
       render: (e) => {
-        if (e.node_id) return <span className="font-mono text-xs">{e.node_id}</span>
+        if (e.node_id) return <span className="text-xs">{e.node_id}</span>
         // Manual scale is service-scoped (multiple copies / scheduler-
         // picked placement) — surface that explicitly so an empty
         // node_id doesn't read as missing data.

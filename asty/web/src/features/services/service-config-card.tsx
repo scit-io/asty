@@ -26,11 +26,11 @@ interface ServiceConfigCardProps {
 
 // Row collapses the 16 inline `<TableCell className="...">` repeats
 // that the Configuration table used to carry. label is the muted
-// left column; value is the right-aligned content. Three flavours —
-// the default mono row (most numbers), no-mono for badge stacks
-// (Cooldown), text-sm for the Last action row (slightly tighter to
-// fit the deploy/scale-action + Badge + TimeStack on one line).
-function Row({ label, value, valueClass = 'font-mono' }: { label: string; value: ReactNode; valueClass?: string }) {
+// left column; value is the right-aligned content. valueClass is the
+// per-row override callers pass in for tighter typography (e.g. the
+// Last action row that has to fit a deploy/scale-action + Badge +
+// TimeStack on one line).
+function Row({ label, value, valueClass = '' }: { label: string; value: ReactNode; valueClass?: string }) {
   return (
     <TableRow>
       <TableCell className="text-muted-foreground px-0 py-2">{label}</TableCell>
@@ -74,7 +74,7 @@ export function ServiceConfigCard({ runtime, autoscaler, latestDeploy, latestEve
               <Row label={t('svc.config.target_cpu')} value={`${runtime.target_cpu ?? 0}%`} />
               <Row label={t('svc.config.target_ram')} value={`${runtime.target_memory ?? 0}%`} />
               <Row label={t('svc.config.traffic_threshold')} value={`${runtime.traffic_threshold ?? 0} RPS`} />
-              <Row valueClass="" label={t('svc.config.cooldown')} value={
+              <Row label={t('svc.config.cooldown')} value={
                 <span className="inline-flex gap-1 justify-end">
                   {runtime.cooldown_up_active && <Badge variant="secondary">{t('cooldown.up')}</Badge>}
                   {runtime.cooldown_down_active && <Badge variant="secondary">{t('cooldown.down')}</Badge>}

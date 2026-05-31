@@ -30,7 +30,7 @@ export function ServiceLastActionCell({ latestDeploy, latestEvent, runtime }: Se
       : latestDeploy.status === 'reverted' ? 'secondary' : 'default'
     return (
       <span className="inline-flex items-center gap-2 justify-end">
-        <span>{t('action.deploy')} <span className="font-mono">{latestDeploy.version}</span></span>
+        <span>{t('action.deploy')} <span>{latestDeploy.version}</span></span>
         <Badge variant={variant} className="text-[10px]">{t(deployStatusKey(latestDeploy.status))}</Badge>
         <span className="text-muted-foreground">·</span>
         <TimeStack date={d} compact />

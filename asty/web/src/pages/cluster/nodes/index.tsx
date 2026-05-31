@@ -80,7 +80,7 @@ export default function Nodes() {
     {
       key: 'id', label: t('nodes.col.node'),
       sort: (a, b) => a.id.localeCompare(b.id),
-      render: (n) => <span className="font-mono font-medium">{n.id}</span>,
+      render: (n) => <span className="font-medium">{n.id}</span>,
       deps: (n) => [n.id],
     },
     {
@@ -92,7 +92,7 @@ export default function Nodes() {
       key: 'ip', label: t('nodes.col.ip'),
       render: (n) => (
         <div className="space-y-1">
-          <div className="text-sm font-medium font-mono">{n.ip || '—'}</div>
+          <div className="text-sm font-medium">{n.ip || '—'}</div>
           {n.host && <div className="text-xs text-muted-foreground">{n.host}</div>}
         </div>
       ),

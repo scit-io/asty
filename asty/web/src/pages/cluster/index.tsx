@@ -92,7 +92,7 @@ export default function Cluster() {
           <Tile className="col-span-6 lg:col-span-3" variant="stat"
             title={t('tile.services')} icon={<Boxes className="h-4 w-4" />}
             value={`${servicesActive} / ${servicesTotal}`} hint={t('tile.hint.active_loaded')} />
-          <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm" mono
+          <Tile className="col-span-6 lg:col-span-3" variant="stat" size="sm"
             title={t('tile.leader')} icon={<Shield className="h-4 w-4" />}
             value={
               <span className="inline-flex items-center gap-1.5">
@@ -105,7 +105,7 @@ export default function Cluster() {
                       </TooltipTrigger>
                       <TooltipContent className="text-right">
                         {clusterStatus?.cluster.leader_dc && <div className="font-semibold">{clusterStatus.cluster.leader_dc}</div>}
-                        {clusterStatus?.cluster.leader_ip && <div className="font-mono">{clusterStatus.cluster.leader_ip}</div>}
+                        {clusterStatus?.cluster.leader_ip && <div>{clusterStatus.cluster.leader_ip}</div>}
                         {clusterStatus?.cluster.leader_host && <div>{clusterStatus.cluster.leader_host}</div>}
                       </TooltipContent>
                     </Tooltip>

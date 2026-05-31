@@ -64,7 +64,7 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
       <Breadcrumbs items={crumbs} />
       <div className="space-y-2 w-full sm:w-auto">
         <div className="flex items-center gap-3 sm:gap-4 justify-end">
-          <h1 className="text-2xl sm:text-3xl font-bold font-mono">{title}</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">{title}</h1>
           {node && (
             <TooltipProvider>
               <Tooltip>
@@ -79,7 +79,7 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
           )}
         </div>
         {node?.host && (
-          <div className="text-sm sm:text-base text-muted-foreground text-right font-mono">
+          <div className="text-sm sm:text-base text-muted-foreground text-right">
             {node.host}
           </div>
         )}

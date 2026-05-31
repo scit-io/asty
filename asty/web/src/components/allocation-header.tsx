@@ -86,7 +86,7 @@ export function AllocationHeader({ allocation, nodeId, allocId, tail = [] }: All
             </TooltipProvider>
           )}
         </div>
-        <p className="text-muted-foreground font-mono text-xs sm:text-sm text-right">
+        <p className="text-muted-foreground text-xs sm:text-sm text-right">
           {aid}
         </p>
       </div>
