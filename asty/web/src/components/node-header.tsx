@@ -5,6 +5,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { Breadcrumbs, type Crumb } from '@/components/breadcrumbs'
+import { NodeIdentityTooltip } from '@/components/node-identity-tooltip'
 import { routes } from '@/lib/routes'
 import { useT, nodeStatusKey } from '@/lib/i18n'
 import type { Node } from '@/types'
@@ -37,11 +38,11 @@ interface NodeHeaderProps {
 }
 
 // NodeHeader renders the canonical split-row header for any page
-// inside /nodes/{id}: breadcrumbs left, ip/datacenter as the big
-// title + status dot + host on a muted subline, right-aligned.
-// Breadcrumbs still carry the node id (that's the routable identity);
-// the headline trades it for ip/dc so the visual emphasis matches
-// what operators actually look at — the address.
+// inside /nodes/{id}: breadcrumbs left, node id as the big title
+// + status dot + globe-tooltip (dc/ip/host), with the bare ip on the
+// muted subline. The id is also the breadcrumb tail — operators look
+// at it everywhere, so the headline emphasises it; address details
+// live one click away in the tooltip.
 export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
   const t = useT()
   const id = node?.id ?? nodeId
@@ -55,16 +56,21 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
     ...tail,
   ]
 
-  // Title falls back to the bare id when we don't have the full Node
-  // yet (lite header on log pages); avoids a blank h1 mid-load.
-  const title = node ? `${node.ip} / ${node.datacenter}` : id
-
   return (
     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 sm:gap-8">
       <Breadcrumbs items={crumbs} />
       <div className="space-y-2 w-full sm:w-auto">
         <div className="flex items-center gap-3 sm:gap-4 justify-end">
-          <h1 className="text-2xl sm:text-3xl font-bold">{title}</h1>
+          <h1 className="inline-flex items-center gap-2 text-2xl sm:text-3xl font-bold">
+            {id}
+            {node && (
+              <NodeIdentityTooltip
+                dc={node.datacenter}
+                ip={node.ip}
+                host={node.host}
+                iconClassName="h-4 w-4 opacity-70" />
+            )}
+          </h1>
           {node && (
             <TooltipProvider>
               <Tooltip>
@@ -78,9 +84,9 @@ export function NodeHeader({ node, nodeId, tail = [] }: NodeHeaderProps) {
             </TooltipProvider>
           )}
         </div>
-        {node?.host && (
+        {node?.ip && (
           <div className="text-sm sm:text-base text-muted-foreground text-right">
-            {node.host}
+            {node.ip}
           </div>
         )}
       </div>
