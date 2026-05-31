@@ -8,7 +8,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Cpu, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
+import { Cpu, HardDrive, MemoryStick, MoreHorizontal, RotateCw, StopCircle } from 'lucide-react'
 import { DataTable, type CellSpec, type Column } from '@/components/data-table'
 import { AllocIdBadge } from '@/components/alloc-id-badge'
 import { NodeIdentityTooltip } from '@/components/node-identity-tooltip'
@@ -174,8 +174,19 @@ export function AllocationsTable({
     {
       key: 'disk', label: t('allocs.col.disk'),
       sort: (a, b) => a.disk_usage - b.disk_usage,
-      render: (a) => <span className="text-sm">{formatMB(a.disk_usage)}</span>,
-      deps: (a) => [a.disk_usage],
+      render: (a) => {
+        const res = resources(a)
+        const budget = res?.Disk ?? 0
+        const pct = budget > 0 ? Math.round((a.disk_usage / budget) * 100) : null
+        return (
+          <UsageCell
+            icon={HardDrive}
+            primary={pct !== null ? `${pct}%` : formatMB(a.disk_usage)}
+            secondary={budget > 0 ? `${formatMB(a.disk_usage)} / ${formatMB(budget)}` : undefined}
+          />
+        )
+      },
+      deps: (a) => [a.disk_usage, resources(a)?.Disk],
     },
     {
       key: 'restarts', label: t('allocs.col.restarts'),

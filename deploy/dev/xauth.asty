@@ -40,6 +40,7 @@ kv:
 resources:
   cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
   memory: 32        # Memory reservation in MB
+  disk: 64          # Disk budget in MB (UI shows alloc disk as % of this)
 
 # Per-path rate limits enforced by the gateway.
 # These protect auth endpoints from brute-force attacks.

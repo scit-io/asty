@@ -33,6 +33,7 @@ kv:
 resources:
   cpu: 100          # CPU reservation in MHz (used by scheduler for placement)
   memory: 64        # Memory reservation in MB (64 — pg pool + row buffering needs headroom)
+  disk: 128         # Disk budget in MB (UI shows alloc disk as % of this)
 
 health:
   type: nats               # Probe type (nats — request-reply; http — GET addr+path)

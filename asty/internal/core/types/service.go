@@ -59,8 +59,9 @@ type Artifact struct {
 }
 
 type Resources struct {
-	CPU    int `yaml:"cpu"`    // MHz
-	Memory int `yaml:"memory"` // MB
+	CPU    int `yaml:"cpu"`              // MHz
+	Memory int `yaml:"memory"`           // MB
+	Disk   int `yaml:"disk,omitempty"`   // MB — optional. When >0 the UI renders per-alloc disk as a percentage of this budget, matching the CPU/RAM cells; when 0 only the raw usage is shown.
 }
 
 // Health holds the health-probe configuration plus pre-parsed durations.

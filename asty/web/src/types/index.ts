@@ -94,8 +94,9 @@ export interface ServiceDefinition {
   Name: string
   Type: 'system' | 'service'
   Resources: {
-    CPU: number
-    Memory: number
+    CPU: number      // MHz
+    Memory: number   // MB
+    Disk?: number    // MB — optional budget; when set the UI shows alloc disk as a percentage of it
   }
   Health: {
     Type: string
