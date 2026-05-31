@@ -30,7 +30,10 @@ type natsCollector struct {
 }
 
 func newNATSCollector(ctx Context) *natsCollector {
-	common := []string{"node_id", "datacenter"}
+	// host = NodeInfo.Host — operator-provided public DNS name, kept
+	// in sync with nodeCollector's label set for consistent join-keys
+	// when correlating asty_node_* and asty_node_nats_*.
+	common := []string{"node_id", "datacenter", "host"}
 	return &natsCollector{
 		ctx: ctx,
 		cpuPercent: prometheusclient.NewDesc("asty_node_nats_cpu_percent",
@@ -98,10 +101,10 @@ func (c *natsCollector) Collect(ch chan<- prometheusclient.Metric) {
 
 func (c *natsCollector) emit(ch chan<- prometheusclient.Metric, n *types.NodeInfo) {
 	g := func(d *prometheusclient.Desc, v float64) {
-		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, n.ID, n.Datacenter)
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, n.ID, n.Datacenter, n.Host)
 	}
 	counter := func(d *prometheusclient.Desc, v float64) {
-		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.CounterValue, v, n.ID, n.Datacenter)
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.CounterValue, v, n.ID, n.Datacenter, n.Host)
 	}
 	g(c.cpuPercent, n.NATSCPUPercent)
 	g(c.memoryMB, float64(n.NATSMemoryMB))

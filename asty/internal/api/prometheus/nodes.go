@@ -31,9 +31,14 @@ type nodeCollector struct {
 }
 
 func newNodeCollector(ctx Context) *nodeCollector {
-	common := []string{"node_id", "datacenter"}
-	statusLabels := []string{"node_id", "datacenter", "status"}
-	diskTypeLabels := []string{"node_id", "datacenter", "disk_type"}
+	// `host` is the operator-provided public DNS name of the node
+	// (NodeInfo.Host). Empty when the node is addressed by IP only —
+	// still emitted as a label so the label set is stable across
+	// scrapes (Prometheus rejects label additions between samples of
+	// the same metric, not between scrapes).
+	common := []string{"node_id", "datacenter", "host"}
+	statusLabels := []string{"node_id", "datacenter", "host", "status"}
+	diskTypeLabels := []string{"node_id", "datacenter", "host", "disk_type"}
 	return &nodeCollector{
 		ctx: ctx,
 		cpuTotal: prometheusclient.NewDesc("asty_node_cpu_total_mhz",
@@ -99,7 +104,7 @@ func (c *nodeCollector) Collect(ch chan<- prometheusclient.Metric) {
 
 func (c *nodeCollector) emit(ch chan<- prometheusclient.Metric, n *types.NodeInfo) {
 	g := func(d *prometheusclient.Desc, v float64) {
-		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, n.ID, n.Datacenter)
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, n.ID, n.Datacenter, n.Host)
 	}
 	g(c.cpuTotal, float64(n.CPUTotal))
 	g(c.cpuAvailable, float64(n.CPUAvailable))
@@ -116,12 +121,12 @@ func (c *nodeCollector) emit(ch chan<- prometheusclient.Metric, n *types.NodeInf
 	g(c.selfDiskMB, float64(n.SelfDiskMB))
 
 	ch <- prometheusclient.MustNewConstMetric(c.status, prometheusclient.GaugeValue, 1,
-		n.ID, n.Datacenter, string(n.Status))
+		n.ID, n.Datacenter, n.Host, string(n.Status))
 
 	dt := n.DiskType
 	if dt == "" {
 		dt = types.DiskUnknown
 	}
 	ch <- prometheusclient.MustNewConstMetric(c.diskType, prometheusclient.GaugeValue, 1,
-		n.ID, n.Datacenter, string(dt))
+		n.ID, n.Datacenter, n.Host, string(dt))
 }

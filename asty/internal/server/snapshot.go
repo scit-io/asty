@@ -60,9 +60,17 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 
 	leaderInfo, _ := h.server.leaderElection.GetLeader()
 	leaderNodeID := leaderInfo.ID
+	leaderHost := leaderInfo.Host
 	for _, node := range nodes {
 		if node.IP == leaderInfo.IP {
 			leaderNodeID = node.ID
+			// Snapshot Host wins over the KV-stored leader.Host: the
+			// agent on the leader rewrites NodeInfo.Host on every
+			// heartbeat, so it's the freshest source if the operator
+			// rotated the DNS name without restarting.
+			if node.Host != "" {
+				leaderHost = node.Host
+			}
 			break
 		}
 	}
@@ -70,6 +78,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 	cluster := types.ClusterStatusPayload{
 		Leader:       leaderNodeID,
 		LeaderIP:     leaderInfo.IP,
+		LeaderHost:   leaderHost,
 		IsLeader:     h.server.leaderElection.IsLeader(),
 		NodesTotal:   len(nodes),
 		NodesHealthy: healthy,

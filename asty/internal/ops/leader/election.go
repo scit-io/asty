@@ -22,8 +22,9 @@ const leaderTTL = 10 * time.Second
 
 // Info holds leader identification data stored in KV.
 type Info struct {
-	ID string `json:"id"`
-	IP string `json:"ip"`
+	ID   string `json:"id"`
+	IP   string `json:"ip"`
+	Host string `json:"host,omitempty"` // operator-provided public DNS name, when set
 }
 
 // Election handles leader election via NATS JetStream KV.
@@ -33,11 +34,12 @@ type Election struct {
 	bucket   nats.KeyValue
 	nodeID   string
 	nodeIP   string
+	nodeHost string
 	isLeader bool
 }
 
 // NewElection creates a new leader election instance.
-func NewElection(nc *nats.Conn, nodeID string, nodeIP string) (*Election, error) {
+func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
@@ -54,11 +56,12 @@ func NewElection(nc *nats.Conn, nodeID string, nodeIP string) (*Election, error)
 	}
 
 	return &Election{
-		nc:     nc,
-		js:     js,
-		bucket: bucket,
-		nodeID: nodeID,
-		nodeIP: nodeIP,
+		nc:       nc,
+		js:       js,
+		bucket:   bucket,
+		nodeID:   nodeID,
+		nodeIP:   nodeIP,
+		nodeHost: nodeHost,
 	}, nil
 }
 

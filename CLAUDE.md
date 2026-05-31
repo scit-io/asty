@@ -764,12 +764,12 @@ extension stays orderly:
 | Prefix | Scope | Labels | Examples |
 |---|---|---|---|
 | `asty_cluster_*` | cluster-wide aggregates | none | `nodes_total`, `nodes_healthy`, `services_loaded`, `cpu_total_mhz`, `cpu_available_mhz`, `cpu_used_mhz`, `memory_total_mb`, `memory_available_mb`, `memory_used_mb`, `disk_total_mb`, `disk_available_mb`, `disk_used_mb`, `disks_ssd`, `disks_hdd`, `disks_unknown`, `swap_total_mb`, `swap_available_mb`, `swap_used_mb`, `rps`, `health_percent` |
-| `asty_node_*` | per-node | `node_id`, `datacenter` (+ `status` on `_status`, + `disk_type` on `_disk_type`) | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `memory_available_mb`, `disk_total_mb`, `disk_available_mb`, `disk_type`, `swap_total_mb`, `swap_available_mb`, `allocations_running`, `allocations_planned`, `status`, `self_cpu_percent`, `self_memory_mb`, `self_disk_mb` |
+| `asty_node_*` | per-node | `node_id`, `datacenter`, `host` (+ `status` on `_status`, + `disk_type` on `_disk_type`) | `cpu_total_mhz`, `cpu_available_mhz`, `memory_total_mb`, `memory_available_mb`, `disk_total_mb`, `disk_available_mb`, `disk_type`, `swap_total_mb`, `swap_available_mb`, `allocations_running`, `allocations_planned`, `status`, `self_cpu_percent`, `self_memory_mb`, `self_disk_mb` |
 | `asty_service_*` | per-service | `service` | `copies_current`, `min_copies`, `cpu_avg_percent`, `memory_avg_mb`, `cooldown_up_active`, `cooldown_down_active` |
-| `asty_alloc_*` | per-allocation | `service`, `node_id`, `alloc_id` (+ `state` on `_health`, `status` on `_status`) | `cpu_percent`, `memory_mb`, `disk_mb`, `rps`, `restarts_total`, `uptime_seconds`, `health`, `status` |
+| `asty_alloc_*` | per-allocation | `service`, `node_id`, `host`, `alloc_id` (+ `state` on `_health`, `status` on `_status`) | `cpu_percent`, `memory_mb`, `disk_mb`, `rps`, `restarts_total`, `uptime_seconds`, `health`, `status` |
 | `asty_deploy_*` | per-deployment | `service` (+ `state` on `_state`) | `state`, `progress_percent` |
-| `asty_leader` | leader-election state | `node_id` | Always 1 with the leader's `node_id` label; emitted on every server's `/metrics` (built from the snapshot's `Cluster.Leader`), not leader-only. |
-| `asty_node_nats_*` | pulled from local NATS via `$SYS.REQ.SERVER.<id>.STATSZ` + `JSZ` | `node_id`, `datacenter` | `cpu_percent`, `memory_mb`, `connections`, `subscriptions`, `slow_consumers`, `in_msgs_total` (counter), `out_msgs_total` (counter), `jetstream_messages`, `jetstream_bytes`, `disk_mb` (binary baseline + JS bytes) |
+| `asty_leader` | leader-election state | `node_id`, `host` | Always 1 with the leader's `node_id` and (optional) `host` labels; emitted on every server's `/metrics` (built from the snapshot's `Cluster.Leader`/`LeaderHost`), not leader-only. |
+| `asty_node_nats_*` | pulled from local NATS via `$SYS.REQ.SERVER.<id>.STATSZ` + `JSZ` | `node_id`, `datacenter`, `host` | `cpu_percent`, `memory_mb`, `connections`, `subscriptions`, `slow_consumers`, `in_msgs_total` (counter), `out_msgs_total` (counter), `jetstream_messages`, `jetstream_bytes`, `disk_mb` (binary baseline + JS bytes) |
 | `asty_cluster_nats_*` | per-cluster NATS aggregates | none | `connections`, `jetstream_messages`, `jetstream_bytes` |
 
 ### Adding a new metric

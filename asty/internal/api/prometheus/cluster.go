@@ -52,7 +52,7 @@ func newClusterCollector(ctx Context) *clusterCollector {
 		swapUsed:      prometheusclient.NewDesc("asty_cluster_swap_used_mb", "SwapTotal − SwapAvailable across all nodes, MB.", nil, nil),
 		rps:           prometheusclient.NewDesc("asty_cluster_rps", "Sum of latest valid-RPS samples across all nodes.", nil, nil),
 		healthPercent: prometheusclient.NewDesc("asty_cluster_health_percent", "Percentage of nodes whose last_seen is within the staleness window.", nil, nil),
-		leader:        prometheusclient.NewDesc("asty_leader", "1 on the node that currently holds the leader lease; the label carries its ID.", []string{"node_id"}, nil),
+		leader:        prometheusclient.NewDesc("asty_leader", "1 on the node that currently holds the leader lease; labels carry its ID and (optional) public DNS host.", []string{"node_id", "host"}, nil),
 	}
 }
 
@@ -138,6 +138,6 @@ func (c *clusterCollector) Collect(ch chan<- prometheusclient.Metric) {
 	g(c.healthPercent, healthPct)
 
 	if leaderID := snap.Cluster.Leader; leaderID != "" {
-		ch <- prometheusclient.MustNewConstMetric(c.leader, prometheusclient.GaugeValue, 1, leaderID)
+		ch <- prometheusclient.MustNewConstMetric(c.leader, prometheusclient.GaugeValue, 1, leaderID, snap.Cluster.LeaderHost)
 	}
 }

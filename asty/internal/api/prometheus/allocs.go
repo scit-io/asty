@@ -25,9 +25,13 @@ type allocCollector struct {
 }
 
 func newAllocCollector(ctx Context) *allocCollector {
-	common := []string{"service", "node_id", "alloc_id"}
-	healthLabels := []string{"service", "node_id", "alloc_id", "state"}
-	statusLabels := []string{"service", "node_id", "alloc_id", "status"}
+	// host = NodeInfo.Host of the node hosting the allocation. Joined
+	// in at Collect() time from snap.Nodes, since ServiceAllocation
+	// itself doesn't carry it. Same rationale as in nodeCollector:
+	// stable label set so dashboards correlate by name.
+	common := []string{"service", "node_id", "host", "alloc_id"}
+	healthLabels := []string{"service", "node_id", "host", "alloc_id", "state"}
+	statusLabels := []string{"service", "node_id", "host", "alloc_id", "status"}
 	return &allocCollector{
 		ctx: ctx,
 		cpuPercent: prometheusclient.NewDesc("asty_alloc_cpu_percent",
@@ -65,17 +69,21 @@ func (c *allocCollector) Collect(ch chan<- prometheusclient.Metric) {
 	if snap == nil {
 		return
 	}
+	hostByNode := make(map[string]string, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		hostByNode[n.ID] = n.Host
+	}
 	now := time.Now()
 	for _, allocs := range snap.AllocsByService {
 		for _, a := range allocs {
-			c.emit(ch, a, now)
+			c.emit(ch, a, hostByNode[a.NodeID], now)
 		}
 	}
 }
 
-func (c *allocCollector) emit(ch chan<- prometheusclient.Metric, a *types.ServiceAllocation, now time.Time) {
+func (c *allocCollector) emit(ch chan<- prometheusclient.Metric, a *types.ServiceAllocation, host string, now time.Time) {
 	g := func(d *prometheusclient.Desc, v float64) {
-		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, a.ServiceName, a.NodeID, a.ID)
+		ch <- prometheusclient.MustNewConstMetric(d, prometheusclient.GaugeValue, v, a.ServiceName, a.NodeID, host, a.ID)
 	}
 	g(c.cpuPercent, float64(a.CPUUsage))
 	g(c.memoryMB, float64(a.MemoryUsage))
@@ -98,8 +106,8 @@ func (c *allocCollector) emit(ch chan<- prometheusclient.Metric, a *types.Servic
 		healthState = "unknown"
 	}
 	ch <- prometheusclient.MustNewConstMetric(c.health, prometheusclient.GaugeValue, 1,
-		a.ServiceName, a.NodeID, a.ID, healthState)
+		a.ServiceName, a.NodeID, host, a.ID, healthState)
 
 	ch <- prometheusclient.MustNewConstMetric(c.status, prometheusclient.GaugeValue, 1,
-		a.ServiceName, a.NodeID, a.ID, string(a.Status))
+		a.ServiceName, a.NodeID, host, a.ID, string(a.Status))
 }

@@ -77,6 +77,7 @@ export interface ClusterStatus {
   cluster: {
     leader: string
     leader_ip: string
+    leader_host?: string  // operator-provided public DNS name of the leader; empty when unset
     is_leader: boolean
     nodes_total: number
     nodes_healthy: number

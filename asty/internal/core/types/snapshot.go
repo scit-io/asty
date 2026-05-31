@@ -17,6 +17,11 @@ type ClusterSnapshot struct {
 type ClusterStatusPayload struct {
 	Leader       string `json:"leader"`
 	LeaderIP     string `json:"leader_ip"`
+	// LeaderHost is the leader's public DNS name (NodeInfo.Host on the
+	// leader). Empty when the leader hasn't been assigned a host name.
+	// Surfaced alongside LeaderIP so frontends that address nodes by
+	// name (e.g. for sticky balancing) don't need a second lookup.
+	LeaderHost   string `json:"leader_host,omitempty"`
 	IsLeader     bool   `json:"is_leader"`
 	NodesTotal   int    `json:"nodes_total"`
 	NodesHealthy int    `json:"nodes_healthy"`

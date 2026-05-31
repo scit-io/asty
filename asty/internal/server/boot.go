@@ -85,7 +85,7 @@ func (s *Server) initInfra() error {
 	if leaderIP == "" {
 		leaderIP = netutil.LocalIPv4("")
 	}
-	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP)
+	leaderElection, err := leader.NewElection(s.nc, s.nodeID, leaderIP, s.cfg.NodeHost)
 	if err != nil {
 		return fmt.Errorf("failed to initialize leader election: %w", err)
 	}
@@ -162,6 +162,7 @@ func (s *Server) runLeaderElection(ctx context.Context) error {
 	log.Info().
 		Str("leader", leaderInfo.ID).
 		Str("leader_ip", leaderInfo.IP).
+		Str("leader_host", leaderInfo.Host).
 		Bool("is_leader", leaderInfo.ID == s.nodeID).
 		Msg("leader elected")
 	return nil
