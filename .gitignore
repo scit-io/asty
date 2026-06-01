@@ -40,6 +40,9 @@ Thumbs.db
 /dist/
 /build/
 
+# Firebase CLI cache
+.firebase/
+
 #.claude/
 #CLAUDE.md
 ui/node_modules

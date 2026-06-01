@@ -1,3 +1,8 @@
+// EventSource imported from compass is a drop-in replacement for the
+// browser global — same constructor signature, same event surface,
+// but with automatic failover to the next compass candidate when the
+// current node drops. Aliased to avoid shadowing the lib.dom type.
+import { EventSource as CompassEventSource } from '@asty-web-app/compass'
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STORE_FLUSH_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
 import { apiURL } from '@/lib/backend'
 
@@ -12,9 +17,10 @@ export type ConnectionState = 'connecting' | 'streaming' | 'reconnecting' | 'dea
 // connection status into a UI-visible field or trigger a cache wipe.
 //
 // path is prefix-relative (from routes.ts); apiURL joins it with the
-// configured backend origin. On reconnect the browser re-resolves that
-// origin's DNS, so when the current node dies it can land on another
-// A-record — node failover lives at the DNS layer, not here.
+// live backend origin (window.__ASTY_ORIGIN__, written by
+// @asty-web-app/compass at boot). The EventSource constructor is the
+// one compass patches — node failover on connection drop is handled
+// inside the wrapper, no plumbing required here.
 export function openStream(
   path: string,
   setup: (es: EventSource) => void,
@@ -28,7 +34,7 @@ export function openStream(
   const open = () => {
     if (cancelled) return
     onState?.(retryCount === 0 ? 'connecting' : 'reconnecting')
-    es = new EventSource(apiURL(path))
+    es = new CompassEventSource(apiURL(path))
     setup(es)
     es.onopen = () => {
       retryCount = 0

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { EventSource as CompassEventSource } from '@asty-web-app/compass'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, STREAM_MAX_RETRIES } from '@/lib/constants'
 import { apiURL } from '@/lib/backend'
@@ -152,7 +153,7 @@ export function LogsView({ streamUrl, title, maxLines = DEFAULT_MAX }: LogsViewP
     const open = () => {
       if (cancelled) return
       setStreamState('reconnecting')
-      es = new EventSource(apiURL(streamUrl))
+      es = new CompassEventSource(apiURL(streamUrl))
       es.onopen = () => {
         retryCount = 0
         setStreamState('streaming')

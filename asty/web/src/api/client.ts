@@ -5,6 +5,7 @@ import type {
   DeploymentsResponse,
   DrainStatus,
 } from '../types'
+import { fetch as compassFetch } from '@asty-web-app/compass'
 import { apiPaths } from '@/lib/routes'
 import { apiURL } from '@/lib/backend'
 
@@ -41,7 +42,7 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   }
   let response: Response
   try {
-    response = await fetch(apiURL(url), { ...options, headers })
+    response = await compassFetch(apiURL(url), { ...options, headers })
   } catch {
     throw new ApiError(0)
   }
@@ -113,7 +114,7 @@ export const api = {
   nodeExists: async (id: string): Promise<boolean> => {
     let res: Response
     try {
-      res = await fetch(apiURL(apiPaths.node(id)))
+      res = await compassFetch(apiURL(apiPaths.node(id)))
     } catch {
       throw new ApiError(0)
     }

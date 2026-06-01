@@ -4,10 +4,16 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@asty-web-app/compass': link:../../compass
+
 importers:
 
   .:
     dependencies:
+      '@asty-web-app/compass':
+        specifier: link:../../compass
+        version: link:../../compass
       react:
         specifier: ^19.2.5
         version: 19.2.6

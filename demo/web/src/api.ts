@@ -1,5 +1,9 @@
-// Gateway base URL. Empty string = relative paths via Vite dev-proxy.
-export const BASE = import.meta.env.VITE_GATEWAY_URL ?? '';
+import { fetch as compassFetch, origin as compassOrigin } from '@asty-web-app/compass';
+
+// Gateway base URL — compass.origin() returns the live preferred
+// node, '' before install resolves (relative paths fall through to
+// the dev proxy in that window).
+export const BASE: string = compassOrigin();
 
 export type ApiResult<T> = {
   ok: boolean;
@@ -18,7 +22,7 @@ export async function apiCall<T = unknown>(
   // would have no idea what happened. signal placed after the spread overrides init.signal.
   let res: Response;
   try {
-    res = await fetch(`${BASE}${path}`, {
+    res = await compassFetch(`${compassOrigin()}${path}`, {
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) },
       ...init,
@@ -53,8 +57,9 @@ export async function apiCall<T = unknown>(
 }
 
 export function wsURL(path: string): string {
-  if (BASE) {
-    const u = new URL(path, BASE);
+  const base = compassOrigin();
+  if (base) {
+    const u = new URL(path, base);
     u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
     return u.toString();
   }

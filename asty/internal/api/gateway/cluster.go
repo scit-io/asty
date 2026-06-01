@@ -9,23 +9,6 @@ import (
 	"asty/asty/internal/core/types"
 )
 
-// clusterHostsCacheTTL bounds how stale the GET /api/v1 host-list
-// response can be. The endpoint is hit by browser balancers and SSR
-// nodes — refreshing more often than this would mean a KV listing per
-// view without any real freshness gain (NodeInfo.Host only changes
-// when an operator redeploys with a new A_NODE_HOST). The TTL also
-// caps the load amplification a flood can inflict on KV.
-const clusterHostsCacheTTL = 5 * time.Second
-
-// hostsCacheEntry is the gateway-process-local cache of the public
-// host list. Recomputed lazily under sync — at most one goroutine
-// rebuilds, the rest read the previous slice. The slice is treated as
-// immutable after publish, so concurrent readers don't need a copy.
-type hostsCacheEntry struct {
-	hosts    []string
-	loadedAt time.Time
-}
-
 // handleClusterHosts serves GET /api/v1. Returns the public DNS names
 // of every healthy node that has one. Designed for browser-side
 // balancers and SSR nodes that need a list of live origins — same
@@ -39,24 +22,18 @@ type hostsCacheEntry struct {
 //   - Anonymous: hosts are public DNS names by definition.
 //   - The gateway's existing rate-limit and Origin allowlist still
 //     apply (this handler sits behind both middlewares).
-//   - In-process TTL cache caps KV load per node under a flood.
+//   - No caching of any kind: every request hits KV. The list has to
+//     reflect the live cluster, and KV listing under the gateway's
+//     rate-limit ceiling is cheap.
 func (gw *Gateway) handleClusterHosts(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	hosts := gw.cachedClusterHosts()
-	if hosts == nil {
-		// json.Encode renders a nil []string as `null`; clients
-		// expecting a JSON array should never see that.
-		hosts = []string{}
-	}
+	hosts := gw.collectClusterHosts()
 
 	w.Header().Set("Content-Type", "application/json")
-	// Browsers may safely cache for the same window we hold internally,
-	// since the rebuild interval is the freshness floor anyway.
-	w.Header().Set("Cache-Control", "public, max-age=5")
 	if r.Method == http.MethodHead {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -64,32 +41,18 @@ func (gw *Gateway) handleClusterHosts(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(hosts)
 }
 
-// cachedClusterHosts returns the most recent host list, recomputing
-// when the TTL has expired. Recompute under the cache mutex so only
-// one goroutine pays the KV cost during a stampede.
-func (gw *Gateway) cachedClusterHosts() []string {
-	gw.hostsCacheMu.Lock()
-	defer gw.hostsCacheMu.Unlock()
-	if time.Since(gw.hostsCache.loadedAt) < clusterHostsCacheTTL && gw.hostsCache.hosts != nil {
-		return gw.hostsCache.hosts
-	}
-	hosts := gw.collectClusterHosts()
-	gw.hostsCache = hostsCacheEntry{hosts: hosts, loadedAt: time.Now()}
-	return hosts
-}
-
 // collectClusterHosts lists nodes from KV and projects healthy ones
 // with a non-empty Host onto a sorted, de-duplicated string slice.
-// Sorted output gives the cache a stable byte identity, which matters
-// for downstream CDN caching.
+// Returns a non-nil slice in every branch so json.Encode never emits
+// `null` for clients expecting an array.
 func (gw *Gateway) collectClusterHosts() []string {
 	if gw.clusterState == nil {
 		return []string{}
 	}
 	nodes, err := gw.clusterState.ListNodes()
 	if err != nil {
-		gw.log.Warn().Err(err).Msg("cluster-hosts: ListNodes failed; serving previous cache (or empty)")
-		return gw.hostsCache.hosts
+		gw.log.Warn().Err(err).Msg("cluster-hosts: ListNodes failed; serving empty list")
+		return []string{}
 	}
 	now := time.Now()
 	seen := make(map[string]struct{}, len(nodes))

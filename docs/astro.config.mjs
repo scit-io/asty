@@ -4,10 +4,13 @@ import starlight from '@astrojs/starlight';
 
 // https://astro.build/config
 export default defineConfig({
+	// Public URL of the deployed site — used for canonical links,
+	// Open Graph URLs, and the sitemap. Update if you point a custom
+	// domain at the Firebase project.
+	site: 'https://asty.web.app',
 	integrations: [
 		starlight({
-			title: 'My Docs',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/withastro/starlight' }],
+			title: 'Asty Docs',
 			sidebar: [
 				{
 					label: 'Guides',

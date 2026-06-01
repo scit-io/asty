@@ -67,16 +67,10 @@ type Gateway struct {
 	// HTTP requests observe shutdown when the agent cancels it.
 	ctx context.Context
 
-	// clusterState backs the /_cluster/hosts read endpoint. Optional
+	// clusterState backs the GET /api/v1 host-list endpoint. Optional
 	// (the gateway functions without it for the user-traffic paths) —
 	// when nil the endpoint returns an empty list.
 	clusterState *kv.ClusterState
-
-	// hostsCache caches the projected host list to keep KV listings out
-	// of the hot read path. See clusterHostsCacheTTL for the freshness
-	// bound.
-	hostsCacheMu sync.Mutex
-	hostsCache   hostsCacheEntry
 }
 
 // bumpService increments the per-service surviving-request counter for
@@ -143,11 +137,13 @@ func (gw *Gateway) Handler() http.Handler {
 	}
 
 	api := http.NewServeMux()
-	// Bare prefix (`/api/v1`, no trailing slash) is the gateway-served
-	// host-list endpoint. The subtree `/api/v1/` keeps its existing role
-	// as the catch-all that hands the trimmed path to gw.route — Go
-	// 1.22 mux treats the two patterns as distinct so they coexist.
+	// Host-list endpoint answers BOTH `/api/v1` and `/api/v1/` — the
+	// trailing-slash variant otherwise falls into the subtree catch-
+	// all below, where gw.route sees an empty path and returns 400.
+	// "{$}" is Go 1.22's exact-match suffix; longest specific pattern
+	// wins over the subtree.
 	api.HandleFunc(prefix, gw.handleClusterHosts)
+	api.HandleFunc(prefix+"/{$}", gw.handleClusterHosts)
 	api.Handle(prefix+"/", http.StripPrefix(prefix, http.HandlerFunc(gw.route)))
 
 	root := http.NewServeMux()

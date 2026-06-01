@@ -1,0 +1,41 @@
+{
+  "name": "@asty-web-app/compass",
+  "version": "0.1.0",
+  "description": "Locality-aware origin selection for Asty SPAs. Fetches the live host list from a bootstrap URL, pings each one, and resolves to the lowest-latency origin before the SPA mounts.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "prepublishOnly": "npm run build"
+  },
+  "license": "MIT",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "asty",
+    "balancer",
+    "latency",
+    "edge",
+    "origin"
+  ],
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
