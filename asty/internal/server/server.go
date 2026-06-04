@@ -22,6 +22,7 @@ import (
 	apiPkg "asty/asty/internal/api/dashboard"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // Server handles scheduling, autoscaling, and orchestration. The struct
@@ -30,7 +31,9 @@ import (
 // files (commands.go, deployment.go, leadership.go, …).
 type Server struct {
 	cfg    *config.Config
-	nc     *nats.Conn
+	nc     *nats.Conn          // ASTY account — cluster KV, asty.v1.*, leader election
+	ncSys  *nats.Conn          // SYS account — leader's dead-peer reaper ($JS.API.SERVER.REMOVE); nil if observer creds not configured
+	js     jetstream.JetStream // one handle over nc, created in connectNATS; shared by KV provisioning + the leader's replica reconcile so neither re-creates it per call
 	nodeID string
 
 	clusterState    *kv.ClusterState

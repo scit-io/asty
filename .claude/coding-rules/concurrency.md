@@ -21,11 +21,22 @@ Asty is event-driven by design. Follow these rules when adding code that needs t
 | `Process.TailLogs` | 100 ms | File reading; fsnotify complicates log rotation |
 | `proximity.RunValidation` | 1 hour | Heavy job, slow drift |
 | `streamHubInterval` | 60 s | Pure safety net for missed events; debounce drives normal path |
-| `agent.watchNATSPeers` | 5 s | Re-resolves peer source (file/env/DNS); no event channel for file/DNS changes |
-| `server.watchStreamReplicas` | 10 s | Leader-only — bumps stream replicas after the cluster grows; no JS event for "peers count changed" |
 | `netutil.ConnectNATS` retry | 500 ms | Bootstrap race: server may start before the agent has the local broker bound |
 
 Each of these has a comment at its `time.NewTicker` site explaining why polling is the right choice.
+
+**Converted OUT of this list — now event-driven, no timer:** `agent.watchNATSPeers` and `server.watchStreamReplicas` both react to cluster-KV `WatchNodes` events (the latter also to NATS `gossipChanged`), and cluster SIZE is read from the JetStream RAFT meta on demand (`server.clusterSize`), not sampled. Earlier this table listed them as 5 s / 10 s pollers — that was stale doc; the code had no such tickers. Trust the code, delete the stale entry.
+
+## Every timer: stop, classify, justify
+
+When you ADD or REFACTOR any timer (`time.After`, `time.NewTicker`, `time.NewTimer`, `time.Sleep`, `time.AfterFunc`), STOP and name which kind it is — by reading the execution LOGIC, not the variable name:
+
+- **Operation bound** — a request-reply timeout, or a SIGTERM→SIGKILL grace. Keep it, but the awaited reply/exit IS the event; the timer is only the fallback, so it must sit in a `select` next to that event channel (`select { case <-replyCh: …; case <-time.After(bound): … }`), never alone.
+- **Backoff** before retrying a failed operation. Keep it, bounded (exponential preferred). A *clean* close re-opens immediately (event); only an *error* backs off.
+- **Documented safety-net** already in the Acceptable-polling table above. Keep, with its rationale comment.
+- **Polling for a state change** — DO NOT add. Convert to a watch/callback (`WatchNodes`, `Process.OnExit`/`Done()`, `gossipChanged`, a `$JS.EVENT.ADVISORY.*` subscription). Ask out loud: *what state change is this timer checking for, and which NATS event/callback already signals it?*
+
+When a path becomes event-driven, DELETE its old timer — do not leave it "just in case" (that is the divergent second mechanism this whole file warns against).
 
 ## Exponential backoff for retries
 

@@ -42,6 +42,9 @@ func applyEnvOverrides(c *Config) {
 	envStr("A_DC_LATENCY", &c.Autoscale.DCLatency)
 	envInt("A_CONTROLLER_WORKERS", &c.Autoscale.ControllerWorkers)
 
+	envInt("A_SYSTEM_KV_REPLICAS", &c.Cluster.SystemKVReplicas)
+	envInt("A_APP_KV_REPLICAS", &c.Cluster.AppKVReplicas)
+
 	envInt("A_RESERVED_CPU", &c.Resources.ReservedCPU)
 	envInt("A_RESERVED_MEMORY", &c.Resources.ReservedMemory)
 

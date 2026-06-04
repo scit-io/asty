@@ -34,6 +34,9 @@ func (s *Server) Start(parent context.Context) error {
 		return err
 	}
 	defer s.nc.Close()
+	if s.ncSys != nil {
+		defer s.ncSys.Close()
+	}
 
 	// Child ctx so watchSelfRemoval can end Start on its own — see
 	// selfremoval.go.
@@ -74,6 +77,9 @@ func (s *Server) initInfra() error {
 	if err := s.connectNATS(); err != nil {
 		return fmt.Errorf("failed to connect to NATS: %w", err)
 	}
+	// Best-effort SYS connection for the leader's dead-peer reaper.
+	// Never fatal — see connectNATSSys.
+	s.connectNATSSys()
 
 	clusterState, err := kv.New(s.nc)
 	if err != nil {

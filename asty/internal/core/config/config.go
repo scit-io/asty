@@ -32,6 +32,7 @@ type Config struct {
 
 	NATS       NATSConfig       `yaml:"nats"`
 	Autoscale  AutoscaleConfig  `yaml:"autoscale"`
+	Cluster    ClusterConfig    `yaml:"cluster"`
 	Resources  ResourcesConfig  `yaml:"resources"`
 	Dashboard  DashboardConfig  `yaml:"dashboard"`
 	Prometheus PrometheusConfig `yaml:"prometheus"`
@@ -67,6 +68,24 @@ type AutoscaleConfig struct {
 	EvalInterval        time.Duration `yaml:"eval_interval"`
 	DCLatency           string        `yaml:"dc_latency"`
 	ControllerWorkers   int           `yaml:"controller_workers"`
+}
+
+// ClusterConfig — how Asty replicates its JetStream KV across the
+// cluster. A RAFT group of R replicas keeps quorum while a minority is
+// down — floor((R-1)/2) nodes — so SystemKVReplicas is the dial for how
+// many simultaneous node deaths the control plane survives: 3 → 1, 5 →
+// 2. When a node dies the leader's reaper (server/deadpeers.go) evicts
+// it so JetStream migrates its replicas onto live nodes, restoring the
+// full count; the ceiling only bounds how wide that placement goes.
+//
+// Both values are CEILINGS — the effective replica count is
+// min(value, cluster_size), so a 2-node dev cluster simply runs fewer.
+// SystemKVReplicas governs Asty's own buckets (asty-cluster,
+// asty-leader); AppKVReplicas caps service buckets that ask for more
+// (or for auto) via the .asty `replicas:` field.
+type ClusterConfig struct {
+	SystemKVReplicas int `yaml:"system_kv_replicas"`
+	AppKVReplicas    int `yaml:"app_kv_replicas"`
 }
 
 // ResourcesConfig — what the agent reserves for itself before
@@ -122,6 +141,9 @@ func (c *Config) Validate() error {
 	if err := c.Autoscale.Validate(); err != nil {
 		return err
 	}
+	if err := c.Cluster.Validate(); err != nil {
+		return err
+	}
 	if c.DevMode {
 		return nil
 	}
@@ -158,6 +180,19 @@ func (a AutoscaleConfig) Validate() error {
 	return nil
 }
 
+// Validate enforces replica-count sanity. Ceilings below 1 would make
+// every KV bucket unplaceable; the cluster-size cap is applied later at
+// placement time, so an over-large ceiling is harmless here.
+func (c ClusterConfig) Validate() error {
+	if c.SystemKVReplicas < 1 {
+		return fmt.Errorf("cluster.system_kv_replicas must be ≥ 1, got %d", c.SystemKVReplicas)
+	}
+	if c.AppKVReplicas < 1 {
+		return fmt.Errorf("cluster.app_kv_replicas must be ≥ 1, got %d", c.AppKVReplicas)
+	}
+	return nil
+}
+
 // defaults returns a Config populated with the sane defaults the agent
 // and server fall back to when a field is absent from both YAML and env.
 func defaults() *Config {
@@ -177,6 +212,10 @@ func defaults() *Config {
 			IdleHold:            5 * time.Minute,
 			EvalInterval:        10 * time.Second,
 			ControllerWorkers:   2,
+		},
+		Cluster: ClusterConfig{
+			SystemKVReplicas: 5, // survive 2 simultaneous node deaths (quorum 3/5)
+			AppKVReplicas:    3, // service-data default; the .asty replicas: field can ask for less
 		},
 		Resources: ResourcesConfig{
 			ReservedCPU:    100,

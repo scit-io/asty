@@ -35,11 +35,7 @@ func (s *Server) provisionKVBuckets(svc *types.ServiceDefinition) (map[string]st
 		return nil, nil
 	}
 
-	js, err := jetstream.New(s.nc)
-	if err != nil {
-		return nil, fmt.Errorf("jetstream init: %w", err)
-	}
-
+	js := s.js
 	envVars := make(map[string]string, len(svc.KV))
 
 	for _, decl := range svc.KV {
@@ -115,22 +111,26 @@ func (s *Server) ensureKVBucket(js jetstream.JetStream, decl types.KVBucket) err
 	}
 }
 
-// autoReplicas determines the number of KV replicas from the NATS
-// cluster size via DiscoveredServers(). Single-node returns 1.
-func (s *Server) autoReplicas() int {
-	const maxReplicas = 3
-	servers := s.nc.DiscoveredServers()
-	n := len(servers)
-	if n < 1 {
+// capReplicas clamps a desired replica count to [1, ceiling].
+func capReplicas(size, ceiling int) int {
+	if size > ceiling {
+		size = ceiling
+	}
+	if size < 1 {
 		return 1
 	}
-	// DiscoveredServers() returns connect_urls which includes all peers
-	// but NOT self (unlike Servers()). Add 1 for the current node.
-	n++
-	if n > maxReplicas {
-		return maxReplicas
-	}
-	return n
+	return size
+}
+
+// autoReplicas / systemReplicas are the placement targets at the current
+// cluster size — used at bucket creation. The ceilings come from config
+// (cluster.app_kv_replicas / cluster.system_kv_replicas) — see ClusterConfig
+// for the quorum-vs-latency rationale.
+func (s *Server) autoReplicas() int {
+	return capReplicas(s.clusterSize(), s.cfg.Cluster.AppKVReplicas)
+}
+func (s *Server) systemReplicas() int {
+	return capReplicas(s.clusterSize(), s.cfg.Cluster.SystemKVReplicas)
 }
 
 // kvEnvForAllocation merges the KV env vars into the service definition
@@ -147,10 +147,4 @@ func kvEnvForAllocation(svc *types.ServiceDefinition, kvEnv map[string]string) {
 	for k, v := range kvEnv {
 		svc.Env[k] = v
 	}
-}
-
-// DiscoveredServersCount returns the number of NATS cluster peers
-// visible via the INFO protocol. Exported for testing.
-func (s *Server) DiscoveredServersCount() int {
-	return len(s.nc.DiscoveredServers()) + 1
 }

@@ -89,6 +89,15 @@ autoscale:
   eval_interval: 10s             # Autoscaler tick rate
   controller_workers: 2          # Parallel reconciliation goroutines
 
+# Cluster KV replication.
+# How wide Asty replicates its JetStream KV. A RAFT group of R replicas
+# survives floor((R-1)/2) simultaneous node deaths (5 -> 2). On a death the
+# leader's reaper evicts the dead peer so NATS migrates its replicas onto
+# live nodes. Both are ceilings; effective count is min(value, cluster_size).
+cluster:
+  system_kv_replicas: 5          # Asty's own KV (cluster state + leader lease); survives 2 simultaneous deaths
+  app_kv_replicas: 3             # Default ceiling for service KV buckets (the .asty replicas: field can ask for less)
+
 # Resource reservations.
 # CPU/memory set aside for the agent + NATS + OS overhead.
 # The scheduler subtracts these from total node capacity before placing services.

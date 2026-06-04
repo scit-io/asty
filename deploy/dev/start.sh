@@ -7,7 +7,7 @@
 #   ./start.sh             — 1 node (server + agent)
 #   ./start.sh 3           — 3 nodes (server + agent each, with leader election)
 #   ./start.sh add         — grow a running cluster by one node
-#   ./start.sh remove [N]  — shrink: tear down node N (default: highest-numbered)
+#   ./start.sh kill [N]    — shrink: tear down node N (default: highest-numbered)
 #   ./start.sh stop        — stop everything
 
 set -euo pipefail
@@ -22,8 +22,8 @@ ENV_FILE="$SCRIPT_DIR/.env"
 BIN_DIR="$ROOT_DIR/bin"
 DATA_BASE="/tmp/asty-dev"
 # Per-node PID file: $DATA_BASE/pids-$i, two lines (server, agent).
-# Per-node so remove can target a specific node's PIDs without scanning
-# ps, and each add/remove leaves a self-contained record; stop_all
+# Per-node so kill can target a specific node's PIDs without scanning
+# ps, and each add/kill leaves a self-contained record; stop_all
 # iterates the whole set.
 PID_FILE_TMPL="$DATA_BASE/pids"
 # /etc/hosts publishes TWO kinds of names for the dev cluster:
@@ -153,7 +153,7 @@ teardown_loopback_aliases() {
 # =============================================================================
 # node_indices prints the index of every live node (one per line) from
 # the per-node pidfiles — the authoritative record of which nodes exist
-# (start_node writes pids-$i, remove deletes it). Index $i maps to IP
+# (start_node writes pids-$i, kill deletes it). Index $i maps to IP
 # 127.0.0.$i.
 node_indices() {
   local pf i
@@ -216,10 +216,10 @@ teardown_hosts() {
 # kill, crash, or external SIGTERM all leave the file behind otherwise.
 # It also picks up the orphaned server process from the same pidfile
 # (servers don't die on their own when the agent does). Removing the
-# pidfile drops the node from node_indices; the caller (add/remove)
+# pidfile drops the node from node_indices; the caller (add/kill)
 # rebuilds /etc/hosts via sync_hosts so surviving nats-servers stop
 # routing to the dead peer. Called at the top of add_node and
-# remove_node so subsequent counts/index-picks see ground truth.
+# kill_node so subsequent counts/index-picks see ground truth.
 #
 # Why `sudo kill -0`: the agent runs under sudo, so its PID is owned by
 # root; an unprivileged `kill -0` from this script's user gets EPERM
@@ -261,33 +261,17 @@ load_vars() {
 start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
-
-  # Publish asty.test + n<i>.asty.test in /etc/hosts BEFORE the agents
-  # boot. The names exist for the SPA (RR) and the frontend balancer
-  # (per-node). Asty's NATS peer discovery does NOT use them — it uses
-  # A_NATS_SEED + cluster KV (see start_node below).
   mkdir -p "$DATA_BASE"
-  sync_hosts $(seq 1 "$nodes")
-
-  for ((i=1; i<=nodes; i++)); do
-    # For i>=2: before starting node i, tell node 1's agent "expect a
-    # route from 127.0.0.$i". Without this, node 1 (which bootstrapped
-    # standalone) has port 6222 closed and node i's nats-server can't
-    # join. We bypass SSH in dev — the CLI runs against the local NATS
-    # using the same creds the agent uses. In prod the same call goes
-    # over SSH from the deploying node's cloud-init.
-    if (( i >= 2 )); then
-      announce_peer_to_seed "$i"
-    fi
-    start_node "$i"
-    # Event-driven gate: wait until the just-started node appears in
-    # node 1's /nodes listing. That endpoint reads from KV, so a hit
-    # proves the new agent (a) joined NATS, (b) read the asty-cluster
-    # bucket (= meta-RAFT had it placed wide enough), and (c) wrote
-    # its first heartbeat. The next node won't begin until this is
-    # true, which is what kept an 8-node cold start in budget — pure
-    # `sleep N` would either stall fast nodes or fail slow ones.
-    wait_node_registered "$i"
+  # Bring nodes up ONE AT A TIME via add_node, which returns only after
+  # the cluster has fully normalized (stabilized=1) — so the next node
+  # never outruns NATS settling the previous replica change (piling them
+  # on left an 8-node cold start with leaderless streams). add_node picks
+  # the next free index: iteration 1 → node 1 (standalone bootstrap), the
+  # rest join node 1 as the seed. Same function as the live `add` — one
+  # path, no duplication.
+  local n
+  for ((n=1; n<=nodes; n++)); do
+    add_node
   done
 }
 
@@ -318,6 +302,28 @@ wait_node_registered() {
     sleep "$probe_interval"
   done
   warn "$id did not register within $((deadline - SECONDS + 60))s — continuing anyway"
+  return 1
+}
+
+# wait_cluster_stable blocks until the cluster reports it has fully
+# normalized — `asty_cluster_stabilized 1` on the metrics endpoint: every
+# KV stream at its target replica count AND current, no dead peers, leader
+# stable. This is the gate that makes a multi-node bring-up safe — the
+# NEXT node is not started until the cluster has fully absorbed the
+# previous one. Adding nodes faster than NATS settles each replica change
+# leaves stream RAFT groups leaderless (an 8-node cold start without this
+# wait got stuck at stabilized=0). Node 1's metrics endpoint is always up.
+wait_cluster_stable() {
+  local url="http://127.0.0.1:7060/metrics"
+  local deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if curl -fsS --max-time 2 "$url" 2>/dev/null | grep -qE '^asty_cluster_stabilized 1$'; then
+      info "  ✓ cluster normalized (stabilized=1)"
+      return 0
+    fi
+    sleep 1
+  done
+  warn "cluster did not reach stabilized=1 within 90s — continuing anyway"
   return 1
 }
 
@@ -431,19 +437,18 @@ start_node() {
   info "  logs: $server_log | $agent_log"
 }
 
-# add_node grows a running cluster by one. Picks the next free index,
-# brings up its loopback alias, publishes its A-records, then starts
-# the new node — which joins NATS through A_NATS_SEED=127.0.0.1 (node
-# 1). Existing agents notice the new node KV-side via WatchNodes and
-# SIGHUP their nats-server to add the new route. Steady-state is the
-# routes-list update + JetStream meta-leader rebalance (~5–10 s).
+# add_node brings up ONE node at the next free index and returns only
+# once the cluster has normalized with it. The single bring-up path,
+# shared by the N-node cold start (start_asty loops it) and the live
+# `add` subcommand — no duplicated logic. Index 1 bootstraps standalone;
+# every later index joins through A_NATS_SEED=127.0.0.1 (node 1), and
+# existing agents pick up the new peer KV-side (WatchNodes) and SIGHUP
+# their nats-server to add the route.
 add_node() {
-  sweep_orphan_nodes
-  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
-    die "no running cluster found (no ${PID_FILE_TMPL}-*). Start one with: $0 [N]"
-  fi
-
-  # Next free index = max existing + 1, from the pidfiles.
+  # Next free index = max existing + 1, from the pidfiles. On a clean
+  # start node_indices is empty → i=1 (standalone bootstrap); on a live
+  # cluster it's max+1 (joins the seed). One path for both the N-node
+  # cold start (start_asty loops this) and the live `add` — no dup.
   local max_i=0 idx
   for idx in $(node_indices); do
     [[ $idx -gt $max_i ]] && max_i=$idx
@@ -453,20 +458,26 @@ add_node() {
 
   log "adding node $i (id=dev-node-$i, ip=$addr)..."
 
-  # Publish the new A-records (existing nodes + i) before booting so
-  # the SPA/frontend can address it by name immediately.
+  # Publish A-records (existing + new) before booting so the SPA can
+  # address it by name immediately.
   sync_hosts $(node_indices) "$i"
-  # Announce the new IP to node 1 (the seed) so its nats-server adds
-  # the route — same path as start_asty's i>=2 branch.
-  announce_peer_to_seed "$i"
+  # Node 1 bootstraps standalone; every later node announces its IP to
+  # the seed (node 1) first so node 1's nats-server opens the route.
+  if (( i >= 2 )); then
+    announce_peer_to_seed "$i"
+  fi
   start_node "$i"
+  # Two gates, in order: the node registers in KV (joined + first
+  # heartbeat), THEN the whole cluster normalizes (replicas re-replicated
+  # and current, stabilized=1). Returning only after BOTH is what keeps a
+  # loop of add_node — or a live `add` — from outrunning NATS settling.
   wait_node_registered "$i"
+  wait_cluster_stable
 
-  info "node $i started. Existing agents will pick up the new peer via"
-  info "cluster KV (WatchNodes) and SIGHUP their nats-server."
+  info "node $i added; cluster normalized."
 }
 
-# remove_node shrinks a running cluster by tearing down one node and
+# kill_node shrinks a running cluster by tearing down one node and
 # dropping its A-records. Without args, removes the highest-numbered
 # node (symmetric with add_node). With an explicit index, removes that
 # one. Removing the last node prompts for an explicit 'yes' — the
@@ -476,7 +487,7 @@ add_node() {
 # entry from the asty-cluster KV. Surviving agents see the KV delete
 # through WatchNodes and SIGHUP their nats-server to drop the route
 # (cold restart only on the 2→1 step, where JS goes standalone).
-remove_node() {
+kill_node() {
   local target="${1:-}"
 
   sweep_orphan_nodes
@@ -494,7 +505,7 @@ remove_node() {
     done
   fi
   if ! [[ "$target" =~ ^[0-9]+$ ]] || [[ $target -lt 1 ]]; then
-    die "usage: $0 remove [N]  (N ≥ 1)"
+    die "usage: $0 kill [N]  (N ≥ 1)"
   fi
 
   local pidfile="${PID_FILE_TMPL}-$target"
@@ -649,7 +660,7 @@ stop_all() {
   log "stopping Asty..."
 
   # Asty processes by per-node PID files (sudo — agents run as root).
-  # 3s SIGTERM grace mirrors remove_node: agent runs deregister +
+  # 3s SIGTERM grace mirrors kill_node: agent runs deregister +
   # supervisor SIGTERM + nats-server JS flush in series.
   local pidfile pid
   for pidfile in "${PID_FILE_TMPL}-"*; do
@@ -704,17 +715,21 @@ fi
 
 if [[ "$CMD" == "add" ]]; then
   check_deps
+  sweep_orphan_nodes
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
+    die "no running cluster found (no ${PID_FILE_TMPL}-*). Start one with: $0 [N]"
+  fi
   add_node
   exit 0
 fi
 
-if [[ "$CMD" == "remove" ]]; then
-  remove_node "${2:-}"
+if [[ "$CMD" == "kill" ]]; then
+  kill_node "${2:-}"
   exit 0
 fi
 
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop|add|remove [N]]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|add|kill [N]]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"

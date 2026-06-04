@@ -65,6 +65,8 @@ func (s *Server) stopLeaderWork() {
 		s.leaderCancel = nil
 	}
 	s.controller = nil
+	// Nothing to reset: cluster-stabilized is derived on demand from NATS
+	// (clusterHealed), not a flag this process owns.
 }
 
 // ReconcileService enqueues svcName for re-reconciliation on the leader's

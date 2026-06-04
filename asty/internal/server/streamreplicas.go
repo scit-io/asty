@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"strings"
-	"time"
 
 	"asty/asty/internal/core/types"
 
@@ -12,21 +11,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// streamReplicasRetryDelay — how long to wait before re-attempting an
-// upgrade that could not place its replicas yet (cluster still settling
-// right after a join, JS err 10074). Upgrades are otherwise driven by
-// node-join events; this is the one failure mode with no event to wait
-// on, so it gets a bounded retry.
-const streamReplicasRetryDelay = 10 * time.Second
-
-// streamReplicasUpdateTimeout — per-UpdateStream context budget. Sized
-// so a stale RAFT election doesn't pin the loop indefinitely.
-const streamReplicasUpdateTimeout = 10 * time.Second
-
 // systemStreams enumerates the KV buckets Asty itself provisions. They
-// always want as many replicas as the cluster can place, capped at the
-// maxReplicas ceiling enforced by autoReplicas. Spelled out here so
-// targetReplicasFor doesn't have to inspect bucket-config metadata.
+// want as many replicas as the cluster can place, capped at
+// cluster.system_kv_replicas (wider than app buckets — see ClusterConfig
+// and systemReplicas). Spelled out here so targetReplicasFor doesn't
+// have to inspect bucket-config metadata.
 var systemStreams = map[string]struct{}{
 	"KV_asty-cluster": {},
 	"KV_asty-leader":  {},
@@ -36,53 +25,42 @@ var systemStreams = map[string]struct{}{
 // backing stream of a bucket: bucket "foo" lives in stream "KV_foo".
 const kvStreamPrefix = "KV_"
 
-// watchStreamReplicas runs on the leader and raises stream replica counts
-// as the cluster grows. It only ever raises — never lowers — so a node
-// briefly unreachable doesn't shrink durable buckets. A node joining is
-// the only thing that lets a stream place more replicas, so the work is
-// driven by node events rather than a blind periodic scan. The lone
-// exception is a just-grown cluster that hasn't settled enough to place
-// the replicas yet (JS err 10074): there is no event for "placement now
-// possible", so reconcile reports that and we re-arm a bounded retry.
+// watchStreamReplicas runs on the leader and keeps every Asty-owned stream's
+// replica count matched to the NATS cluster size. Cluster size IS NATS
+// membership. Event-driven, no server-side timer or polling — two sources plus
+// one initial pass on becoming leader:
+//   - nodeChanged: the node KV watch fires on every node event, heartbeats
+//     included (~5s). This recurring re-evaluation is what LOWERS replicas as
+//     the cluster shrinks: the dead-peer reaper drops a departed node from the
+//     JetStream meta, clusterSize falls, and the next heartbeat-triggered pass
+//     picks up the smaller size. It also re-runs the reaper itself.
+//   - gossipChanged: NATS's discovered-servers callback, the earliest signal
+//     of a join so the bucket widens before the joiner writes to KV.
+//
+// clusterSize (the JetStream RAFT meta group — see kv.go) is the single size
+// source for both directions, so the pass is idempotent and cannot flap.
 func (s *Server) watchStreamReplicas(ctx context.Context) {
 	nodeChanged := make(chan struct{}, 1)
 	go s.watchNodesForReplicas(ctx, nodeChanged)
-
-	// A nil channel blocks forever in select, so retryC simply never
-	// fires until a reconcile pass asks for a retry.
-	var retryC <-chan time.Time
-	arm := func(incomplete bool) {
-		if incomplete {
-			retryC = time.After(streamReplicasRetryDelay)
-		} else {
-			retryC = nil
-		}
-	}
-
-	// Initial pass — existing streams may already be under-replicated.
-	arm(s.reconcileStreamReplicas(ctx))
+	s.reconcileCluster(ctx) // initial pass
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-nodeChanged:
-			arm(s.reconcileStreamReplicas(ctx))
+			s.reconcileCluster(ctx)
 		case <-s.gossipChanged:
-			// NATS gossip noticed a peer come or go before that peer
-			// could write to KV. Reconcile immediately so the joiner
-			// finds a bucket placed wide enough to include its node.
-			arm(s.reconcileStreamReplicas(ctx))
-		case <-retryC:
-			arm(s.reconcileStreamReplicas(ctx))
+			s.reconcileCluster(ctx)
 		}
 	}
 }
 
-// watchNodesForReplicas signals nodeChanged on every cluster-membership
-// change. Over-signalling is harmless — reconcileStreamReplicas only ever
-// raises counts and no-ops when nothing is below target — so this fires on
-// any node event rather than decoding ready-transitions. Mirrors the
-// reconciler's node watcher: re-establish the watch if it errors.
+// watchNodesForReplicas signals nodeChanged on every node KV event (heartbeats
+// included), so watchStreamReplicas re-runs ~every heartbeat. Over-signalling
+// is harmless — reconcileStreamReplicas is idempotent. Re-establishes the
+// watch if it closes during churn (a clean channel close, which watchKV
+// reports as a nil error); only ctx-cancel exits. bucket.Watch blocks while
+// NATS is unreachable, so the immediate re-open cannot spin.
 func (s *Server) watchNodesForReplicas(ctx context.Context, nodeChanged chan<- struct{}) {
 	signal := func() {
 		select {
@@ -92,59 +70,83 @@ func (s *Server) watchNodesForReplicas(ctx context.Context, nodeChanged chan<- s
 	}
 	for ctx.Err() == nil {
 		err := s.clusterState.WatchNodes(ctx, func(*types.NodeInfo) { signal() })
-		if ctx.Err() != nil || err == nil {
+		if ctx.Err() != nil {
 			return
 		}
-		log.Warn().Err(err).Msg("stream-replicas: node watcher errored, retrying")
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(streamReplicasRetryDelay):
+		if err != nil {
+			log.Warn().Err(err).Msg("stream-replicas: node watcher errored, re-establishing")
 		}
 	}
 }
 
-// reconcileStreamReplicas performs one pass: list streams, compute the
-// target replica count for each, and UpdateStream where the current value
-// is below it. Returns true ("incomplete") when at least one upgrade could
-// not be applied, so the caller can schedule a retry; a single bad stream
-// never stalls the rest.
-func (s *Server) reconcileStreamReplicas(ctx context.Context) bool {
-	js, err := jetstream.New(s.nc)
-	if err != nil {
-		log.Warn().Err(err).Msg("stream-replicas: jetstream init failed")
-		return true
+// reconcileCluster is the leader-only cluster-placement pass: bring stream
+// replicas to the NATS cluster size and evict dead meta peers. Idempotent and
+// safe to call from any trigger; the IsLeader guard makes a stale call (a
+// former leader, or the controller's hook firing through a leadership flip) a
+// no-op, so replica edits and reaping stay the leader's job alone.
+func (s *Server) reconcileCluster(ctx context.Context) {
+	if !s.leaderElection.IsLeader() {
+		return
 	}
+	// One clusterSize read per pass, shared by both halves — each call is a JSZ
+	// round-trip, and reading it twice could also let them act on different
+	// sizes mid-pass. size <= 1 means standalone (the natssolo survivor): no
+	// meta cluster, so skip the reaper — its JSZ meta-leader query would
+	// otherwise spin against a meta that has no leader.
+	size := s.clusterSize()
+	s.reconcileStreamReplicas(ctx, size)
+	if size > 1 {
+		s.reapDeadPeers()
+	}
+}
 
-	incomplete := false
+// reconcileStreamReplicas performs one MUTATION pass: bring every Asty-owned
+// stream to the replica count the NATS cluster size warrants — raising as
+// peers join, lowering as they leave so a shrunk cluster still reaches quorum.
+// clusterSize (the JetStream meta group — see kv.go) is the SINGLE source for
+// both directions, which makes the pass IDEMPOTENT — it converges to one
+// target and never oscillates, however often it is triggered. A change
+// JetStream can't apply yet is left for the next node-watch or gossip event to
+// re-run; no retry timer. Whether the cluster is fully healed afterwards is a
+// separate, read-only question answered on demand by clusterHealed
+// (streamhealth.go).
+func (s *Server) reconcileStreamReplicas(ctx context.Context, size int) {
+	js := s.js
+
 	infos := js.ListStreams(ctx)
 	for info := range infos.Info() {
 		if info == nil {
 			continue
 		}
-		target := s.targetReplicasFor(info.Config.Name)
-		if target == 0 || target <= info.Config.Replicas {
+		cur := info.Config.Replicas
+		target := s.targetReplicasFor(info.Config.Name, size)
+		if target == 0 {
 			continue
 		}
-		if !s.upgradeStreamReplicas(js, info, target) {
-			incomplete = true
+		if target != cur {
+			s.setStreamReplicas(ctx, js, info, target)
+			continue
 		}
+		// Count already matches the cluster size; make sure the PLACEMENT is
+		// healthy too — evict any dead replica so JetStream re-places it on a
+		// live node (streamplacement.go). Without this, a node death that
+		// doesn't change the replica count leaves the stream at online<R
+		// forever, so clusterHealed never reports healed.
+		s.repairStreamPlacement(info)
 	}
 	if err := infos.Err(); err != nil {
 		log.Warn().Err(err).Msg("stream-replicas: listing streams failed")
-		incomplete = true
 	}
-	return incomplete
 }
 
-// targetReplicasFor returns the replica count this stream should run
-// with given the current cluster size and what was declared. Zero
-// means "leave it alone" — used for streams Asty does not own (so a
-// human-managed migration leftover isn't touched here).
-func (s *Server) targetReplicasFor(streamName string) int {
-	cluster := s.autoReplicas()
+// targetReplicasFor returns the replica count this stream should run with
+// at the given cluster size, capped by what was declared. Zero means
+// "leave it alone" — streams Asty does not own (a human-managed migration
+// leftover isn't touched here).
+func (s *Server) targetReplicasFor(streamName string, clusterSize int) int {
 	if _, ok := systemStreams[streamName]; ok {
-		return cluster
+		// Asty's own control-plane KV — replicated wider than app data.
+		return capReplicas(clusterSize, s.cfg.Cluster.SystemKVReplicas)
 	}
 	bucket := strings.TrimPrefix(streamName, kvStreamPrefix)
 	if bucket == streamName {
@@ -155,39 +157,39 @@ func (s *Server) targetReplicasFor(streamName string) int {
 			if kv.Bucket != bucket {
 				continue
 			}
-			if kv.Replicas <= 0 {
-				return cluster
+			ceiling := s.cfg.Cluster.AppKVReplicas
+			if kv.Replicas > 0 && kv.Replicas < ceiling {
+				ceiling = kv.Replicas
 			}
-			if kv.Replicas < cluster {
-				return kv.Replicas
-			}
-			return cluster
+			return capReplicas(clusterSize, ceiling)
 		}
 	}
 	return 0
 }
 
-// upgradeStreamReplicas issues a single UpdateStream and reports whether
-// it landed. A JetStream error (10074 in particular) just means the
-// cluster still can't place the requested count; returning false makes
-// the caller schedule a retry. Logs at Info on success so growth is
-// visible.
-func (s *Server) upgradeStreamReplicas(js jetstream.JetStream, info *jetstream.StreamInfo, target int) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), streamReplicasUpdateTimeout)
-	defer cancel()
-
+// setStreamReplicas issues a single UpdateStream to the target replica
+// count (up or down) and reports whether it landed. A JetStream error
+// (10074 in particular) just means the cluster can't place the count right
+// now; the next node/gossip event re-runs the idempotent reconcile. Logs at
+// Info on success so the change is visible. Bounded by the caller's ctx
+// (server/leadership lifecycle) — no per-call timeout.
+func (s *Server) setStreamReplicas(ctx context.Context, js jetstream.JetStream, info *jetstream.StreamInfo, target int) bool {
 	cfg := info.Config
 	from := cfg.Replicas
 	cfg.Replicas = target
+	dir := "raised"
+	if target < from {
+		dir = "lowered"
+	}
 	if _, err := js.UpdateStream(ctx, cfg); err != nil {
 		var jsErr jetstream.JetStreamError
 		level := log.Warn()
 		if errors.As(err, &jsErr) && jsErr.APIError() != nil {
 			level = level.Uint16("code", uint16(jsErr.APIError().ErrorCode))
 		}
-		level.Err(err).Str("stream", cfg.Name).Int("from", from).Int("target", target).Msg("stream-replicas: upgrade failed")
+		level.Err(err).Str("stream", cfg.Name).Int("from", from).Int("target", target).Msg("stream-replicas: " + dir + " failed")
 		return false
 	}
-	log.Info().Str("stream", cfg.Name).Int("from", from).Int("to", target).Msg("stream-replicas: upgraded")
+	log.Info().Str("stream", cfg.Name).Int("from", from).Int("to", target).Msg("stream-replicas: " + dir)
 	return true
 }

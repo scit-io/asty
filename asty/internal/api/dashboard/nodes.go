@@ -150,6 +150,16 @@ func (api *API) handleNodeKill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refuse to remove a node until the cluster has fully healed from the
+	// previous membership change. Killing during re-replication/migration
+	// is what turns a survivable single loss into a quorum loss (two
+	// replica holders gone before the first migrated). The dashboard also
+	// disables the button on this flag, but the gate is authoritative.
+	if !api.ctx.ClusterStabilized() {
+		api.writeError(w, http.StatusConflict, "cluster is still stabilizing; kill refused until replication settles", nil)
+		return
+	}
+
 	// No GetNode pre-check: the leader's bucket view may transiently
 	// lag the agent's (cluster catchup, replica upgrades), and the
 	// downstream steps are all idempotent — ShutdownAgent is a NATS

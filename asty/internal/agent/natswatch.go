@@ -36,6 +36,10 @@ const natsRestartGrace = 10 * time.Second
 //     broker is meaningless, and we already issue restarts ourselves
 //     on config changes.
 func (a *Agent) superviseNATS(ctx context.Context) {
+	// Tell stopNATSSupervisor the child is fully down. Only the natsStopCh
+	// path returns here cleanly; the Fatal paths os.Exit, so the process is
+	// already gone and nobody is left waiting.
+	defer close(a.natsSupervisorDone)
 	for {
 		cmd := a.natsServerCmd
 		if cmd == nil || cmd.Process == nil {
@@ -61,6 +65,15 @@ func (a *Agent) superviseNATS(ctx context.Context) {
 				a.stopNATSChild(cmd, exitCh)
 				if err := a.bootstrapNATS(ctx); err != nil {
 					log.Fatal().Err(err).Msg("nats-server restart: bootstrap failed")
+					return
+				}
+				break wait
+			case <-a.natsSoloCh:
+				// 2-node cluster lost its peer: rebuild standalone on the
+				// same store with streams forced to R=1 (see natssolo.go).
+				a.stopNATSChild(cmd, exitCh)
+				if err := a.performSoloTransition(ctx); err != nil {
+					log.Fatal().Err(err).Msg("nats-server solo transition failed")
 					return
 				}
 				break wait

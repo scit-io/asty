@@ -138,6 +138,7 @@ export const en = {
   // Kill controls
   'kill.button': 'Kill',
   'kill.tooltip': 'Abrupt decommission — use Drain for routine operations',
+  'kill.unstable': 'Cluster is still stabilizing — wait for replication to settle before removing a node',
   'kill.dialog.title': 'Kill node {id}?',
   'kill.dialog.warning_main':
     "The node is removed from the cluster. To bring it back online you'll have to reinstall the asty agent on the host.",
@@ -459,6 +460,7 @@ export const ru: Messages = {
 
   'kill.button': 'Удалить',
   'kill.tooltip': 'Резкое удаление из кластера — для штатных задач используйте Вывод',
+  'kill.unstable': 'Кластер еще стабилизируется — дождитесь завершения репликации перед удалением узла',
   'kill.dialog.title': 'Удалить узел {id}?',
   'kill.dialog.warning_main':
     'Узел будет удален из кластера. Чтобы вернуть его в строй, потребуется заново установить agent на хост.',

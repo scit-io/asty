@@ -69,6 +69,10 @@ export default function NodeDetail() {
   const updateNodeStatus = useClusterStore((s) => s.updateNodeStatus)
   const cached = useClusterStore((s) => nodeId ? s.nodeCache[nodeId] : undefined)
   const isLastNode = useClusterStore((s) => s.nodes.length <= 1)
+  // Kill is refused by the API until the cluster has fully healed from
+  // the previous membership change; disable the button to match (the
+  // backend 409 stays the authoritative gate).
+  const clusterStabilized = useClusterStore((s) => s.clusterStatus?.cluster.stabilized ?? false)
   const node = cached?.node || null
   const cpuMetrics = cached?.cpuMetrics || []
   const memoryMetrics = cached?.memoryMetrics || []
@@ -205,7 +209,8 @@ export default function NodeDetail() {
                   variant="destructive"
                   size="sm"
                   onClick={() => setShowKillDialog(true)}
-                  title={t('kill.tooltip')}
+                  disabled={!clusterStabilized}
+                  title={clusterStabilized ? t('kill.tooltip') : t('kill.unstable')}
                 >
                   <Skull />
                   {t('kill.button')}

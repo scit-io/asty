@@ -56,8 +56,7 @@ type Agent struct {
 	// CmdAddPeer + peer-announce broadcast at runtime (incoming joiners
 	// before they reach KV), and WatchNodes once the agent connects to
 	// the cluster KV (steady state). Used by the supervisor to render
-	// nats.conf and by survivingClusterPeers for graceful-decommission
-	// decisions. See agent/natspeers.go for the merge semantics.
+	// nats.conf. See agent/natspeers.go for the merge semantics.
 	peers *natsPeers
 
 	// natsRestartCh tells the supervisor to rebuild nats.conf and
@@ -76,6 +75,19 @@ type Agent struct {
 	// error return path doesn't double-close.
 	natsStopCh   chan struct{}
 	natsStopOnce sync.Once
+
+	// natsSupervisorDone is closed by superviseNATS once it has fully
+	// stopped the nats-server child and returned. stopNATSSupervisor blocks
+	// on it so Start cannot exit — killing the supervisor goroutine
+	// mid-SIGTERM — and orphan a still-running nats-server (observed: a
+	// dashboard kill left the child broker alive, so the cluster never
+	// actually shrank at the NATS level).
+	natsSupervisorDone chan struct{}
+
+	// natsSoloCh tells the NATS supervisor to collapse this node to a
+	// standalone single node (see natssolo.go), signalled when a 2-node
+	// cluster loses quorum.
+	natsSoloCh chan struct{}
 
 	workDir string
 
@@ -132,6 +144,8 @@ func New(cfg *config.Config) (*Agent, error) {
 		failed:             make(chan string, failedServicesBufferSize),
 		natsRestartCh:      make(chan struct{}, 1),
 		natsStopCh:         make(chan struct{}),
+		natsSupervisorDone: make(chan struct{}),
+		natsSoloCh:         make(chan struct{}, 1),
 		peers:              newNATSPeers(),
 	}
 	// Seed the bootstrap-peer set from A_NATS_SEED so the very first
@@ -146,10 +160,16 @@ func New(cfg *config.Config) (*Agent, error) {
 }
 
 // stopNATSSupervisor signals superviseNATS to terminate the nats-server
-// child and exit. Idempotent — Start may call it from the orderly
-// shutdown path, but a deferred call from an error return is safe too.
+// child and then BLOCKS until it has done so (natsSupervisorDone). The wait
+// is what prevents an orphaned broker: without it Start would return and the
+// process would exit, killing the supervisor goroutine before it could
+// SIGTERM the child — so the nats-server kept running and the node never
+// actually left the NATS cluster. Idempotent: the close is sync.Once-guarded
+// and a second wait on the already-closed done channel returns immediately,
+// so both the orderly shutdown and the deferred early-error path are safe.
 func (a *Agent) stopNATSSupervisor() {
 	a.natsStopOnce.Do(func() { close(a.natsStopCh) })
+	<-a.natsSupervisorDone
 }
 
 // exportConfigEnv ensures the agent's resolved NATS and logging settings

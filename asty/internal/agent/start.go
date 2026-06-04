@@ -74,6 +74,10 @@ func (a *Agent) Start(ctx context.Context) error {
 	// CmdAddPeer); the watcher now keeps a.peers in sync with the
 	// authoritative node.<id> records in KV.
 	go a.watchNATSPeers(ctx)
+	// Collapse to a single standalone node if a 2-node cluster loses its
+	// peer (event-driven on the JetStream quorum-lost advisory; see
+	// natssolo.go).
+	go a.watchQuorumLost(ctx)
 	defer a.nc.Close()
 	if a.ncSys != nil {
 		defer a.ncSys.Close()
@@ -116,31 +120,33 @@ func (a *Agent) Start(ctx context.Context) error {
 		Msg("agent ready")
 
 	<-ctx.Done()
-	// Pre-departure JS housekeeping (see natsleave.go for the why of
-	// each step). Order matters: shrink first if going to 1 survivor,
-	// then decommission — SERVER.REMOVE disables our JS, so any
-	// stream update has to land before it. survivingClusterPeers reads
-	// from KV, not DNS — see its doc for why.
-	if surviving := a.survivingClusterPeers(); surviving >= 1 {
-		if surviving == 1 {
-			a.shrinkStreamsToSingle()
-		}
-		a.decommissionSelf()
-	}
-	// Best-effort deregister: drop our node entry from the cluster KV
-	// so the leader's snapshot (and the asty_node_* metrics it feeds)
-	// stops reporting us on the next watcher tick. The supervisor is
-	// still holding nats-server up (it waits on natsStopCh, not
-	// ctx.Done()), so the KV.Delete round-trip has a live broker on the
-	// same loopback. Only after this returns do we tell the supervisor
-	// to tear NATS down.
+	// A departing node behaves like a power-off — "unplugged from the
+	// wall". It does NOT touch the NATS meta group or its streams. A
+	// dying node decommissioning itself (the old $JS.API.SERVER.REMOVE
+	// path) stalled the whole cluster's KV for ~30s; instead the
+	// surviving leader reaps the dead peer (server/deadpeers.go) and
+	// lowers stream replicas to fit the smaller cluster. RAFT carries a
+	// 3+ node cluster through the loss in seconds; the final 2→1 step is
+	// handled by the survivor itself (agent/natssolo.go: force streams to
+	// R=1 on disk, restart standalone on the same store). See REPLICAS_KV.md.
+	//
+	// We still deregister from cluster KV: it is the event that tells the
+	// survivor a peer left (watchNATSPeers), and it drops us from the
+	// leader's snapshot without waiting out heartbeat staleness. The
+	// supervisor keeps nats-server up (it waits on natsStopCh, not
+	// ctx.Done()), so this KV.Delete has a live local broker; only after
+	// it returns do we tear NATS down.
 	if a.clusterState != nil {
 		if err := a.clusterState.RemoveNode(a.nodeID); err != nil {
-			log.Warn().Err(err).Msg("graceful shutdown: failed to deregister node from cluster state")
+			log.Warn().Err(err).Msg("shutdown: failed to deregister node from cluster state")
 		}
 	}
-	a.stopNATSSupervisor()
+	// Stop spawned services first (while the local broker is still up so
+	// they can clean up), then tear NATS down — stopNATSSupervisor blocks
+	// until the nats-server child has actually exited, so the process never
+	// returns out from under a still-running broker.
 	a.stopAllProcesses()
+	a.stopNATSSupervisor()
 	return nil
 }
 

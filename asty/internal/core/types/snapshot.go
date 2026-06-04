@@ -15,12 +15,12 @@ type ClusterSnapshot struct {
 }
 
 type ClusterStatusPayload struct {
-	Leader       string `json:"leader"`
-	LeaderIP     string `json:"leader_ip"`
+	Leader   string `json:"leader"`
+	LeaderIP string `json:"leader_ip"`
 	// LeaderDC is the leader's datacenter (NodeInfo.Datacenter on the
 	// leader). Surfaced so the cluster page can show the leader's
 	// location without a second lookup against snap.Nodes.
-	LeaderDC     string `json:"leader_dc,omitempty"`
+	LeaderDC string `json:"leader_dc,omitempty"`
 	// LeaderHost is the leader's public DNS name (NodeInfo.Host on the
 	// leader). Empty when the leader hasn't been assigned a host name.
 	// Surfaced alongside LeaderIP so frontends that address nodes by
@@ -29,6 +29,12 @@ type ClusterStatusPayload struct {
 	IsLeader     bool   `json:"is_leader"`
 	NodesTotal   int    `json:"nodes_total"`
 	NodesHealthy int    `json:"nodes_healthy"`
+	// Stabilized is true when the cluster has fully healed from the last
+	// membership change (all streams at target replicas & current, no
+	// dead peer pending). The dashboard disables the per-node Kill button
+	// while it is false; the kill API also refuses (the authoritative
+	// gate). Maintained by the leader and surfaced to every node via KV.
+	Stabilized bool `json:"stabilized"`
 	// ServedBy is the id of the node that produced this snapshot — the
 	// one the dashboard is currently talking to. Lets the UI show which
 	// node answered even behind a load balancer, where the browser

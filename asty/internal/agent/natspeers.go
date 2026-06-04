@@ -66,15 +66,24 @@ func (p *natsPeers) snapshot() []string {
 	return out
 }
 
-// countByNode returns the number of peers known via cluster-KV
-// WatchNodes — i.e. nodes that have fully joined and registered their
-// NodeInfo. Excludes bootstrap entries on purpose: callers
-// (survivingClusterPeers) want a count of REAL surviving cluster
-// members, not pending joiners.
+// countByNode returns the number of OTHER cluster nodes known via
+// cluster-KV WatchNodes. The quorum-lost collapse gate uses it to tell a
+// 2-node cluster (≤1 other node) from a larger one — never collapse a
+// partitioned minority at N≥3.
 func (p *natsPeers) countByNode() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return len(p.byNode)
+}
+
+// reset clears every known peer so the next render produces a standalone
+// (no cluster{} block) conf. Used by the solo transition when this node
+// becomes the last one.
+func (p *natsPeers) reset() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.byNode = make(map[string]string)
+	p.bootstrap = make(map[string]struct{})
 }
 
 // upsert records nodeID→ip and returns whether the IP set changed.
@@ -93,10 +102,19 @@ func (p *natsPeers) upsert(nodeID, ip string) bool {
 func (p *natsPeers) remove(nodeID string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if _, ok := p.byNode[nodeID]; !ok {
+	ip, ok := p.byNode[nodeID]
+	if !ok {
 		return false
 	}
 	delete(p.byNode, nodeID)
+	// Also drop the IP from the bootstrap set. A departed node's IP must
+	// stop being rendered into cluster.routes — otherwise a seed node
+	// that leaves (its IP sits in every other node's bootstrap set via
+	// A_NATS_SEED) gets dialed forever: "connect to route ...:6222:
+	// connection refused" on a loop, the exact noise a killed seed left
+	// across the cluster. Safe because once KV knows every peer the
+	// bootstrap hint is redundant; dropping a dead one loses nothing.
+	delete(p.bootstrap, ip)
 	return true
 }
 

@@ -7,8 +7,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Conventions for the asty package live in `.claude/coding-rules/`. Read the topic file that matches the work at hand before editing Go code under the asty package root:
 
 - `.claude/coding-rules/README.md` — index of all rules.
+- `.claude/coding-rules/refactoring.md` — refactor checklist: trust execution logic (not comments/names/docs), re-verify NATS each time, make it cheaper, cut overhead/говнокод, stop+classify every timer.
 - `.claude/coding-rules/code-idioms.md` — stdlib over handwritten, named constants, typed enums.
-- `.claude/coding-rules/concurrency.md` — event-driven defaults, acceptable polling list.
+- `.claude/coding-rules/concurrency.md` — event-driven defaults, acceptable polling list, every-timer-stop-and-classify.
 - `.claude/coding-rules/testing.md` — race tests, `testutil/` fixtures.
 - `.claude/coding-rules/clarity.md` — write so non-developers can follow.
 
@@ -150,8 +151,11 @@ Each `asty -mode agent` at startup:
    on `$PATH` — install via `make nats-server`).
 4. Probes TCP readiness, then continues with the rest of bootstrap.
 5. `agent/natswatch.go` runs `superviseNATS` for the rest of the
-   process lifetime: graceful stop on ctx-cancel, restart on peer-set
-   change (see below), Fatal on unexpected exit. Three independent
+   process lifetime: graceful stop on `natsStopCh` (closed by
+   `stopNATSSupervisor` *after* the agent's KV deregister, so the broker
+   outlives the deregister; Start then blocks until the child is actually
+   down, so it can't exit and orphan a live nats-server), restart on
+   peer-set change (see below), Fatal on unexpected exit. Three independent
    producers feed `natsRestartCh`: the KV-driven `watchNATSPeers`
    goroutine (steady state), the `CmdAddPeer` handler (incoming SSH'd
    announce), and the `peer-announce` subscriber (broadcast from
@@ -165,10 +169,15 @@ Each `asty -mode agent` at startup:
    The hot-reload renderer pins `cluster{}` on (`KeepClusterBlock=true`
    in `natsconf.Render`), even when the peer list became empty. NATS
    rejects an empty-routes `cluster{}` on cold start but accepts it on
-   SIGHUP, so a shrinking cluster stays clustered all the way down to
-   one node. The flip to standalone is what would otherwise refuse to
-   load previously-replicated streams ("replicas > 1 not supported in
-   non-clustered mode", err_code=10074).
+   SIGHUP, so the SIGHUP keeps the shrinking process clustered rather
+   than refusing to load previously-replicated streams ("replicas > 1
+   not supported in non-clustered mode", err_code=10074). This keeps
+   the cluster healthy down to **2 nodes** (replicas lower toward the
+   JetStream meta cluster size, quorum stays reachable). The **last node (N→1)** is
+   handled by `agent/natssolo.go`: on the JetStream quorum-lost advisory
+   the lone survivor rewrites its on-disk streams to R=1 and restarts
+   nats-server standalone on the same store, so KV keeps serving. See
+   "Node death = unplug".
 
    A cold restart (SIGTERM → re-`bootstrapNATS`) is only triggered when
    the existing `nats.conf` has no `cluster{}` block and a peer just
@@ -259,13 +268,18 @@ Render-time asymmetry: cold bootstrap with an empty peer list (i.e.
 single-node startup with no seed) omits the `cluster{}` block and NATS
 runs in standalone JetStream mode. Hot reload of an already-clustered
 process keeps the block on (see `KeepClusterBlock` in
-`core/natsconf/render.go`), so a shrink to 1 node does NOT flip back
-to standalone. KV buckets land with `replicas=1` initially; when peers
-appear and the broker restarts in clustered mode,
-`server/streamreplicas.go` (leader-only) upgrades existing streams via
-`UpdateStream`. The pair forms a symmetric loop: `server/kv.go:ensureKVBucket`
-degrades on create when the cluster can't place the requested replicas
-(10005 or 10074), and `watchStreamReplicas` raises them back up later.
+`core/natsconf/render.go`), so a shrinking cluster stays clustered
+down toward one node rather than flipping to standalone (which would
+refuse R>1 streams, 10074). KV buckets land with
+`replicas=1` initially; `server/streamreplicas.go` (leader-only) then
+RAISES replicas as the cluster grows and LOWERS them toward the
+JetStream meta cluster size as it shrinks, so quorum stays reachable at every
+size ≥2. (A lone clustered node can't reach quorum for its R>1 streams, so
+the N→1 survivor rewrites them to R=1 on disk and goes standalone — see
+"Node death = unplug".)
+`server/kv.go:ensureKVBucket` degrades on create when the cluster can't
+place the requested replicas (10005 or 10074), and `watchStreamReplicas`
+raises them back up later.
 
 #### Node identity in KV
 
@@ -276,36 +290,61 @@ on every heartbeat. The dashboard snapshot and external frontends use
 this name to address a specific node (e.g. for sticky balancing).
 Asty itself never resolves it — discovery is IP-based via the KV.
 
-#### Graceful node decommission
+#### Node death = unplug
 
-When the agent receives SIGTERM and its departure leaves the cluster
-non-empty, `agent/natsleave.go` runs before `stopNATSSupervisor`:
+A node leaving — SIGTERM, dashboard kill, or a crash — is treated as
+an unplug, never a graceful JS hand-off. The departing agent does NOT
+run any decommission flow (there is no `natsleave.go`): on ctx-cancel
+it only `RemoveNode`s its own `node.<id>` from cluster KV, then stops
+its processes and `nats-server`. That single KV delete is the event
+every survivor reacts to. An earlier graceful path (`decommissionSelf`
++ `shrinkStreamsToSingle`) was removed because the leaver blocking on
+`$JS.API.SERVER.REMOVE` and per-stream stepdowns caused a multi-second
+cluster stall on every exit — the exact failure this design exists to
+avoid.
 
-- **`decommissionSelf`** publishes on `$JS.API.SERVER.REMOVE`
-  (SYS account) and awaits the `$JS.EVENT.ADVISORY.SERVER.REMOVED`
-  advisory. One meta-RAFT `EntryRemovePeer` proposal both shrinks the
-  meta-cluster config AND remaps every stream we belong to. Skipping
-  it would leave dead peers in the meta config, the quorum target
-  unreachable for any later proposal, and the next dying node's
-  shutdown work hung.
-- When `surviving==1` (the 2→1 step), `shrinkStreamsToSingle` runs
-  FIRST: for every stream with `Replicas>1` it transfers leadership
-  away from this node (`STREAM.LEADER.STEPDOWN` + the
-  `LEADER_ELECTED` advisory) and then `UpdateStream(Replicas=1)`.
-  The order matters — `SERVER.REMOVE` disables our JS, so any stream
-  update has to land before it.
-- The `surviving` count comes from `survivingClusterPeers()`
-  (`agent/natsleave.go`), which reads live `node.<id>` entries from
-  cluster KV minus self. KV is the orchestrator's authoritative
-  membership view, kept current by every agent's `RemoveNode` on
-  graceful exit. Falls back to the in-memory peer set (last successful
-  WatchNodes replay) only when ListNodes itself fails — strictly
-  better than 0, which would skip both shrink and decommission.
+Recovery is the survivors' job, all event-driven:
+
+- **Route drop.** Surviving agents see the `node.<id>` KV delete via
+  `WatchNodes` and SIGHUP their `nats-server` to drop the route, with
+  the `cluster{}` block pinned (`KeepClusterBlock`) so they stay
+  clustered as long as a peer remains.
+- **Meta + stream cleanup (leader-only).** The leader's
+  `watchStreamReplicas` (`server/streamreplicas.go`) runs
+  `reapDeadPeers` (`server/deadpeers.go`): it asks the JS meta leader
+  over JSZ which peers are offline, then `removeNATSPeer` issues
+  `$JS.API.SERVER.REMOVE` for each from the *survivor* side. The same
+  reconcile pass LOWERS stream replicas toward the JetStream meta cluster
+  size, so a shrunk cluster doesn't keep wanting replicas it can no
+  longer place. (JSZ is used instead of KV here on purpose —
+  reading dead-peer state from KV deadlocks when the bucket itself is
+  under-quorum during the shrink.)
+The cluster recovers cleanly down to **2 nodes** this way. The **last
+node (N→1)** is handled by `agent/natssolo.go::watchQuorumLost`: NATS
+pushes `$JS.EVENT.ADVISORY.STREAM.QUORUM_LOST.<stream>` a few seconds
+after a peer dies and a stream loses quorum (event-driven, no poll).
+When the survivor was part of a 2-node cluster (`countByNode ≤ 1` and
+still clustered), the supervisor runs `performSoloTransition`: rewrite
+every on-disk stream's `num_replicas` to 1 + recompute its `meta.sum`
+(highwayhash keyed by `sha256(streamName)`), then restart nats-server
+standalone on the SAME store — the streams load at R=1 and KV keeps
+serving. The survivor reuses its own disk; nothing is copied.
+
+**Accepted limitation — 2-node split-brain.** On a true network
+partition both nodes lose quorum and both can collapse, diverging; at
+2 nodes death and partition are indistinguishable. This is a deliberate
+trade-off for the 2-node case — real safety needs a third node or an
+external arbiter. The collapse is gated to a genuine 2→1 (`countByNode
+≤ 1`): at N≥3 a QUORUM_LOST advisory means a partitioned minority that
+RAFT correctly stalls while the majority keeps serving, so it is
+ignored. (An in-RAM per-node KV mirror was tried first and rejected:
+heavy on every node, and it stalled at N = SystemKVReplicas.)
 
 Permissions: the `asty-observer` SYS user is granted publish on
 `$JS.API.SERVER.REMOVE` and subscribe on
 `$JS.EVENT.ADVISORY.SERVER.REMOVED` in both `deploy/dev/config.asty`
-and `deploy/prod/config.asty`.
+and `deploy/prod/config.asty` — now exercised by the surviving leader's
+`reapDeadPeers`, not by the leaver.
 
 For offline inspection of what would be written:
 `asty -mode nats-conf -config <path> -peers <ip1,ip2,...>` prints the
@@ -483,7 +522,7 @@ routes) coordinates a node drain via the small `DrainDeps` interface
 
 ### Kill (abrupt decommission)
 
-The dashboard equivalent of `deploy/dev/start.sh remove` — for nodes
+The dashboard equivalent of `deploy/dev/start.sh kill` — for nodes
 that are unresponsive, or when the operator deliberately wants to skip
 graceful migration. Two-step UI confirmation (warning + typed-name
 input), then `POST /dashboard/v1/nodes/{id}/kill` with body
@@ -493,10 +532,14 @@ Server-side flow (`api/dashboard/nodes.go:handleNodeKill`):
 
 1. **CmdShutdown over NATS** (`asty.v1.agent.<nodeID>.cmd.shutdown`).
    The agent acks immediately, then cancels its own derived context;
-   the existing SIGTERM-graceful path runs (decommission NATS, shrink
-   streams if shrinking to one survivor, deregister node from KV, stop
-   all spawned processes). If the agent is unreachable the request
-   times out — the next step still runs.
+   the existing SIGTERM-graceful path runs (deregister node from KV, stop
+   all spawned processes, then stop nats-server — an unplug, NOT a self-
+   decommission: it does not touch the meta group or shrink its own
+   streams). On success the server then **evicts the node from the JS meta
+   group immediately** (`ShutdownAgent` → `removeNATSPeer`) so a rapid N→1
+   shrink keeps meta quorum at every step instead of waiting on the
+   survivor-side reaper's offline-detection. If the agent is unreachable
+   the request times out — the next step still runs.
 2. **Force-purge from server side**: every live allocation on the node
    is `DeleteAllocation`'d, then `RemoveNode` clears the node KV
    record. Both operations are idempotent — no-ops when the agent's
@@ -883,14 +926,14 @@ frontend addressing only — not peer discovery:
   balancer can pin a request to a specific node; the same name is
   exported as `A_NODE_HOST` so it lands in `NodeInfo.Host` in KV).
 
-Both blocks are rebuilt on start / `add` / `remove` from the per-node
+Both blocks are rebuilt on start / `add` / `kill` from the per-node
 pidfiles.
 
 ```
 deploy/dev/start.sh             # 1 node
 deploy/dev/start.sh 3           # 3 nodes (server + agent each)
 deploy/dev/start.sh add         # grow the running cluster by one
-deploy/dev/start.sh remove [N]  # shrink (graceful: SERVER.REMOVE on the leaver)
+deploy/dev/start.sh kill [N]    # shrink (unplug: dashboard kill + SIGTERM, survivors recover)
 deploy/dev/start.sh stop        # tear down everything
 ```
 
@@ -904,12 +947,15 @@ because JetStream flips from standalone to clustered. Either way the
 leader's `watchStreamReplicas` then raises replicas on existing KV
 buckets so the cluster has grown.
 
-`remove` shrinks the cluster. The SIGTERM'd agent runs the
-graceful-decommission flow in `agent/natsleave.go` before its
-`nats-server` is stopped (see "Graceful node decommission" above).
+`kill` shrinks the cluster. It is an unplug, not a graceful exit: the
+departing node only drops its `node.<id>` entry from cluster KV and
+stops — no SERVER.REMOVE and no stream hand-off from the leaver, that
+recovery is the survivors' job (see "Node death = unplug" above).
 The departing `node.<id>` KV delete propagates via WatchNodes and
-surviving agents SIGHUP their broker WITH the `cluster{}` block
-pinned — the surviving cluster stays clustered even down to one node.
+surviving agents SIGHUP their broker WITH the `cluster{}` block pinned,
+staying clustered down to 2 nodes. The last survivor (N→1) collapses to
+standalone by rewriting its on-disk streams to R=1 — see "Node death =
+unplug" (and the accepted 2-node split-brain caveat there).
 
 **Web UI in dev**: `cd asty/web && npm run dev` starts Vite on
 `localhost:5173` and proxies `/dashboard` to `localhost:7060`. The
@@ -1075,7 +1121,7 @@ asty/internal/
 │   ├── kv/                        # JetStream KV (state.go, nodes.go,
 │   │                              #   allocations.go, cooldowns.go,
 │   │                              #   scale.go, version.go, snapshot.go,
-│   │                              #   watch.go, deployments.go)
+│   │                              #   stable.go, watch.go, deployments.go)
 │   ├── process/                   # exec + monitor + rotation + tail
 │   ├── probe/                     # HTTP/NATS health checks (checker.go,
 │   │                              #   probe.go) — package is `probe`
@@ -1149,8 +1195,19 @@ asty/internal/
 │   ├── kv.go                      # provisionKVBuckets, ensureKVBucket,
 │   │                              #   autoReplicas (degrade on 10005/10074)
 │   ├── streamreplicas.go          # leader-only: watchStreamReplicas
-│   │                              #   bumps Replicas via UpdateStream when
-│   │                              #   the cluster grows
+│   │                              #   raises/lowers stream Replicas toward the
+│   │                              #   JetStream meta cluster size (clusterSize,
+│   │                              #   kv.go), re-triggered by WatchNodes
+│   │                              #   heartbeat + gossipChanged; reconcileCluster
+│   │                              #   also runs the dead-peer reaper
+│   ├── streamhealth.go            # clusterHealed / streamFullyCurrent —
+│   │                              #   on-demand "is the cluster healed?" read
+│   │                              #   (kill gate + snapshot/metric); single
+│   │                              #   source, no cached stable flag
+│   ├── deadpeers.go               # leader-only: reapDeadPeers evicts
+│   │                              #   offline meta peers (JSZ probe +
+│   │                              #   $JS.API.SERVER.REMOVE) from the
+│   │                              #   survivor side after an unplug
 │   ├── selfremoval.go             # watchSelfRemoval — exits server when
 │   │                              #   own node.<id> KV entry is deleted
 │   │                              #   (companion to dashboard kill)
@@ -1177,11 +1234,12 @@ asty/internal/
     │                              #   live in natspeers.go (KV) and
     │                              #   commands.go (CmdAddPeer +
     │                              #   peer-announce subscriber)
-    ├── natsleave.go               # graceful shutdown:
-    │                              #   SERVER.REMOVE + shrinkStreamsToSingle
-    │                              #   + transferStreamLeader +
-    │                              #   survivingClusterPeers (cluster KV
-    │                              #   is the source of truth)
+    ├── natssolo.go                # 2→1 collapse: on the QUORUM_LOST
+    │                              #   advisory rewrite on-disk streams
+    │                              #   to R=1 (meta.inf + meta.sum) and
+    │                              #   restart nats-server standalone on
+    │                              #   the same store (no mirror); gated
+    │                              #   to a genuine 2→1 (countByNode ≤ 1)
     ├── natsstats.go               # STATSZ/JSZ poller → asty_node_nats_*
     ├── gateway.go                 # runGateway + serveGateway
     ├── services.go                # StartService / StopService
@@ -1275,6 +1333,7 @@ Demo services use `nats.go/micro` directly — no platform SDK, no shared middle
 - **No Docker/containers** — Asty deploys raw Linux binaries
 - **Local NATS only** — each Asty agent supervises its own `nats-server` (configured from `.asty`, see "NATS supervision"); services always connect to it via the per-node `NodeIP`
 - **State is authoritative in NATS KV** — not in-memory, not file-based
+- **Cluster state follows NATS, single source of truth** — membership, replication, quorum, leadership and cluster-health are handled **uniformly, the way NATS/JetStream recommends**. Never keep a second copy of state that can drift from NATS/JetStream KV: derive health on demand from NATS's own reported state (`StreamInfo.Cluster`, JSZ meta), and let any metric/KV mirror be a pure projection of that single source, recomputed — never a separately-maintained flag. (A `cluster.stable` flag once lived in BOTH an in-memory `atomic.Bool` and a KV key synced only on transition; one failed write diverged them permanently. See `.claude/coding-rules/code-idioms.md`.)
 - **Leader election is automatic** — server mode handles failover via TTL heartbeats
 - **Gateway is critical** — it's the only HTTP entry point. **Embedded inside the agent binary**, not a `.asty` service. One per node; togglable via `gateway.enabled` (or `A_GATEWAY_ENABLED=false`) on control-plane-only nodes.
 - **Geo-diversity matters** — autoscaler prioritizes spreading services across DCs

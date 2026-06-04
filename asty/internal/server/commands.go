@@ -135,8 +135,14 @@ func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinit
 	return &resolved
 }
 
-// ShutdownAgent asks the agent on nodeID to begin a graceful self-
-// shutdown (kind alone is the signal — no payload).
+// ShutdownAgent asks the agent on nodeID to begin a graceful self-shutdown,
+// then evicts that node from the JetStream meta group right away so the meta
+// shrinks WITH the kill. NATS marks a departed peer offline only by a slow
+// RAFT timeout; a fast multi-node shrink outruns that detection, so without an
+// explicit eviction the killed peers pile up in the meta until it loses quorum
+// (no meta leader, unrecoverable). The leader issues the removal — it is not
+// the node leaving, so it cannot stall itself — and the lazy detection-based
+// reaper (deadpeers.go) stays as the fallback for ungraceful crashes.
 func (s *Server) ShutdownAgent(nodeID string) error {
 	resp, err := s.SendCommandToAgent(nodeID, types.CmdShutdown, nil, agentShutdownCommandTimeout)
 	if err != nil {
@@ -146,6 +152,12 @@ func (s *Server) ShutdownAgent(nodeID string) error {
 		return fmt.Errorf("agent rejected shutdown: %s", resp.Error)
 	}
 	log.Info().Str("node_id", nodeID).Msg("shutdown command dispatched")
+	// The agent is now stopping its nats-server; drop it from the meta group
+	// immediately so quorum stays reachable through the shrink instead of
+	// waiting on offline-detection.
+	if s.ncSys != nil {
+		s.removeNATSPeer(nodeID)
+	}
 	return nil
 }
 

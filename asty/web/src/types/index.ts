@@ -83,6 +83,7 @@ export interface ClusterStatus {
     is_leader: boolean
     nodes_total: number
     nodes_healthy: number
+    stabilized: boolean // cluster fully healed from the last membership change; Kill is disabled while false
     served_by: string   // node id that produced this snapshot (the one we're connected to)
   }
   services: {

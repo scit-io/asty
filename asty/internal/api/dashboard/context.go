@@ -31,6 +31,11 @@ type ServerContext interface {
 	RestartServiceOnNode(nodeID, serviceName string) error
 	ShutdownAgent(nodeID string) error
 	ReconcileService(svcName string)
+	// ClusterStabilized reports whether the cluster has fully healed from
+	// the previous membership change (all streams at target replicas and
+	// current, no dead peer pending). handleNodeKill refuses to remove a
+	// node while this is false.
+	ClusterStabilized() bool
 }
 
 // StreamHub is the subset of streamHub behavior the API handlers need.

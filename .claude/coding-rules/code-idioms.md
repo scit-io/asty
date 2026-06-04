@@ -12,6 +12,17 @@ Code-style rules for the asty orchestrator package. Apply when writing or modify
 
 A prior version had `splitLines`, `splitSubject`, `removeFromSlice`, hand-rolled prefix checks, and a bubble sort — all replaced with one-liners.
 
+## Single source of truth — and follow NATS for cluster state
+
+Cluster membership, replication, quorum, leadership and cluster-health follow NATS/JetStream's own model, **uniformly**. Never keep a SECOND copy of state that can drift from NATS / JetStream KV.
+
+- Derive health **on demand** from NATS's own reported state (`StreamInfo.Cluster` → leader present + replicas `current && !offline`; JSZ meta peers). Don't cache a boolean you then have to keep in sync.
+- Prefer JetStream/NATS APIs and the server's own quorum/replica behaviour over hand-rolled logic — don't reimplement what nats-server already manages.
+- If a second surface must exist (a Prometheus gauge, a KV value other nodes read), it is a pure **projection** of the single source — recomputed on each read, never a separately-maintained copy.
+- When unsure what NATS recommends, look it up and verify against the server's actual behaviour before inventing a mechanism.
+
+Anti-pattern that motivated this: a `cluster.stable` flag held in BOTH an in-memory `atomic.Bool` (the kill-gate's authority) AND a KV key (what the snapshot/metric read), synced only by a transition-only publish. One failed KV write left the two permanently diverged — the metric read `false` while every stream was healthy (leader present, all replicas current, lag 0). The fix is ONE source, not a better sync.
+
 ## Named constants over magic numbers
 
 Every timeout, interval, threshold, retry count gets a named constant with a one-paragraph comment explaining *why* the value has the magnitude it does. Example:

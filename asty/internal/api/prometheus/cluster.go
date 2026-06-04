@@ -29,6 +29,7 @@ type clusterCollector struct {
 	swapUsed      *prometheusclient.Desc
 	rps           *prometheusclient.Desc
 	healthPercent *prometheusclient.Desc
+	stabilized    *prometheusclient.Desc
 	leader        *prometheusclient.Desc
 }
 
@@ -52,6 +53,7 @@ func newClusterCollector(ctx Context) *clusterCollector {
 		swapUsed:      prometheusclient.NewDesc("asty_cluster_swap_used_mb", "SwapTotal − SwapAvailable across all nodes, MB.", nil, nil),
 		rps:           prometheusclient.NewDesc("asty_cluster_rps", "Sum of latest valid-RPS samples across all nodes.", nil, nil),
 		healthPercent: prometheusclient.NewDesc("asty_cluster_health_percent", "Percentage of nodes whose last_seen is within the staleness window.", nil, nil),
+		stabilized:    prometheusclient.NewDesc("asty_cluster_stabilized", "1 when the cluster has fully healed from the last membership change (all streams at target replicas & current); 0 while replication is settling. The dashboard disables the Kill button and the API refuses kills while 0.", nil, nil),
 		leader:        prometheusclient.NewDesc("asty_leader", "1 on the node that currently holds the leader lease; labels carry its ID and (optional) public DNS host.", []string{"node_id", "host"}, nil),
 	}
 }
@@ -74,6 +76,7 @@ func (c *clusterCollector) Describe(ch chan<- *prometheusclient.Desc) {
 	ch <- c.swapUsed
 	ch <- c.rps
 	ch <- c.healthPercent
+	ch <- c.stabilized
 	ch <- c.leader
 }
 
@@ -136,6 +139,12 @@ func (c *clusterCollector) Collect(ch chan<- prometheusclient.Metric) {
 		healthPct = float64(snap.Cluster.NodesHealthy) / float64(snap.Cluster.NodesTotal) * 100
 	}
 	g(c.healthPercent, healthPct)
+
+	stabilized := 0.0
+	if snap.Cluster.Stabilized {
+		stabilized = 1
+	}
+	g(c.stabilized, stabilized)
 
 	if leaderID := snap.Cluster.Leader; leaderID != "" {
 		ch <- prometheusclient.MustNewConstMetric(c.leader, prometheusclient.GaugeValue, 1, leaderID, snap.Cluster.LeaderHost)

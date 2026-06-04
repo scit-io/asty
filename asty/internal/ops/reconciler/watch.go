@@ -39,14 +39,18 @@ func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 				c.queue.Add(a.ServiceName)
 			}
 		})
-		if ctx.Err() != nil || err == nil {
+		if ctx.Err() != nil {
 			return
 		}
-		log.Error().Err(err).Msg("alloc watcher errored, retrying")
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(watchRetryDelay):
+		// Re-establish on a clean close too (see watchNodesToQueue) — exiting
+		// would silently stop reacting to allocation changes until the resync.
+		if err != nil {
+			log.Error().Err(err).Msg("alloc watcher errored, re-establishing")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(watchRetryDelay):
+			}
 		}
 	}
 }
@@ -68,14 +72,22 @@ func (c *ServiceController) watchNodesToQueue(ctx context.Context) {
 				c.enqueueAllServices()
 			}
 		})
-		if ctx.Err() != nil || err == nil {
+		if ctx.Err() != nil {
 			return
 		}
-		log.Error().Err(err).Msg("node watcher errored, retrying")
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(watchRetryDelay):
+		// WatchNodes returned while the ctx is alive — an error, or a clean
+		// close (the KV watcher's channel closes when its consumer is
+		// disrupted during churn). RE-ESTABLISH rather than exit: a dead watch
+		// would silently stop re-enqueuing services on membership changes
+		// until the periodic resync, so placement would lag every join and
+		// leave. The fresh watch replays node.* so nothing is missed.
+		if err != nil {
+			log.Error().Err(err).Msg("node watcher errored, re-establishing")
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(watchRetryDelay):
+			}
 		}
 	}
 }
