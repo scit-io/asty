@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // WaitForLeader returns the current leader info, blocking on the KV
@@ -15,7 +15,7 @@ func (e *Election) WaitForLeader(ctx context.Context) (Info, error) {
 		return leader, nil
 	}
 
-	watcher, err := e.bucket.Watch(leaderKey, nats.Context(ctx))
+	watcher, err := e.bucket.Watch(ctx, leaderKey)
 	if err != nil {
 		return Info{}, fmt.Errorf("watch leader key: %w", err)
 	}
@@ -33,7 +33,7 @@ func (e *Election) WaitForLeader(ctx context.Context) (Info, error) {
 				// End of initial replay with no leader; keep waiting.
 				continue
 			}
-			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+			if entry.Operation() == jetstream.KeyValueDelete || entry.Operation() == jetstream.KeyValuePurge {
 				continue
 			}
 			return e.GetLeader()
@@ -43,9 +43,12 @@ func (e *Election) WaitForLeader(ctx context.Context) (Info, error) {
 
 // WatchLeadership invokes onBecomeLeader / onLoseLeadership when the
 // current node's leadership status changes. It keeps running until ctx
-// is cancelled.
+// is cancelled. The watcher is a jetstream OrderedConsumer, so it
+// auto-recreates and resumes after a nats-server restart (the natssolo
+// 2→1 collapse) instead of going silently deaf — leadership flips keep
+// driving startLeaderWork/stopLeaderWork. See nats.go #1094.
 func (e *Election) WatchLeadership(ctx context.Context, onBecomeLeader, onLoseLeadership func()) error {
-	watcher, err := e.bucket.Watch(leaderKey, nats.Context(ctx))
+	watcher, err := e.bucket.Watch(ctx, leaderKey)
 	if err != nil {
 		return fmt.Errorf("failed to watch leader key: %w", err)
 	}
@@ -66,7 +69,7 @@ func (e *Election) WatchLeadership(ctx context.Context, onBecomeLeader, onLoseLe
 
 			var isLeader bool
 			switch entry.Operation() {
-			case nats.KeyValueDelete, nats.KeyValuePurge:
+			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				isLeader = false
 			default:
 				isLeader = parseLeaderID(entry.Value()) == e.nodeID

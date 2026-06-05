@@ -3,18 +3,11 @@ package deployer
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"asty/asty/internal/core/types"
 
 	"github.com/rs/zerolog/log"
 )
-
-// deployHealthPollInterval — how often we re-check health during the
-// canary and rolling phases on the polling fallback. The reactive
-// path uses WatchAllocations instead; this constant only matters when
-// the state accessor doesn't expose a watcher.
-const deployHealthPollInterval = 5 * time.Second
 
 // deployCanary updates the first plan.UpdateStrategy.Canary allocations to the target
 // version, then waits until every canary is "running" and stays

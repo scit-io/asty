@@ -1,9 +1,10 @@
 package kv
 
 import (
+	"errors"
 	"fmt"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // drainKey carries the most recent DrainStatus for a node. Stored in
@@ -25,7 +26,9 @@ func (cs *ClusterState) PutDrain(nodeID string, payload []byte) error {
 		return fmt.Errorf("PutDrain: nodeID is empty")
 	}
 	key := fmt.Sprintf(drainKey, nodeID)
-	if _, err := cs.bucket.Put(key, payload); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, payload); err != nil {
 		return fmt.Errorf("put drain: %w", err)
 	}
 	return nil
@@ -35,9 +38,11 @@ func (cs *ClusterState) PutDrain(nodeID string, payload []byte) error {
 // the node, or (nil, nil) when the key is missing.
 func (cs *ClusterState) GetDrain(nodeID string) ([]byte, error) {
 	key := fmt.Sprintf(drainKey, nodeID)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("get drain: %w", err)
@@ -50,7 +55,9 @@ func (cs *ClusterState) GetDrain(nodeID string) ([]byte, error) {
 // records don't accumulate.
 func (cs *ClusterState) DeleteDrain(nodeID string) error {
 	key := fmt.Sprintf(drainKey, nodeID)
-	if err := cs.bucket.Delete(key); err != nil && err != nats.ErrKeyNotFound {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if err := cs.bucket.Delete(ctx, key); err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
 		return fmt.Errorf("delete drain: %w", err)
 	}
 	return nil

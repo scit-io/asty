@@ -28,6 +28,27 @@ func LiveAllocations(allocs []*types.ServiceAllocation) []*types.ServiceAllocati
 	return live
 }
 
+// partitionAllocsByNode splits allocs into those on nodes that still exist
+// in cluster KV (knownNodes) and "ghosts" on nodes that have left it.
+//
+// Cluster KV is NATS's authoritative membership (single source of truth).
+// A ghost's node is gone, so the copy can never run again — yet its status
+// alone may still read "running". Counting it as live (LiveAllocations is
+// status-only) makes a service look fully placed when its only copies sit
+// on dead nodes, so the scheduler never reschedules onto a live node; it
+// also lingers as a phantom copy in the dashboard. The scheduler reaps
+// ghosts and counts only the survivors.
+func partitionAllocsByNode(allocs []*types.ServiceAllocation, knownNodes map[string]bool) (onKnown, ghosts []*types.ServiceAllocation) {
+	for _, a := range allocs {
+		if knownNodes[a.NodeID] {
+			onKnown = append(onKnown, a)
+		} else {
+			ghosts = append(ghosts, a)
+		}
+	}
+	return onKnown, ghosts
+}
+
 // NodeIDsOf returns a set of nodeIDs from allocations.
 func NodeIDsOf(allocs []*types.ServiceAllocation) map[string]bool {
 	out := make(map[string]bool, len(allocs))

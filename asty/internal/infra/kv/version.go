@@ -1,12 +1,13 @@
 package kv
 
 import (
+	"errors"
 	"fmt"
 
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 const serviceVersionKey = "service.%s.version"
@@ -16,9 +17,11 @@ const serviceVersionKey = "service.%s.version"
 // caller falls back to "latest") rather than an error.
 func (cs *ClusterState) GetServiceVersion(service string) (types.ServiceVersion, error) {
 	key := fmt.Sprintf(serviceVersionKey, service)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return types.ServiceVersion{}, nil
 		}
 		return types.ServiceVersion{}, fmt.Errorf("get version: %w", err)
@@ -40,7 +43,9 @@ func (cs *ClusterState) SetServiceVersion(service string, v types.ServiceVersion
 		return fmt.Errorf("marshal version: %w", err)
 	}
 	key := fmt.Sprintf(serviceVersionKey, service)
-	if _, err := cs.bucket.Put(key, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, data); err != nil {
 		return fmt.Errorf("put version: %w", err)
 	}
 	return nil

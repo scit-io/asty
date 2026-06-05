@@ -122,15 +122,14 @@ func capReplicas(size, ceiling int) int {
 	return size
 }
 
-// autoReplicas / systemReplicas are the placement targets at the current
-// cluster size — used at bucket creation. The ceilings come from config
-// (cluster.app_kv_replicas / cluster.system_kv_replicas) — see ClusterConfig
-// for the quorum-vs-latency rationale.
+// autoReplicas is the app-bucket placement target at the current cluster
+// size — used at bucket creation (ensureKVBucket). The ceiling comes from
+// config (cluster.app_kv_replicas) — see ClusterConfig for the
+// quorum-vs-latency rationale. System streams use the wider
+// cluster.system_kv_replicas ceiling directly via targetReplicasFor, so
+// there is no separate systemReplicas() helper.
 func (s *Server) autoReplicas() int {
 	return capReplicas(s.clusterSize(), s.cfg.Cluster.AppKVReplicas)
-}
-func (s *Server) systemReplicas() int {
-	return capReplicas(s.clusterSize(), s.cfg.Cluster.SystemKVReplicas)
 }
 
 // kvEnvForAllocation merges the KV env vars into the service definition

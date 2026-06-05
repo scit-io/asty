@@ -19,11 +19,16 @@ import (
 // progress" instead of silently launching a clobbering run.
 var ErrDeployInFlight = errors.New("deploy already in progress for this service")
 
-// StateAccessor provides access to cluster state for deployments. Kept
-// minimal so tests can inject a stub. SetRollbackFailed lets the
-// deployer flag a service that failed auto_revert so the autoscaler
-// stops touching it; the operator clears the flag via the API once
-// they reconcile the mixed-version state.
+// StateAccessor provides access to cluster state for deployments. The
+// real ClusterState satisfies it; tests inject a stub. SetRollbackFailed
+// lets the deployer flag a service that failed auto_revert so the
+// autoscaler stops touching it; the operator clears the flag via the API
+// once they reconcile the mixed-version state.
+//
+// WatchAllocations is the sole batch-health mechanism: waitForBatchHealth
+// (wait.go) reacts to KV alloc-status events, never polls. It also
+// satisfies the narrow allocWatcher there, so no type assertion is
+// needed.
 //
 // Get/SetServiceVersion is the version pin scheduler.createAllocation
 // reads when placing new copies — Deploy is the sole writer so that
@@ -31,6 +36,7 @@ var ErrDeployInFlight = errors.New("deploy already in progress for this service"
 // version instead of drifting to a stale "latest".
 type StateAccessor interface {
 	GetAllocation(serviceName, nodeID string) (*types.ServiceAllocation, error)
+	WatchAllocations(ctx context.Context, onChange func(*types.ServiceAllocation)) error
 	MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error
 	SetRollbackFailed(serviceName string, failed bool) error
 	SetDeployInProgress(serviceName string, active bool) error

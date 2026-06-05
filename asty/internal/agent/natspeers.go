@@ -76,6 +76,22 @@ func (p *natsPeers) countByNode() int {
 	return len(p.byNode)
 }
 
+// hasBootstrap reports whether any peer is still pending in the bootstrap
+// set — an IP from Seed / CmdAddPeer / peer-announce that has NOT yet
+// appeared in cluster KV (byNode). A non-empty bootstrap set means a peer
+// is JOINING: this node just cold-restarted clustered to accept it and is
+// waiting for it to connect (a 1→N re-grow). The natssolo 2→1 collapse
+// uses this to tell a grow from a shrink — during a grow the transient
+// no-quorum is the joiner not-yet-connected, NOT a peer loss, so collapsing
+// would slam :6222 shut before the joiner gets in. A genuine shrink leaves
+// bootstrap empty: remove() drops a departed peer's IP, and a solo survivor
+// went through reset().
+func (p *natsPeers) hasBootstrap() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.bootstrap) > 0
+}
+
 // reset clears every known peer so the next render produces a standalone
 // (no cluster{} block) conf. Used by the solo transition when this node
 // becomes the last one.

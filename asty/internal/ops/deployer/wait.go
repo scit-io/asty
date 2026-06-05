@@ -21,39 +21,12 @@ type allocWatcher interface {
 //     for plan.UpdateStrategy.MinHealthyTime (returns true), or
 //   - plan.UpdateStrategy.HealthyDeadline elapses without that condition (returns false).
 //
-// It reacts to KV change events instead of polling. Falls back
-// gracefully when the state accessor doesn't expose a watcher.
+// Purely event-driven: it reacts to KV alloc-status events via
+// WatchAllocations (now part of StateAccessor), never polls.
+// d.clusterState satisfies the narrow allocWatcher directly, so there is
+// no type assertion and no polling fallback.
 func (d *Deployer) waitForBatchHealth(ctx context.Context, batch []*types.ServiceAllocation, plan *DeploymentPlan) bool {
-	w, ok := d.clusterState.(allocWatcher)
-	if !ok {
-		return d.waitForBatchHealthPolling(ctx, batch, plan)
-	}
-	return waitBatchEventDriven(ctx, w, batch, plan)
-}
-
-// waitForBatchHealthPolling is the legacy path used when the state
-// accessor doesn't support watching (tests with stubs). Kept here for
-// safety; the real implementation always takes the event-driven path.
-func (d *Deployer) waitForBatchHealthPolling(ctx context.Context, batch []*types.ServiceAllocation, plan *DeploymentPlan) bool {
-	deadline := time.Now().Add(plan.UpdateStrategy.HealthyDeadline)
-	healthyFor := time.Duration(0)
-
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-time.After(deployHealthPollInterval):
-			if d.checkAllocationsHealth(batch) {
-				healthyFor += deployHealthPollInterval
-				if healthyFor >= plan.UpdateStrategy.MinHealthyTime {
-					return true
-				}
-			} else {
-				healthyFor = 0
-			}
-		}
-	}
-	return false
+	return waitBatchEventDriven(ctx, d.clusterState, batch, plan)
 }
 
 // waitBatchEventDriven implements the event-driven half of
@@ -115,23 +88,6 @@ func waitBatchEventDriven(ctx context.Context, w allocWatcher, batch []*types.Se
 			}
 		}
 	}
-}
-
-// checkAllocationsHealth returns true only when every allocation in
-// allocs is currently in status "running". Used by the polling
-// fallback; the event-driven path keeps the same definition of
-// "healthy" via healthTracker.allRunningLocked.
-func (d *Deployer) checkAllocationsHealth(allocs []*types.ServiceAllocation) bool {
-	for _, alloc := range allocs {
-		current, err := d.clusterState.GetAllocation(alloc.ServiceName, alloc.NodeID)
-		if err != nil {
-			return false
-		}
-		if current.Status != types.AllocRunning {
-			return false
-		}
-	}
-	return true
 }
 
 // sendUpdateCommand asks the agent at nodeID to restart the service at

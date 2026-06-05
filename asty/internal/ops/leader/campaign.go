@@ -2,12 +2,13 @@ package leader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"asty/asty/internal/core/codec"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,12 +48,14 @@ func (e *Election) CampaignForLeader(ctx context.Context) error {
 // refresh if we hold it, mark ourselves as a follower if someone else
 // holds it.
 func (e *Election) tryBecomeLeader() error {
-	entry, err := e.bucket.Get(leaderKey)
-	if err != nil && err != nats.ErrKeyNotFound {
+	ctx, cancel := kvCtx()
+	entry, err := e.bucket.Get(ctx, leaderKey)
+	cancel()
+	if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
 		return fmt.Errorf("failed to get leader key: %w", err)
 	}
 
-	if err == nats.ErrKeyNotFound || entry == nil {
+	if errors.Is(err, jetstream.ErrKeyNotFound) || entry == nil {
 		return e.claimLeadership()
 	}
 
@@ -75,7 +78,9 @@ func (e *Election) tryBecomeLeader() error {
 
 func (e *Election) claimLeadership() error {
 	data, _ := codec.State.Marshal(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
-	if _, err := e.bucket.Create(leaderKey, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := e.bucket.Create(ctx, leaderKey, data); err != nil {
 		return fmt.Errorf("failed to claim leadership: %w", err)
 	}
 	e.isLeader = true
@@ -85,7 +90,9 @@ func (e *Election) claimLeadership() error {
 
 func (e *Election) refreshLeadership() error {
 	data, _ := codec.State.Marshal(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
-	if _, err := e.bucket.Put(leaderKey, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := e.bucket.Put(ctx, leaderKey, data); err != nil {
 		e.isLeader = false
 		return fmt.Errorf("failed to refresh leadership: %w", err)
 	}
@@ -98,7 +105,9 @@ func (e *Election) stepDown() error {
 		return nil
 	}
 
-	entry, err := e.bucket.Get(leaderKey)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := e.bucket.Get(ctx, leaderKey)
 	if err != nil {
 		return fmt.Errorf("failed to get leader key: %w", err)
 	}
@@ -106,7 +115,7 @@ func (e *Election) stepDown() error {
 		e.isLeader = false
 		return nil
 	}
-	if err := e.bucket.Delete(leaderKey); err != nil {
+	if err := e.bucket.Delete(ctx, leaderKey); err != nil {
 		return fmt.Errorf("failed to delete leader key: %w", err)
 	}
 	e.isLeader = false

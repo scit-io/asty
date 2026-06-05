@@ -275,14 +275,16 @@ start_asty() {
   done
 }
 
-# wait_node_registered polls node 1's /nodes endpoint until the named
+# wait_node_registered polls a live node's /nodes endpoint until the named
 # node id shows up in the response, or fails out after a generous
-# wall-clock budget. Node 1 is the seed and always available; the
-# response is a JSON {nodes:[{id,...}]} that we grep — no jq dep.
+# wall-clock budget. The query endpoint is the seed the join used (caller
+# passes it; falls back to any live node) — node 1 is NOT assumed alive, a
+# degradation run may have killed it. The response is a JSON
+# {nodes:[{id,...}]} that we grep — no jq dep.
 wait_node_registered() {
   local i=$1
   local id="dev-node-$i"
-  local seed_addr="127.0.0.1"
+  local seed_addr="${2:-$(live_seed_ip)}"
   local url="http://${seed_addr}:7060/dashboard/v1/nodes"
   local deadline=$((SECONDS + 60))
   local probe_interval=0.5
@@ -312,9 +314,11 @@ wait_node_registered() {
 # NEXT node is not started until the cluster has fully absorbed the
 # previous one. Adding nodes faster than NATS settles each replica change
 # leaves stream RAFT groups leaderless (an 8-node cold start without this
-# wait got stuck at stabilized=0). Node 1's metrics endpoint is always up.
+# wait got stuck at stabilized=0). Queries the live seed (caller passes it;
+# falls back to any live node) — node 1 may be gone after a degradation run.
 wait_cluster_stable() {
-  local url="http://127.0.0.1:7060/metrics"
+  local seed_addr="${1:-$(live_seed_ip)}"
+  local url="http://${seed_addr}:7060/metrics"
   local deadline=$((SECONDS + 90))
   while (( SECONDS < deadline )); do
     if curl -fsS --max-time 2 "$url" 2>/dev/null | grep -qE '^asty_cluster_stabilized 1$'; then
@@ -327,26 +331,45 @@ wait_cluster_stable() {
   return 1
 }
 
-# announce_peer_to_seed runs `asty -mode admin add-peer` against node
-# 1's agent (the seed). In prod the same CLI is invoked over SSH and
-# reads the client IP from $SSH_CLIENT (set by sshd). In dev we
-# bypass SSH and synthesise SSH_CLIENT ourselves so the CLI takes the
-# same code path. The CLI then connects to the local NATS
-# (127.0.0.1:4222) with the agent's own credentials and publishes
-# CmdAddPeer to node 1's command subject; node 1 records the IP and
-# SIGHUP/cold-restarts its nats-server so :6222 opens (or now lists
-# the extra route).
+# live_seed_ip echoes a live cluster node's IP to seed a join against /
+# announce to / query. Prefers node 1 (the canonical bootstrap) when
+# alive, else the first /health-reachable node — so `add` and the wait
+# gates work even after node 1 has been killed (e.g. a degradation run
+# left another node as the lone survivor). Empty + nonzero exit if nothing
+# is alive.
+live_seed_ip() {
+  local i addr
+  for i in $(seq 1 16); do
+    addr="127.0.0.$i"
+    curl -fsS --max-time 1 "http://${addr}:7060/health" >/dev/null 2>&1 && { printf '%s' "$addr"; return 0; }
+  done
+  return 1
+}
+
+# announce_peer_to_seed runs `asty -mode admin add-peer` against a LIVE
+# cluster node's agent (the seed, passed in as $2 — NOT assumed to be
+# node 1, which a degradation run may have killed). In prod the same CLI
+# is invoked over SSH and reads the client IP from $SSH_CLIENT (set by
+# sshd). In dev we bypass SSH and synthesise SSH_CLIENT ourselves so the
+# CLI takes the same code path. The CLI then connects to the seed's NATS
+# (<seed_ip>:4222) with the agent's own credentials and publishes
+# CmdAddPeer to the seed's command subject; the seed records the IP and
+# SIGHUP/cold-restarts its nats-server so :6222 opens (or now lists the
+# extra route). A solo standalone survivor cold-restarts into clustered
+# here — the 1→N re-grow, mirror of the N→1 collapse.
 announce_peer_to_seed() {
   local i=$1
+  local seed_ip=$2
   local addr="127.0.0.$i"
+  local seed_id="dev-node-${seed_ip##*.}"
   local config_file="$SCRIPT_DIR/config.asty"
-  log "announcing node $i ($addr) to seed (node 1)..."
+  log "announcing node $i ($addr) to seed $seed_id ($seed_ip)..."
   # SSH_CLIENT format: "<client-ip> <client-port> <server-port>".
   SSH_CLIENT="$addr 0 0" \
-    A_NODE_ID=dev-node-1 A_NODE_IP=127.0.0.1 \
+    A_NODE_ID="$seed_id" A_NODE_IP="$seed_ip" \
     "$BIN_DIR/asty" -mode admin -config "$config_file" add-peer \
     || warn "announce failed; node $i may take longer to join"
-  # Tiny pause for node 1 to finish the cold-restart triggered by the
+  # Tiny pause for the seed to finish the cold-restart triggered by the
   # standalone→clustered flip. NATS itself retries the inbound route,
   # so we don't have to be perfectly synchronous; this just shortens
   # the visible "Waiting for routing to be established" window.
@@ -357,13 +380,14 @@ announce_peer_to_seed() {
 # (NODE_ID/IP/HOST/UI/gateway address, fake disk type). Shared by
 # start_asty (initial fan-out) and add_node (live cluster growth).
 #
-# NATS peer discovery: i=1 boots standalone (A_NATS_SEED unset).
-# i>=2 joins the cluster through 127.0.0.1 (node 1) as the seed —
-# from there on the agent watches cluster KV for membership and
-# rewrites cluster.routes via SIGHUP on every change. No DNS lookup
-# is involved.
+# NATS peer discovery: i=1 boots standalone (A_NATS_SEED unset, $2 empty).
+# i>=2 joins through the live seed IP passed as $2 (resolved by the caller
+# via live_seed_ip — NOT hardcoded to node 1) — from there on the agent
+# watches cluster KV for membership and rewrites cluster.routes via SIGHUP
+# on every change. No DNS lookup is involved.
 start_node() {
   local i=$1
+  local nats_seed="${2:-}"
   local addr="127.0.0.$i"
   local node_host="n${i}.${HOSTS_NAME}"
   local server_log="/tmp/asty-dev-server-$i.log"
@@ -383,14 +407,6 @@ start_node() {
   # box without port collisions.
   local dashboard_host="$addr"
   local gateway_host="$addr"
-
-  # Seed for NATS cluster join: every node after the first uses
-  # 127.0.0.1 (node 1) as its bootstrap peer. Empty for node 1 — it
-  # bootstraps the cluster standalone.
-  local nats_seed=""
-  if (( i >= 2 )); then
-    nats_seed="127.0.0.1"
-  fi
 
   # Random disk type per node so the cluster aggregates exercise
   # both ssd and hdd branches. Server inherits no disk-type env —
@@ -441,9 +457,9 @@ start_node() {
 # once the cluster has normalized with it. The single bring-up path,
 # shared by the N-node cold start (start_asty loops it) and the live
 # `add` subcommand — no duplicated logic. Index 1 bootstraps standalone;
-# every later index joins through A_NATS_SEED=127.0.0.1 (node 1), and
-# existing agents pick up the new peer KV-side (WatchNodes) and SIGHUP
-# their nats-server to add the route.
+# every later index joins through the live seed resolved by live_seed_ip
+# (node 1 when alive, else any survivor), and existing agents pick up the
+# new peer KV-side (WatchNodes) and SIGHUP their nats-server to add the route.
 add_node() {
   # Next free index = max existing + 1, from the pidfiles. On a clean
   # start node_indices is empty → i=1 (standalone bootstrap); on a live
@@ -455,24 +471,27 @@ add_node() {
   done
   local i=$((max_i + 1))
   local addr="127.0.0.$i"
+  local seed_ip=""
 
   log "adding node $i (id=dev-node-$i, ip=$addr)..."
 
   # Publish A-records (existing + new) before booting so the SPA can
   # address it by name immediately.
   sync_hosts $(node_indices) "$i"
-  # Node 1 bootstraps standalone; every later node announces its IP to
-  # the seed (node 1) first so node 1's nats-server opens the route.
+  # Node 1 bootstraps standalone; every later node announces its IP to a
+  # LIVE seed first (resolved here, not assumed to be node 1) so the seed's
+  # nats-server opens the route — a solo survivor cold-restarts to clustered.
   if (( i >= 2 )); then
-    announce_peer_to_seed "$i"
+    seed_ip=$(live_seed_ip) || { warn "no live cluster node to seed node $i from — is the cluster up? aborting add"; return 1; }
+    announce_peer_to_seed "$i" "$seed_ip"
   fi
-  start_node "$i"
+  start_node "$i" "$seed_ip"
   # Two gates, in order: the node registers in KV (joined + first
   # heartbeat), THEN the whole cluster normalizes (replicas re-replicated
   # and current, stabilized=1). Returning only after BOTH is what keeps a
   # loop of add_node — or a live `add` — from outrunning NATS settling.
-  wait_node_registered "$i"
-  wait_cluster_stable
+  wait_node_registered "$i" "$seed_ip"
+  wait_cluster_stable "$seed_ip"
 
   info "node $i added; cluster normalized."
 }

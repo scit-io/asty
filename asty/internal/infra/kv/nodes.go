@@ -1,13 +1,14 @@
 package kv
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
@@ -19,12 +20,14 @@ func (cs *ClusterState) UpdateNode(node *types.NodeInfo) error {
 	key := fmt.Sprintf("node.%s", node.ID)
 
 	if node.CreatedAt.IsZero() {
-		if existing, err := cs.bucket.Get(key); err == nil {
+		ctx, cancel := kvCtx()
+		if existing, err := cs.bucket.Get(ctx, key); err == nil {
 			var existingNode types.NodeInfo
 			if codec.State.Unmarshal(existing.Value(), &existingNode) == nil && !existingNode.CreatedAt.IsZero() {
 				node.CreatedAt = existingNode.CreatedAt
 			}
 		}
+		cancel()
 		if node.CreatedAt.IsZero() {
 			node.CreatedAt = now
 		}
@@ -35,7 +38,9 @@ func (cs *ClusterState) UpdateNode(node *types.NodeInfo) error {
 		return fmt.Errorf("failed to marshal node info: %w", err)
 	}
 
-	if _, err := cs.bucket.Put(key, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, data); err != nil {
 		return fmt.Errorf("failed to put node info: %w", err)
 	}
 
@@ -45,9 +50,11 @@ func (cs *ClusterState) UpdateNode(node *types.NodeInfo) error {
 // GetNode retrieves node information from cluster state
 func (cs *ClusterState) GetNode(nodeID string) (*types.NodeInfo, error) {
 	key := fmt.Sprintf("node.%s", nodeID)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return nil, fmt.Errorf("node %s not found", nodeID)
 		}
 		return nil, fmt.Errorf("failed to get node info: %w", err)
@@ -83,7 +90,9 @@ func (cs *ClusterState) ListNodes() ([]*types.NodeInfo, error) {
 // RemoveNode removes a node from cluster state
 func (cs *ClusterState) RemoveNode(nodeID string) error {
 	key := fmt.Sprintf("node.%s", nodeID)
-	if err := cs.bucket.Delete(key); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if err := cs.bucket.Delete(ctx, key); err != nil {
 		return fmt.Errorf("failed to delete node: %w", err)
 	}
 

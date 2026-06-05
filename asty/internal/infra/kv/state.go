@@ -1,33 +1,43 @@
 package kv
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"asty/asty/internal/core/netutil"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
 const allocationMutateMaxRetries = 8
 
-// ClusterState manages cluster state in NATS JetStream KV
+// kvOpTimeout caps one KV Get/Put/Create/Update/Delete round-trip. The
+// jetstream API is context-based; these are short request-reply ops, so a
+// bounded ceiling keeps a wedged broker from hanging callers indefinitely.
+const kvOpTimeout = 10 * time.Second
+
+// ClusterState manages cluster state in NATS JetStream KV. It uses the
+// nats.go `jetstream` package (NOT the deprecated JetStreamContext): its KV
+// watchers are backed by ordered consumers that auto-recreate after a
+// nats-server restart (the natssolo 2→1 collapse restarts the local broker),
+// so the streamHub index does not go stale. See nats.go #1094/#1097.
 type ClusterState struct {
-	nc     *nats.Conn
-	js     nats.JetStreamContext
-	bucket nats.KeyValue
+	bucket jetstream.KeyValue
 }
 
-// New creates a new cluster state manager
+// New creates a new cluster state manager.
 func New(nc *nats.Conn) (*ClusterState, error) {
-	js, err := nc.JetStream()
+	js, err := jetstream.New(nc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
+		return nil, fmt.Errorf("jetstream init: %w", err)
 	}
 
-	bucket, err := netutil.EnsureBucket(js, &nats.KeyValueConfig{
+	bucket, err := netutil.EnsureBucket(js, jetstream.KeyValueConfig{
 		Bucket:      "asty-cluster",
 		Description: "Asty cluster state",
 		History:     10,
@@ -38,17 +48,22 @@ func New(nc *nats.Conn) (*ClusterState, error) {
 
 	log.Info().Msg("cluster state initialized")
 
-	return &ClusterState{
-		nc:     nc,
-		js:     js,
-		bucket: bucket,
-	}, nil
+	return &ClusterState{bucket: bucket}, nil
 }
 
+// kvCtx returns a bounded context for a single KV operation.
+func kvCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), kvOpTimeout)
+}
+
+// isCASConflict reports whether err is a JetStream wrong-last-sequence
+// rejection — the optimistic-concurrency miss returned by Update (stale
+// revision) and Create (key already exists), both API code 10071. The
+// caller re-reads and retries.
 func isCASConflict(err error) bool {
-	var apiErr *nats.APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.ErrorCode == nats.JSErrCodeStreamWrongLastSequence
+	var jsErr jetstream.JetStreamError
+	if errors.As(err, &jsErr) && jsErr.APIError() != nil {
+		return jsErr.APIError().ErrorCode == jetstream.JSErrCodeStreamWrongLastSequence
 	}
 	return false
 }

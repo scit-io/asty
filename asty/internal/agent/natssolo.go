@@ -34,10 +34,13 @@ import (
 // (both nodes alive but unable to see each other) both lose quorum and
 // both collapse, diverging. This is a deliberate trade-off for the
 // 2-node case; real safety needs a third node or an external arbiter.
-// See REPLICAS_KV.md. The collapse is therefore GATED to genuine 2→1
-// (countByNode ≤ 1): at N≥3 a QUORUM_LOST advisory means we are a
-// partitioned minority that RAFT correctly stalls, and the majority keeps
-// serving — collapsing there would be split-brain, so we ignore it.
+// See REPLICAS_KV.md. The collapse is therefore GATED to a genuine 2→1
+// SHRINK: countByNode ≤ 1 (at N≥3 a QUORUM_LOST advisory means we are a
+// partitioned minority that RAFT correctly stalls while the majority keeps
+// serving — collapsing there would be split-brain), AND no peer pending in
+// bootstrap (a peer joining is a 1→N GROW: the no-quorum is just the joiner
+// not-yet-connected, not a peer loss — collapsing would slam :6222 shut and
+// deadlock the re-grow). See hasBootstrap in natspeers.go.
 
 // quorumLostSubject is the JetStream advisory NATS pushes when a stream
 // can no longer reach RAFT quorum.
@@ -53,10 +56,17 @@ var numReplicasRe = regexp.MustCompile(`"num_replicas":\d+`)
 // the agent's client reconnects.
 func (a *Agent) watchQuorumLost(ctx context.Context) {
 	sub, err := a.nc.Subscribe(quorumLostSubject, func(m *nats.Msg) {
-		// Only the genuine 2→1 case. At N≥3 this advisory also reaches a
-		// partitioned minority — but there RAFT stalls us and the majority
-		// keeps serving, so collapsing would split-brain. Skip it.
-		if !a.clusteredNow() || a.peers.countByNode() > 1 {
+		// Only the genuine 2→1 SHRINK. Skip when:
+		//  - not clustered: nothing to collapse;
+		//  - countByNode > 1: at N≥3 this advisory also reaches a partitioned
+		//    minority — RAFT stalls us, the majority serves, collapsing would
+		//    split-brain;
+		//  - a peer is pending in bootstrap: a 1→N GROW — this node just
+		//    cold-restarted clustered to accept a joiner, and the no-quorum is
+		//    that joiner not-yet-connected, NOT a peer loss. Collapsing here
+		//    slams :6222 shut so the joiner can never get in (the re-grow
+		//    deadlock); the joiner restores quorum once it connects.
+		if !a.clusteredNow() || a.peers.countByNode() > 1 || a.peers.hasBootstrap() {
 			return
 		}
 		log.Warn().Str("advisory", m.Subject).

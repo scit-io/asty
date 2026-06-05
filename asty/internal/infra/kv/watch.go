@@ -8,7 +8,7 @@ import (
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
@@ -17,15 +17,21 @@ import (
 // delete/purge) or onUpsert (decoded entry). When NATS finishes the initial
 // history replay it sends a nil entry; if onReady is non-nil, it is invoked
 // once at that point — useful for "wait until cache is hot" callers.
+//
+// The watcher is a jetstream OrderedConsumer: it auto-recreates after a
+// nats-server restart (e.g. the natssolo 2→1 collapse restarts the local
+// broker) and resumes delivery from the last sequence, so a long-lived
+// watch keeps the streamHub index current instead of going silently stale
+// (the deprecated JetStreamContext watcher did — nats.go #1094).
 func watchKV(
 	ctx context.Context,
-	bucket nats.KeyValue,
+	bucket jetstream.KeyValue,
 	pattern string,
-	onUpsert func(entry nats.KeyValueEntry),
+	onUpsert func(entry jetstream.KeyValueEntry),
 	onDeleted func(key string),
 	onReady func(),
 ) error {
-	watcher, err := bucket.Watch(pattern, nats.Context(ctx))
+	watcher, err := bucket.Watch(ctx, pattern)
 	if err != nil {
 		return fmt.Errorf("create watcher %s: %w", pattern, err)
 	}
@@ -47,7 +53,7 @@ func watchKV(
 				continue
 			}
 			switch entry.Operation() {
-			case nats.KeyValueDelete, nats.KeyValuePurge:
+			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				if onDeleted != nil {
 					onDeleted(entry.Key())
 				}
@@ -62,9 +68,9 @@ func watchKV(
 // NodeInfo and synthesises a deleted-marker for tombstones so callers see
 // a uniform stream of *NodeInfo events.
 func (cs *ClusterState) nodeWatchHandlers(onChange func(*types.NodeInfo)) (
-	func(nats.KeyValueEntry), func(string),
+	func(jetstream.KeyValueEntry), func(string),
 ) {
-	upsert := func(entry nats.KeyValueEntry) {
+	upsert := func(entry jetstream.KeyValueEntry) {
 		var node types.NodeInfo
 		if err := codec.State.Unmarshal(entry.Value(), &node); err != nil {
 			log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal node")
@@ -80,9 +86,9 @@ func (cs *ClusterState) nodeWatchHandlers(onChange func(*types.NodeInfo)) (
 
 // allocWatchHandlers is the allocation analogue of nodeWatchHandlers.
 func (cs *ClusterState) allocWatchHandlers(onChange func(*types.ServiceAllocation)) (
-	func(nats.KeyValueEntry), func(string),
+	func(jetstream.KeyValueEntry), func(string),
 ) {
-	upsert := func(entry nats.KeyValueEntry) {
+	upsert := func(entry jetstream.KeyValueEntry) {
 		var alloc types.ServiceAllocation
 		if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
 			log.Warn().Err(err).Str("key", entry.Key()).Msg("failed to unmarshal allocation")
@@ -126,7 +132,7 @@ func (cs *ClusterState) WatchAllocationsInit(ctx context.Context, onChange func(
 // true to stop watching — used by drain to wait for a specific transition.
 func (cs *ClusterState) WatchAllocation(ctx context.Context, serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error {
 	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
-	watcher, err := cs.bucket.Watch(key, nats.Context(ctx))
+	watcher, err := cs.bucket.Watch(ctx, key)
 	if err != nil {
 		return fmt.Errorf("watch allocation: %w", err)
 	}
@@ -143,7 +149,7 @@ func (cs *ClusterState) WatchAllocation(ctx context.Context, serviceName, nodeID
 			if entry == nil {
 				continue
 			}
-			if entry.Operation() == nats.KeyValueDelete || entry.Operation() == nats.KeyValuePurge {
+			if entry.Operation() == jetstream.KeyValueDelete || entry.Operation() == jetstream.KeyValuePurge {
 				if fn(nil) {
 					return nil
 				}

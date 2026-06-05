@@ -217,3 +217,59 @@ func TestSchedulerHasResources(t *testing.T) {
 		})
 	}
 }
+
+func TestPartitionAllocsByNode(t *testing.T) {
+	known := map[string]bool{"live1": true, "live2": true}
+	cases := []struct {
+		name        string
+		allocs      []*types.ServiceAllocation
+		wantOnKnown int
+		wantGhosts  int
+	}{
+		{"empty", nil, 0, 0},
+		{"all on known", []*types.ServiceAllocation{{NodeID: "live1"}, {NodeID: "live2"}}, 2, 0},
+		{"all ghosts", []*types.ServiceAllocation{{NodeID: "dead1"}, {NodeID: "dead2"}}, 0, 2},
+		{"mixed", []*types.ServiceAllocation{{NodeID: "live1"}, {NodeID: "dead1"}, {NodeID: "live2"}}, 2, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			onKnown, ghosts := partitionAllocsByNode(tc.allocs, known)
+			if len(onKnown) != tc.wantOnKnown {
+				t.Errorf("onKnown=%d want %d", len(onKnown), tc.wantOnKnown)
+			}
+			if len(ghosts) != tc.wantGhosts {
+				t.Errorf("ghosts=%d want %d", len(ghosts), tc.wantGhosts)
+			}
+			for _, g := range ghosts {
+				if known[g.NodeID] {
+					t.Errorf("ghost %s is on a known node", g.NodeID)
+				}
+			}
+		})
+	}
+}
+
+// TestGhostRunningAllocNotCountedLive guards the regression behind "where
+// did the services go" after a harsh N→1: a "running" copy on a node that
+// has left cluster KV must NOT count as live, or the service looks fully
+// placed and the scheduler never reschedules onto the live survivor.
+func TestGhostRunningAllocNotCountedLive(t *testing.T) {
+	known := map[string]bool{"survivor": true}
+	allocs := []*types.ServiceAllocation{
+		{ServiceName: "xhttp", NodeID: "dead12", Status: types.AllocRunning}, // ghost: node gone from KV
+	}
+
+	// Status alone (the old count) treats the dead-node copy as live.
+	if got := len(LiveAllocations(allocs)); got != 1 {
+		t.Fatalf("precondition: status-only LiveAllocations got %d want 1 (counts the ghost)", got)
+	}
+
+	onKnown, ghosts := partitionAllocsByNode(allocs, known)
+	if len(ghosts) != 1 {
+		t.Fatalf("ghost not detected: got %d want 1", len(ghosts))
+	}
+	// After reaping ghosts, no live copy remains → reschedule can proceed.
+	if got := len(LiveAllocations(onKnown)); got != 0 {
+		t.Fatalf("ghost still counted live after reap: got %d want 0", got)
+	}
+}

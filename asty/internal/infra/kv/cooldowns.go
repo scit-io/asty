@@ -1,13 +1,14 @@
 package kv
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 const serviceCooldownKey = "service.%s.cooldown"
@@ -17,9 +18,11 @@ const serviceCooldownKey = "service.%s.cooldown"
 // so callers can treat "never scaled" and "scaled long ago" uniformly.
 func (cs *ClusterState) GetServiceCooldown(service string) (types.ServiceCooldown, error) {
 	key := fmt.Sprintf(serviceCooldownKey, service)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return types.ServiceCooldown{}, nil
 		}
 		return types.ServiceCooldown{}, fmt.Errorf("failed to get cooldown: %w", err)
@@ -68,7 +71,8 @@ func (cs *ClusterState) SetDeployInProgress(service string, active bool) error {
 func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCooldown)) error {
 	key := fmt.Sprintf(serviceCooldownKey, service)
 	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {
-		entry, err := cs.bucket.Get(key)
+		ctx, cancel := kvCtx()
+		entry, err := cs.bucket.Get(ctx, key)
 		var (
 			rev uint64
 			c   types.ServiceCooldown
@@ -76,30 +80,30 @@ func (cs *ClusterState) mutateCooldown(service string, fn func(*types.ServiceCoo
 		if err == nil {
 			rev = entry.Revision()
 			if err := codec.State.Unmarshal(entry.Value(), &c); err != nil {
+				cancel()
 				return fmt.Errorf("unmarshal cooldown: %w", err)
 			}
-		} else if err != nats.ErrKeyNotFound {
+		} else if !errors.Is(err, jetstream.ErrKeyNotFound) {
+			cancel()
 			return fmt.Errorf("get cooldown: %w", err)
 		}
 		fn(&c)
 		data, err := codec.State.Marshal(&c)
 		if err != nil {
+			cancel()
 			return fmt.Errorf("marshal cooldown: %w", err)
 		}
 		if rev == 0 {
-			if _, err := cs.bucket.Create(key, data); err != nil {
-				if isCASConflict(err) {
-					continue
-				}
-				return fmt.Errorf("create cooldown: %w", err)
-			}
+			_, err = cs.bucket.Create(ctx, key, data)
 		} else {
-			if _, err := cs.bucket.Update(key, data, rev); err != nil {
-				if isCASConflict(err) {
-					continue
-				}
-				return fmt.Errorf("update cooldown: %w", err)
+			_, err = cs.bucket.Update(ctx, key, data, rev)
+		}
+		cancel()
+		if err != nil {
+			if isCASConflict(err) {
+				continue
 			}
+			return fmt.Errorf("write cooldown: %w", err)
 		}
 		return nil
 	}

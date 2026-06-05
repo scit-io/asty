@@ -3,13 +3,14 @@ package kv
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
 	"asty/asty/internal/core/codec"
 	"asty/asty/internal/core/types"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
@@ -50,7 +51,9 @@ func (cs *ClusterState) CreateAllocation(alloc *types.ServiceAllocation) error {
 	}
 
 	key := fmt.Sprintf("alloc.%s.%s", alloc.ServiceName, alloc.NodeID)
-	if _, err := cs.bucket.Put(key, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, data); err != nil {
 		return fmt.Errorf("failed to put allocation: %w", err)
 	}
 
@@ -60,9 +63,11 @@ func (cs *ClusterState) CreateAllocation(alloc *types.ServiceAllocation) error {
 // GetAllocation retrieves a service allocation
 func (cs *ClusterState) GetAllocation(serviceName, nodeID string) (*types.ServiceAllocation, error) {
 	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return nil, fmt.Errorf("allocation not found")
 		}
 		return nil, fmt.Errorf("failed to get allocation: %w", err)
@@ -116,7 +121,9 @@ func (cs *ClusterState) UpdateAllocation(alloc *types.ServiceAllocation) error {
 	}
 
 	key := fmt.Sprintf("alloc.%s.%s", alloc.ServiceName, alloc.NodeID)
-	if _, err := cs.bucket.Put(key, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, data); err != nil {
 		return fmt.Errorf("failed to update allocation: %w", err)
 	}
 
@@ -127,9 +134,11 @@ func (cs *ClusterState) UpdateAllocation(alloc *types.ServiceAllocation) error {
 func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*types.ServiceAllocation) bool) error {
 	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
 	for attempt := 0; attempt < allocationMutateMaxRetries; attempt++ {
-		entry, err := cs.bucket.Get(key)
+		ctx, cancel := kvCtx()
+		entry, err := cs.bucket.Get(ctx, key)
 		if err != nil {
-			if err == nats.ErrKeyNotFound {
+			cancel()
+			if errors.Is(err, jetstream.ErrKeyNotFound) {
 				return fmt.Errorf("allocation not found: %s/%s", serviceName, nodeID)
 			}
 			return fmt.Errorf("failed to get allocation: %w", err)
@@ -137,18 +146,23 @@ func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*ty
 
 		var alloc types.ServiceAllocation
 		if err := codec.State.Unmarshal(entry.Value(), &alloc); err != nil {
+			cancel()
 			return fmt.Errorf("failed to unmarshal allocation: %w", err)
 		}
 		if !fn(&alloc) {
+			cancel()
 			return nil
 		}
 		alloc.UpdatedAt = time.Now()
 
 		data, err := codec.State.Marshal(&alloc)
 		if err != nil {
+			cancel()
 			return fmt.Errorf("failed to marshal allocation: %w", err)
 		}
-		if _, err := cs.bucket.Update(key, data, entry.Revision()); err != nil {
+		_, err = cs.bucket.Update(ctx, key, data, entry.Revision())
+		cancel()
+		if err != nil {
 			if isCASConflict(err) {
 				continue
 			}
@@ -162,7 +176,9 @@ func (cs *ClusterState) MutateAllocation(serviceName, nodeID string, fn func(*ty
 // DeleteAllocation removes an allocation
 func (cs *ClusterState) DeleteAllocation(serviceName, nodeID string) error {
 	key := fmt.Sprintf("alloc.%s.%s", serviceName, nodeID)
-	if err := cs.bucket.Delete(key); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if err := cs.bucket.Delete(ctx, key); err != nil {
 		return fmt.Errorf("failed to delete allocation: %w", err)
 	}
 

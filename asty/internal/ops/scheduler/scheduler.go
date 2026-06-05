@@ -62,6 +62,13 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefi
 	if err != nil {
 		return fmt.Errorf("failed to list nodes: %w", err)
 	}
+
+	// Reap ghost allocations: a copy whose node has left cluster KV (NATS's
+	// authoritative membership) can never run again. Drop it before counting
+	// so a stale "running" copy on a departed node neither blocks rescheduling
+	// onto a live node nor lingers as a phantom in the dashboard.
+	allocs = s.reapGhostAllocations(allocs, nodes)
+
 	healthy := s.FilterHealthyNodes(nodes)
 	if len(healthy) == 0 {
 		return fmt.Errorf("no healthy nodes available")
@@ -79,6 +86,36 @@ func (s *Scheduler) ReconcileService(ctx context.Context, svc *types.ServiceDefi
 	default:
 		return fmt.Errorf("unknown service type: %s", svc.Type)
 	}
+}
+
+// reapGhostAllocations deletes allocations whose node has left cluster KV
+// and returns the survivors (those on nodes that still exist). It runs on
+// the leader only, since ReconcileService is leader-only. A node is "gone"
+// per NATS's authoritative membership — the KV node list — not per the
+// allocation's own (possibly stale) status. Survivors are returned even if
+// a delete fails, so a transient delete error never makes a ghost count as
+// live and block rescheduling; the next pass retries the delete.
+func (s *Scheduler) reapGhostAllocations(allocs []*types.ServiceAllocation, nodes []*types.NodeInfo) []*types.ServiceAllocation {
+	known := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		known[n.ID] = true
+	}
+	onKnown, ghosts := partitionAllocsByNode(allocs, known)
+	for _, g := range ghosts {
+		if err := s.clusterState.DeleteAllocation(g.ServiceName, g.NodeID); err != nil {
+			log.Warn().Err(err).
+				Str("service", g.ServiceName).
+				Str("node_id", g.NodeID).
+				Msg("failed to reap ghost allocation")
+			continue
+		}
+		log.Info().
+			Str("service", g.ServiceName).
+			Str("node_id", g.NodeID).
+			Str("status", string(g.Status)).
+			Msg("reaped ghost allocation: node gone from cluster KV")
+	}
+	return onKnown
 }
 
 // FilterHealthyNodes keeps only ready nodes with recent heartbeats.

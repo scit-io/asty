@@ -19,7 +19,9 @@ type scaleOverride struct {
 // Second return is false when no override has been set.
 func (cs *ClusterState) GetServiceScale(service string) (int, bool) {
 	key := fmt.Sprintf(serviceScaleKey, service)
-	entry, err := cs.bucket.Get(key)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := cs.bucket.Get(ctx, key)
 	if err != nil {
 		return 0, false
 	}
@@ -41,7 +43,9 @@ func (cs *ClusterState) SetServiceScale(service string, count int) error {
 		return fmt.Errorf("marshal scale: %w", err)
 	}
 	key := fmt.Sprintf(serviceScaleKey, service)
-	if _, err := cs.bucket.Put(key, data); err != nil {
+	ctx, cancel := kvCtx()
+	defer cancel()
+	if _, err := cs.bucket.Put(ctx, key, data); err != nil {
 		return fmt.Errorf("put scale: %w", err)
 	}
 	return nil

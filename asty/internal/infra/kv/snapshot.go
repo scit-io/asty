@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // snapshotReadTimeout caps the wait for a single bucket Watch's initial
@@ -16,7 +16,7 @@ const snapshotReadTimeout = 30 * time.Second
 
 // snapshotKVByPattern reads every current key+value matching pattern in
 // one streaming Watch pass — replaces the N+1 round-trip pattern of
-// bucket.Keys() + per-key bucket.Get().
+// Keys() + per-key Get().
 //
 // Pattern uses NATS subject wildcards: `node.*` matches every node entry,
 // `alloc.>` matches every allocation, `alloc.{svc}.*` matches one service.
@@ -24,12 +24,13 @@ const snapshotReadTimeout = 30 * time.Second
 // The watcher emits a nil entry to signal "initial history complete" —
 // we stop reading at that marker, which gives us a point-in-time snapshot.
 // Tombstones (deleted/purged entries) are filtered via IgnoreDeletes so
-// callers don't have to.
+// callers don't have to. A fresh watcher (ordered consumer) is created per
+// call, so this read recovers on its own after a broker restart.
 func (cs *ClusterState) snapshotKVByPattern(pattern string) (map[string][]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), snapshotReadTimeout)
 	defer cancel()
 
-	watcher, err := cs.bucket.Watch(pattern, nats.IgnoreDeletes(), nats.Context(ctx))
+	watcher, err := cs.bucket.Watch(ctx, pattern, jetstream.IgnoreDeletes())
 	if err != nil {
 		return nil, fmt.Errorf("watch %s: %w", pattern, err)
 	}

@@ -1,6 +1,8 @@
 package leader
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -8,6 +10,7 @@ import (
 	"asty/asty/internal/core/netutil"
 
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 )
 
 // leaderKey is the well-known KV entry that holds the current leader's
@@ -20,6 +23,10 @@ const leaderKey = "current-leader"
 // the next campaigner can claim it.
 const leaderTTL = 10 * time.Second
 
+// kvOpTimeout caps one KV Get/Create/Put/Delete round-trip on the
+// context-based jetstream API.
+const kvOpTimeout = 10 * time.Second
+
 // Info holds leader identification data stored in KV.
 type Info struct {
 	ID   string `json:"id"`
@@ -27,11 +34,13 @@ type Info struct {
 	Host string `json:"host,omitempty"` // operator-provided public DNS name, when set
 }
 
-// Election handles leader election via NATS JetStream KV.
+// Election handles leader election via NATS JetStream KV. It uses the
+// nats.go `jetstream` package (NOT the deprecated JetStreamContext): the
+// WatchLeadership ordered consumer auto-recreates after a nats-server
+// restart (the natssolo 2→1 collapse), so leadership-flip detection
+// survives the broker bounce. See nats.go #1094/#1097.
 type Election struct {
-	nc       *nats.Conn
-	js       nats.JetStreamContext
-	bucket   nats.KeyValue
+	bucket   jetstream.KeyValue
 	nodeID   string
 	nodeIP   string
 	nodeHost string
@@ -40,12 +49,12 @@ type Election struct {
 
 // NewElection creates a new leader election instance.
 func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, error) {
-	js, err := nc.JetStream()
+	js, err := jetstream.New(nc)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get JetStream context: %w", err)
+		return nil, fmt.Errorf("jetstream init: %w", err)
 	}
 
-	bucket, err := netutil.EnsureBucket(js, &nats.KeyValueConfig{
+	bucket, err := netutil.EnsureBucket(js, jetstream.KeyValueConfig{
 		Bucket:      "asty-leader",
 		Description: "Asty leader election",
 		TTL:         leaderTTL,
@@ -56,13 +65,16 @@ func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, err
 	}
 
 	return &Election{
-		nc:       nc,
-		js:       js,
 		bucket:   bucket,
 		nodeID:   nodeID,
 		nodeIP:   nodeIP,
 		nodeHost: nodeHost,
 	}, nil
+}
+
+// kvCtx returns a bounded context for a single KV operation.
+func kvCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), kvOpTimeout)
 }
 
 // IsLeader returns whether this node is currently the leader.
@@ -73,9 +85,11 @@ func (e *Election) IsLeader() bool {
 // GetLeader returns the current leader info, or an error if no leader is
 // recorded yet.
 func (e *Election) GetLeader() (Info, error) {
-	entry, err := e.bucket.Get(leaderKey)
+	ctx, cancel := kvCtx()
+	defer cancel()
+	entry, err := e.bucket.Get(ctx, leaderKey)
 	if err != nil {
-		if err == nats.ErrKeyNotFound {
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
 			return Info{}, fmt.Errorf("no leader elected")
 		}
 		return Info{}, fmt.Errorf("failed to get leader: %w", err)
