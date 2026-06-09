@@ -46,14 +46,25 @@ const kvTotalBudget = 30 * time.Second
 // false during multi-node startup and prevents convergence. Open
 // returns the existing bucket as-is, leaving the stream's current
 // Replicas (managed by streamreplicas.go) untouched.
+// Race-safe: two joining servers can both see the bucket as missing
+// and race the Create; the loser gets ErrStreamNameAlreadyInUse and
+// the wrapper re-tries KeyValue, which now succeeds. Per NATS docs
+// (docs.nats.io: "Bucket creation is idempotent at the protocol level"),
+// CreateKeyValue is the right primitive for first-create and KeyValue
+// for open; CreateOrUpdate is the only one that mutates an existing
+// stream's config, which is why we avoid it.
 func EnsureBucket(js jetstream.JetStream, cfg jetstream.KeyValueConfig) (jetstream.KeyValue, error) {
 	bucket, err := retryWithBackoff(func() (jetstream.KeyValue, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), kvMaxBackoff)
 		defer cancel()
-		if kv, err := js.KeyValue(ctx, cfg.Bucket); err == nil {
+		if kv, openErr := js.KeyValue(ctx, cfg.Bucket); openErr == nil {
 			return kv, nil
 		}
-		return js.CreateKeyValue(ctx, cfg)
+		if kv, createErr := js.CreateKeyValue(ctx, cfg); createErr == nil {
+			return kv, nil
+		}
+		// Race lost (another joiner created it in between) — re-open.
+		return js.KeyValue(ctx, cfg.Bucket)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure bucket %s: %w", cfg.Bucket, err)

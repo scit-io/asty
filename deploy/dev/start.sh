@@ -715,12 +715,17 @@ wait_asty() {
   # Simple check: are the processes alive?
   sleep 2
 
+  # `sudo kill -0` (not unprivileged): agent runs under sudo, so its
+  # PID is owned by root; an unprivileged kill -0 from this script's
+  # user gets EPERM and falsely reports the process dead. Single sudo
+  # kill -0 works for both root-owned (agent) and user-owned (server)
+  # PIDs.
   local pidfile pid
   for pidfile in "${PID_FILE_TMPL}-"*; do
     [[ -f "$pidfile" ]] || continue
     while IFS= read -r pid; do
       [[ -n "$pid" ]] || continue
-      if ! kill -0 "$pid" 2>/dev/null; then
+      if ! sudo kill -0 "$pid" 2>/dev/null; then
         die "Asty process (PID=$pid, from $pidfile) died. Check logs in /tmp/asty-dev-*.log"
       fi
     done < "$pidfile"
