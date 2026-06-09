@@ -227,24 +227,27 @@ sync_hosts() {
     count=$((count + 1))
   done
   block+="$HOSTS_END"
-  # Strip any prior block (read needs no sudo — /etc/hosts is world-
-  # readable), append the fresh one, swap the file back with sudo.
+  # Strip any prior block via `sudo sed` (root-owned `/etc/hosts` may be
+  # mode 0600 — see comment above macOS default; an unprivileged sed
+  # would fail "Permission denied"), append the fresh one, swap the file
+  # back with `install` so the result keeps 0644 root:wheel even if the
+  # mktemp temp file is 0600 (which `sudo cp` would otherwise inherit).
   tmp=$(mktemp)
-  sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
+  sudo sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
   printf '%s\n' "$block" >> "$tmp"
-  sudo cp "$tmp" /etc/hosts
+  sudo install -m 0644 -o root -g wheel "$tmp" /etc/hosts
   rm -f "$tmp"
   info "$HOSTS_NAME (RR) + n<i>.$HOSTS_NAME → $count node(s) in /etc/hosts"
 }
 
 # teardown_hosts removes the asty.test block from /etc/hosts.
 teardown_hosts() {
-  grep -q "^# >>> asty-dev" /etc/hosts 2>/dev/null || return 0
+  sudo grep -q "^# >>> asty-dev" /etc/hosts 2>/dev/null || return 0
   log "removing $HOSTS_NAME from /etc/hosts (requires sudo)..."
   local tmp
   tmp=$(mktemp)
-  sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
-  sudo cp "$tmp" /etc/hosts
+  sudo sed "/^# >>> asty-dev/,/^# <<< asty-dev/d" /etc/hosts > "$tmp"
+  sudo install -m 0644 -o root -g wheel "$tmp" /etc/hosts
   rm -f "$tmp"
 }
 
