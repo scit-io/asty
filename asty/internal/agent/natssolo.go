@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -26,29 +25,6 @@ import (
 // immediately, or unrouteable IP times out. Only called in the
 // QUORUM_LOST gate, never on the hot path.
 const bootstrapReachableProbeTimeout = 250 * time.Millisecond
-
-// soloPeerInactivity is how long a meta-peer can be silent in JSZ
-// before this node treats it as gone. Matches server-side
-// reapPeerInactivityThreshold (15s) — same NATS RAFT hbInterval=1s
-// background, so the threshold makes sense on either side.
-const soloPeerInactivity = 15 * time.Second
-
-// soloJSZTimeout caps the local JSZ round-trip used by the
-// quorum-lost gate. Keep it short — the request goes to our own
-// nats-server over loopback, never across the cluster.
-const soloJSZTimeout = 2 * time.Second
-
-// soloCollapseGracePeriod is the wait between the first QUORUM_LOST
-// detection and the final collapse decision — one nats-server
-// lostQuorumInterval (raft.go: 10s). A genuine 1→N grow uses this
-// window to settle: the joining peer's route opens and its RAFT entry
-// shows up in JSZ before we'd collapse. A genuine 2→1 shrink sees
-// nothing new in the window and collapses. Using the NATS RAFT timing
-// itself as the differentiator avoids any local "bootstrap stale or
-// not" state that can drift from NATS's view under quorum loss
-// (KV-watch is dead under N=2 unplug, so peers.bootstrap stays full
-// of stale entries — the bug user hit on step 15 of N=12→1 degrade).
-const soloCollapseGracePeriod = 10 * time.Second
 
 // Collapse to a single node when a 2-node cluster loses its peer.
 //
@@ -125,106 +101,44 @@ func (a *Agent) watchQuorumLost(ctx context.Context) {
 	}
 }
 
-// handleQuorumLost decides whether this advisory is a genuine 2→1
-// SHRINK (collapse to standalone) or something else (ignore). JSZ is
-// the SINGLE source of truth — the local nats-server's own RAFT view,
-// which answers without consulting cluster quorum, so it works the
-// moment KV-watch stops under quorum loss.
+// handleQuorumLost decides whether this advisory is a genuine SHRINK
+// to standalone (collapse) or just a transient quorum loss with peers
+// still alive (skip).
 //
-// Two cases collapse here:
-//   - peerCount > 1: a real live meta peer is still visible → at N≥3
-//     this advisory reaches a partitioned minority that RAFT stalls
-//     while the majority keeps serving; collapsing would split-brain.
-//   - genuine GROW (1→N): a joiner's route is opening but its RAFT
-//     entry is not in JSZ yet. The local peerCount looks like 1 but
-//     a peer is about to appear. We must NOT collapse — that would
-//     slam :6222 shut before the joiner arrives.
+// Event-driven, no timer: the gate is one TCP probe against each known
+// peer's cluster port. ECONNREFUSED / timeout means "peer dead" (event
+// from the kernel); SYN-ACK means "peer alive" (event). If any known
+// peer answers right now, other survivors exist and the meta cluster
+// will re-form on its own — collapsing would split-brain. Only when
+// EVERY known peer is unreachable does this node go solo.
 //
-// Differentiator: WAIT one RAFT lostQuorumInterval (10s per
-// nats-server raft.go) and re-read JSZ. A joining peer's RAFT entry
-// shows up inside that window; a dead peer does not. peerCount that
-// stays at 1 across the window is a genuine SHRINK; peerCount that
-// grows is a GROW. The previous gate used a local `bootstrap` set
-// (cleared by KV-watch deletes), which under N=2 unplug stayed
-// permanently non-empty (KV-watch dead) and blocked the collapse
-// forever — the unplug bug user reported. Replacing that with NATS's
-// own RAFT timing removes the local state altogether: NATS is the
-// single source of truth, as the cluster-state coding rule requires.
+// Why TCP and not JSZ: under a leader-kill cascade the local nats-
+// server's meta_cluster view fragments transiently — every survivor's
+// JSZ briefly shows itself alone — but their cluster ports stay open
+// the whole time. JSZ would say "alone" → collapse on all of them →
+// split-brain. The TCP probe sidesteps that by asking the OS directly.
+//
+// 1→N grow safety: a joining peer's nats-server has :6222 open as soon
+// as it starts (before it shows up in any other peer's JSZ). hasAny-
+// ReachablePeer detects that and skips the collapse.
+//
+// `peers.allPeerIPs()` returns bootstrap ∪ byNode; bootstrap is seeded
+// at start from $A_NATS_SEED + CmdAddPeer announces, byNode comes from
+// the cluster-KV WatchNodes. Under quorum loss KV stalls but bootstrap
+// still has every IP this node ever heard about — exactly the addresses
+// to probe.
 func (a *Agent) handleQuorumLost(m *nats.Msg) {
 	if !a.clusteredNow() {
 		return
 	}
-	peerCount, err := a.metaPeerCountFromJSZ()
-	if err != nil {
-		log.Warn().Err(err).Str("advisory", m.Subject).
-			Msg("quorum-lost: cannot count meta peers via JSZ; skipping collapse this round")
-		return
-	}
-	if peerCount > 1 {
-		log.Debug().Int("meta_peers", peerCount).Str("advisory", m.Subject).
-			Msg("quorum-lost: still have live meta peers; not a 2→1 shrink")
-		return
-	}
-	// peerCount == 1: either genuine shrink, or a grow whose joiner
-	// hasn't registered in meta yet. Wait one RAFT lostQuorumInterval
-	// and re-check — a joiner shows up, a dead peer does not.
-	log.Info().Str("advisory", m.Subject).Dur("wait", soloCollapseGracePeriod).
-		Msg("quorum-lost: I'm alone in meta; waiting one lostQuorumInterval to distinguish shrink from grow")
-	time.Sleep(soloCollapseGracePeriod)
-	if !a.clusteredNow() {
-		// We've already gone standalone (another advisory triggered).
-		return
-	}
-	peerCount2, err := a.metaPeerCountFromJSZ()
-	if err != nil {
-		log.Warn().Err(err).Str("advisory", m.Subject).
-			Msg("quorum-lost: post-wait JSZ failed; skipping collapse this round")
-		return
-	}
-	if peerCount2 > 1 {
-		log.Info().Int("meta_peers", peerCount2).Str("advisory", m.Subject).
-			Msg("quorum-lost: peer appeared during grace window; this is a GROW, abandoning collapse")
+	if a.hasAnyReachablePeer() {
+		log.Debug().Str("advisory", m.Subject).
+			Msg("quorum-lost: a known peer is TCP-reachable; not alone, skipping collapse")
 		return
 	}
 	log.Warn().Str("advisory", m.Subject).
-		Msg("2-node cluster lost quorum: collapsing to single-node (KV reused from disk at R=1)")
+		Msg("cluster lost quorum and no peer reachable: collapsing to single-node (KV reused from disk at R=1)")
 	a.signalNATSSolo()
-}
-
-// metaPeerCountFromJSZ returns the number of JetStream meta-cluster
-// peers this node currently sees as live (self + any replica whose
-// last RAFT heartbeat is within soloPeerInactivity). 1 means "I'm
-// alone." The local nats-server answers $SYS.REQ.SERVER.<id>.JSZ
-// directly, without consulting cluster quorum, so this works even
-// when KV is stalled.
-func (a *Agent) metaPeerCountFromJSZ() (int, error) {
-	if a.ncSys == nil {
-		return 0, fmt.Errorf("no SYS NATS connection (observer creds missing)")
-	}
-	subj := fmt.Sprintf("$SYS.REQ.SERVER.%s.JSZ", a.ncSys.ConnectedServerId())
-	msg, err := a.ncSys.Request(subj, nil, soloJSZTimeout)
-	if err != nil {
-		return 0, fmt.Errorf("JSZ request: %w", err)
-	}
-	var resp struct {
-		Data struct {
-			Meta struct {
-				Replicas []struct {
-					Active int64 `json:"active"` // nanoseconds since the last heartbeat from this peer
-				} `json:"replicas"`
-			} `json:"meta_cluster"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(msg.Data, &resp); err != nil {
-		return 0, fmt.Errorf("JSZ decode: %w", err)
-	}
-	count := 1 // self
-	for _, r := range resp.Data.Meta.Replicas {
-		if time.Duration(r.Active) < soloPeerInactivity {
-			count++
-		}
-	}
-	return count, nil
 }
 
 // performSoloTransition runs inside the supervisor after it has stopped

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"time"
 
 	"asty/asty/internal/core/types"
 )
@@ -74,9 +75,9 @@ func (gw *Gateway) collectClusterHosts() []string {
 
 // nodeIsServingTraffic is the gateway's own definition of "OK to send
 // users here". Mirrors types.NodeInfo.IsHealthy and excludes drained /
-// paused nodes from a balancer's pool. Heartbeat freshness is enforced
-// by NATS per-key TTL on the KV record, so any node still readable
-// here is fresh by construction.
+// paused nodes from a balancer's pool, and folds heartbeat staleness
+// into the decision so an unplugged node leaves the pool within one
+// heartbeat-stale window even before its KV record is reaped.
 func nodeIsServingTraffic(n *types.NodeInfo) bool {
-	return n.IsHealthy()
+	return n.IsHealthy(time.Now())
 }

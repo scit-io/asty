@@ -2,6 +2,7 @@ package prometheus
 
 import (
 	"net/http"
+	"time"
 
 	prometheusclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -51,8 +52,9 @@ func Handler(ctx Context) http.Handler {
 				return 0
 			}
 			healthy := 0
+			now := time.Now()
 			for _, n := range nodes {
-				if n.IsHealthy() {
+				if n.IsHealthy(now) {
 					healthy++
 				}
 			}

@@ -4,6 +4,41 @@ This is the **only** protocol for running multi-cycle N→1 / 1→N
 resilience tests against the asty/NATS cluster. Follow it verbatim.
 Do not improvise, do not skip steps, do not re-derive from memory.
 
+## -1. Hard constraints (read first, every iteration)
+
+These two constraints supersede every other section. Violating
+either invalidates the iteration and the run.
+
+### -1.1 Strictly event-driven — NO timers visible
+
+The orchestrator must react to **events** (NATS advisories, KV
+watch updates, process callbacks, TCP-probe results). No
+`time.Sleep`, `time.After`, `time.NewTimer`, `time.NewTicker`,
+`time.AfterFunc` in production code paths that influence cluster
+decisions (leadership, collapse, replica reconcile, dead-peer
+reap, …). A user reading the code must NOT see a timer used to
+"wait a bit" before deciding.
+
+The accepted (and documented) exception list is small:
+operation timeouts (a single bounded `ctx.WithTimeout` around
+one I/O call), protocol keepalives (SSE/WS pings), HTTP-server
+read/write deadlines, periodic-snapshot rebuilds that are
+already documented in CLAUDE.md as event-driven-with-safety-net.
+Anything ELSE that wants to "wait" is wrong; replace with an
+explicit subscribe-and-wait on the matching advisory or KV
+watch.
+
+### -1.2 Commit only after three consecutive passing rechecks
+
+A fix that resolves the immediate error is **not** ready to
+commit. Run the failing phase THREE times in a row with the
+fix in place. All three must pass cleanly. Only then `git commit`
+(no push, no force-push). The point: a flaky pass once means
+nothing; three in a row eliminates the obvious race.
+
+If any of the three rechecks fails, the fix is wrong — revert
+it (§3.1) and try a different hypothesis.
+
 ## 0. Primary reference: NATS specification (live, not cache)
 
 **Every** decision touching cluster, JetStream, RAFT, KV, replicas,
