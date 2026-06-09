@@ -26,6 +26,15 @@ type NATSCreds struct {
 	Password string
 }
 
+// errText returns err.Error() or "" — keeps log fields clean when the
+// closed-handler fires after a graceful Close (LastError is nil then).
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 // ConnectNATS opens a NATS connection using the supplied credentials and
 // tags it with name (used in NATS server logs to tell agent/server apart).
 // It retries on connection failure until natsConnectTimeout elapses so a
@@ -36,11 +45,36 @@ type NATSCreds struct {
 // callers attach DiscoveredServersHandler / ReconnectHandler / etc.
 // without forking ConnectNATS.
 //
+// Default handlers are attached for slow-consumer / disconnect /
+// reconnect / closed events. Without them nats.go drops these to
+// stderr silently — observed: a 12→1 degrade produced 19 advisory
+// publishes/30s confirmed via external probe, while the agent's
+// SubscribeSync received zero, with no error in the agent log because
+// the slow-consumer event went to the default discard sink.
+//
 // The caller owns the returned connection and must Close it when done.
 func ConnectNATS(creds NATSCreds, name string, extraOpts ...nats.Option) (*nats.Conn, error) {
 	url := fmt.Sprintf("nats://%s:%d", creds.Host, creds.Port)
 
-	opts := []nats.Option{nats.Name(name)}
+	opts := []nats.Option{
+		nats.Name(name),
+		nats.ErrorHandler(func(_ *nats.Conn, sub *nats.Subscription, err error) {
+			subj := ""
+			if sub != nil {
+				subj = sub.Subject
+			}
+			log.Warn().Str("conn", name).Str("subject", subj).Err(err).Msg("nats async error (slow consumer / permission / protocol)")
+		}),
+		nats.DisconnectErrHandler(func(_ *nats.Conn, err error) {
+			log.Warn().Str("conn", name).Err(err).Msg("nats disconnected")
+		}),
+		nats.ReconnectHandler(func(c *nats.Conn) {
+			log.Info().Str("conn", name).Str("url", c.ConnectedUrl()).Msg("nats reconnected")
+		}),
+		nats.ClosedHandler(func(c *nats.Conn) {
+			log.Warn().Str("conn", name).Str("last_err_text", errText(c.LastError())).Msg("nats closed")
+		}),
+	}
 	if creds.User != "" {
 		opts = append(opts, nats.UserInfo(creds.User, creds.Password))
 	}

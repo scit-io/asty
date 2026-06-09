@@ -111,10 +111,6 @@ func (api *API) handleNodePause(w http.ResponseWriter, r *http.Request) {
 		api.writeError(w, http.StatusNotFound, "node not found", err)
 		return
 	}
-	if node.Status == types.NodeDown {
-		api.writeError(w, http.StatusBadRequest, "node is down", nil)
-		return
-	}
 	if node.Status == types.NodeDraining || node.Status == types.NodeDrained {
 		api.writeError(w, http.StatusBadRequest, "node is draining/drained; resume drain first", nil)
 		return

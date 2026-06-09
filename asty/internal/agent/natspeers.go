@@ -92,6 +92,51 @@ func (p *natsPeers) hasBootstrap() bool {
 	return len(p.bootstrap) > 0
 }
 
+// bootstrapSnapshot returns the current bootstrap IP set, suitable for
+// iteration without holding the lock.
+func (p *natsPeers) bootstrapSnapshot() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	out := make([]string, 0, len(p.bootstrap))
+	for ip := range p.bootstrap {
+		out = append(out, ip)
+	}
+	return out
+}
+
+// allPeerIPs returns the union of byNode and bootstrap IPs — every
+// "other peer" this node knows about, regardless of source. The
+// natssolo gate uses this for TCP-reachability probes so a stale
+// byNode (KV-watch missed a delete) does not block the collapse.
+func (p *natsPeers) allPeerIPs() []string {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	all := make(map[string]struct{}, len(p.byNode)+len(p.bootstrap))
+	for _, ip := range p.byNode {
+		all[ip] = struct{}{}
+	}
+	for ip := range p.bootstrap {
+		all[ip] = struct{}{}
+	}
+	out := make([]string, 0, len(all))
+	for ip := range all {
+		out = append(out, ip)
+	}
+	return out
+}
+
+// dropBootstrap removes a single IP from the bootstrap set. Returns
+// whether the IP was actually present.
+func (p *natsPeers) dropBootstrap(ip string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.bootstrap[ip]; !ok {
+		return false
+	}
+	delete(p.bootstrap, ip)
+	return true
+}
+
 // reset clears every known peer so the next render produces a standalone
 // (no cluster{} block) conf. Used by the solo transition when this node
 // becomes the last one.
@@ -203,17 +248,22 @@ func (a *Agent) watchNATSPeers(ctx context.Context) {
 		return
 	}
 
-	// No onReady signal: every per-node upsert in the initial replay
-	// already calls onChange below, which signals only on actual peer
-	// set changes. Signaling unconditionally after replay caused a
-	// useless cold restart on every clean agent start (no peers, no
-	// change, but a restart anyway).
 	onChange := func(node *types.NodeInfo) {
 		if node == nil || node.ID == "" || node.ID == a.nodeID {
 			return
 		}
+		isDelete := node.Status == types.NodeDeleted || node.IP == ""
+		// In solo recovery mode, drop late upsert events: KV-watch can
+		// keep delivering stale records of now-dead peers for a while
+		// after natssolo collapses us to standalone, and re-adding them
+		// to byNode triggers a spurious cold-restart back into clustered
+		// mode with cluster.routes pointing at dead IPs. Delete events
+		// (peer cleanup) still go through so byNode drains naturally.
+		if !isDelete && a.inSolo.Load() {
+			return
+		}
 		var changed bool
-		if node.Status == types.NodeDeleted || node.IP == "" {
+		if isDelete {
 			changed = a.peers.remove(node.ID)
 		} else {
 			changed = a.peers.upsert(node.ID, node.IP)

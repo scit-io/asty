@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -57,10 +58,9 @@ func (s *Server) watchStreamReplicas(ctx context.Context) {
 
 // watchNodesForReplicas signals nodeChanged on every node KV event (heartbeats
 // included), so watchStreamReplicas re-runs ~every heartbeat. Over-signalling
-// is harmless — reconcileStreamReplicas is idempotent. Re-establishes the
-// watch if it closes during churn (a clean channel close, which watchKV
-// reports as a nil error); only ctx-cancel exits. bucket.Watch blocks while
-// NATS is unreachable, so the immediate re-open cannot spin.
+// is harmless — reconcileStreamReplicas is idempotent. RetryWatchForever
+// re-establishes on either a clean churn-close or an error with a bounded
+// back-off, so a brief NATS hiccup doesn't busy-loop the reconcile trigger.
 func (s *Server) watchNodesForReplicas(ctx context.Context, nodeChanged chan<- struct{}) {
 	signal := func() {
 		select {
@@ -68,15 +68,9 @@ func (s *Server) watchNodesForReplicas(ctx context.Context, nodeChanged chan<- s
 		default:
 		}
 	}
-	for ctx.Err() == nil {
-		err := s.clusterState.WatchNodes(ctx, func(*types.NodeInfo) { signal() })
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			log.Warn().Err(err).Msg("stream-replicas: node watcher errored, re-establishing")
-		}
-	}
+	netutil.RetryWatchForever(ctx, "stream-replicas-nodes", watcherRetryDelay, func(ctx context.Context) error {
+		return s.clusterState.WatchNodes(ctx, func(*types.NodeInfo) { signal() })
+	})
 }
 
 // reconcileCluster is the leader-only cluster-placement pass: bring stream

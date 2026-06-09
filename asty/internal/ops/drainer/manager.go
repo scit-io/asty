@@ -92,9 +92,6 @@ func (dm *DrainManager) Start(nodeID string) (*DrainStatus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("node not found: %w", err)
 	}
-	if node.Status == types.NodeDown {
-		return nil, fmt.Errorf("node %s is down", nodeID)
-	}
 	if node.Status == types.NodeDrained {
 		return nil, fmt.Errorf("node %s is already drained", nodeID)
 	}

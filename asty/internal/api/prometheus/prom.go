@@ -2,7 +2,6 @@ package prometheus
 
 import (
 	"net/http"
-	"time"
 
 	prometheusclient "github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -44,17 +43,16 @@ func Handler(ctx Context) http.Handler {
 	reg.MustRegister(prometheusclient.NewGaugeFunc(
 		prometheusclient.GaugeOpts{
 			Name: "asty_cluster_nodes_healthy",
-			Help: "Number of nodes whose last_seen is within the staleness window (cluster.nodes_healthy in the UI).",
+			Help: "Number of nodes whose status is Ready (cluster.nodes_healthy in the UI). Stale heartbeats are removed by per-key TTL on the KV record, so anything readable here is fresh by construction.",
 		},
 		func() float64 {
 			nodes, err := ctx.ClusterState().ListNodes()
 			if err != nil {
 				return 0
 			}
-			now := time.Now()
 			healthy := 0
 			for _, n := range nodes {
-				if n.IsHealthy(now) {
+				if n.IsHealthy() {
 					healthy++
 				}
 			}

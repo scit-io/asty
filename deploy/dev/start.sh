@@ -8,9 +8,22 @@
 #   ./start.sh 3           — 3 nodes (server + agent each, with leader election)
 #   ./start.sh add         — grow a running cluster by one node
 #   ./start.sh kill [N]    — shrink: tear down node N (default: highest-numbered)
+#   ./start.sh degrade     — hard N→1: SIGKILL the current leader every step
 #   ./start.sh stop        — stop everything
 
 set -euo pipefail
+
+# Dev-only: ensure every file the cluster creates (nats.conf, log files,
+# JetStream store, pidfiles) is world-readable, so Claude can inspect
+# them WITHOUT sudo. The agent runs under `sudo -E ...` and its default
+# root umask (022) already produces 644 files, but the JetStream store
+# is created by nats-server with restrictive 700/600 permissions; we
+# override below via post-creation chmod -R a+rX on $DATA_BASE.
+#
+# This is local dev convenience only. The asty binary itself, and the
+# prod start scripts under deploy/prod/, are untouched and keep their
+# default permissions.
+umask 022
 
 # =============================================================================
 # Paths
@@ -57,6 +70,28 @@ info() { echo -e "${CYAN}  $*${NC}"; }
 warn() { echo -e "${YELLOW}⚠${NC} $*"; }
 die()  { echo -e "${RED}✗ $*${NC}" >&2; exit 1; }
 
+# ensure_paths_writable bails out with one precise fix-up command if
+# any of DATA_BASE / per-node log files are root-owned and the current
+# user can't write to them. This happens after a previous run under
+# sudo left files owned by root; without sudo, today's run would fail
+# with "Permission denied" inside redirects to those logs (which bash
+# opens BEFORE the wrapped command can chown them itself).
+ensure_paths_writable() {
+  if [[ "${EUID}" -eq 0 ]]; then return; fi
+  local dirty=()
+  [[ -e "$DATA_BASE" && ! -w "$DATA_BASE" ]] && dirty+=("$DATA_BASE")
+  local f
+  for f in /tmp/asty-dev-*.log; do
+    [[ -e "$f" && ! -w "$f" ]] && dirty+=("$f")
+  done
+  if (( ${#dirty[@]} > 0 )); then
+    warn "previous sudo run left ${#dirty[@]} path(s) root-owned; re-claiming them..."
+    sudo -n chown -R "${USER}":staff "${dirty[@]}" 2>/dev/null && return
+    sudo chown -R "${USER}":staff "${dirty[@]}" 2>/dev/null && return
+    die "cannot reclaim root-owned paths. Run once: sudo chown -R ${USER}:staff /tmp/asty-dev /tmp/asty-dev-*.log"
+  fi
+}
+
 # =============================================================================
 # Dependency check
 # =============================================================================
@@ -91,11 +126,15 @@ build_binaries() {
   mkdir -p "$BIN_DIR"
   cd "$ROOT_DIR"
 
-  go build -o "$BIN_DIR/asty" ./asty/cmd
+  # -buildvcs=false: when start.sh is invoked via sudo the build runs as
+  # root while the repo is owned by the operator, git refuses the safe.
+  # directory check, and `go build` aborts on VCS stamping. We don't ship
+  # the VCS stamp into dev binaries so disabling it is a clean fix.
+  go build -buildvcs=false -o "$BIN_DIR/asty" ./asty/cmd
   info "✓ asty"
 
   for svc in xauth xhttp xws; do
-    go build -o "$BIN_DIR/$svc" "./demo/cmd/$svc"
+    go build -buildvcs=false -o "$BIN_DIR/$svc" "./demo/cmd/$svc"
     info "✓ $svc"
   done
 
@@ -261,7 +300,17 @@ load_vars() {
 start_asty() {
   local nodes=$1
   log "starting Asty: $nodes nodes (server + agent on each)..."
+  ensure_paths_writable
   mkdir -p "$DATA_BASE"
+  # When the script runs via sudo, ensure DATA_BASE + per-node log
+  # files belong to the invoking user so subsequent invocations
+  # without sudo can still write to them. Otherwise a sudo-`add`
+  # followed by a plain `add` gets Permission denied on
+  # /tmp/asty-dev/nodeN or /tmp/asty-dev-{server,agent}-N.log.
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    chown -R "${SUDO_USER}":staff "$DATA_BASE" 2>/dev/null || true
+    chown "${SUDO_USER}":staff /tmp/asty-dev-*.log 2>/dev/null || true
+  fi
   # Bring nodes up ONE AT A TIME via add_node, which returns only after
   # the cluster has fully normalized (stabilized=1) — so the next node
   # never outruns NATS settling the previous replica change (piling them
@@ -339,7 +388,11 @@ wait_cluster_stable() {
 # is alive.
 live_seed_ip() {
   local i addr
-  for i in $(seq 1 16); do
+  # Iterate over existing per-node pidfiles instead of a hardcoded
+  # index range. After many add/degrade cycles, node indices can climb
+  # past 100 — `seq 1 16` would miss every live survivor and `add`
+  # would bail with "no live cluster node to seed from".
+  for i in $(node_indices); do
     addr="127.0.0.$i"
     curl -fsS --max-time 1 "http://${addr}:7060/health" >/dev/null 2>&1 && { printf '%s' "$addr"; return 0; }
   done
@@ -461,6 +514,15 @@ start_node() {
 # (node 1 when alive, else any survivor), and existing agents pick up the
 # new peer KV-side (WatchNodes) and SIGHUP their nats-server to add the route.
 add_node() {
+  ensure_paths_writable
+  # When invoked via sudo, ensure DATA_BASE + per-node log files are
+  # writable by the calling user so a follow-up plain `add` doesn't
+  # hit "Permission denied" on /tmp/asty-dev/nodeN or
+  # /tmp/asty-dev-{server,agent}-N.log.
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" && -d "$DATA_BASE" ]]; then
+    chown -R "${SUDO_USER}":staff "$DATA_BASE" 2>/dev/null || true
+    chown "${SUDO_USER}":staff /tmp/asty-dev-*.log 2>/dev/null || true
+  fi
   # Next free index = max existing + 1, from the pidfiles. On a clean
   # start node_indices is empty → i=1 (standalone bootstrap); on a live
   # cluster it's max+1 (joins the seed). One path for both the N-node
@@ -633,6 +695,13 @@ wait_asty() {
     done < "$pidfile"
   done
 
+  # Dev-only: make everything under $DATA_BASE world-readable so Claude
+  # can inspect nats.conf, JetStream store, and pidfiles without sudo.
+  # See umask comment at top of file. Failure is non-fatal — at worst
+  # operator still needs sudo for inspection.
+  sudo -n chmod -R a+rX "$DATA_BASE" 2>/dev/null || true
+  sudo -n chmod a+r /tmp/asty-dev-*.log 2>/dev/null || true
+
   info "Asty up"
 }
 
@@ -670,6 +739,206 @@ print_status() {
   info "agent-1 log:  tail -f /tmp/asty-dev-agent-1.log"
   echo ""
   info "Stop with: $SCRIPT_DIR/start.sh stop"
+}
+
+# =============================================================================
+# Hard N→1 degradation — SIGKILL the current leader on every step
+# =============================================================================
+# degrade_cluster shrinks the running cluster down to one node by repeatedly
+# yanking whoever is the JS-meta / leader-election leader RIGHT NOW. This is
+# the hardest schedule: every kill targets the node carrying the most state,
+# so the cluster has to elect a new leader, evict the dead peer, and rebalance
+# replicas before the next kill lands.
+#
+# Survivor-side recovery is the cluster's responsibility — reapDeadPeers
+# (server/deadpeers.go) + stream-placement repair (server/streamplacement.go).
+# This script only kicks; it does not nurse the cluster between kicks.
+
+# degradeConvergeBudget — hard wall-clock cap on the SSE wait after one
+# SIGKILL. 5 min covers the worst case where the JS meta leader was the
+# killed node and the next election rolls into peerRemoveTimeout.
+degradeConvergeBudget=300
+
+degrade_seed() {
+  local i addr
+  for i in $(node_indices); do
+    addr="127.0.0.$i"
+    if curl -fsS --max-time 1 "http://${addr}:7060/health" >/dev/null 2>&1; then
+      printf '%s\n' "$addr"
+      return 0
+    fi
+  done
+  return 1
+}
+
+degrade_snapshot() {
+  local seed="$1"
+  curl -fsS --max-time 3 -H "Authorization: Bearer ${A_TOKEN:-}" \
+    "http://${seed}:7060/dashboard/v1/" 2>/dev/null
+}
+
+degrade_stab() {
+  local seed="$1"
+  curl -fsS --max-time 2 "http://${seed}:7060/metrics" 2>/dev/null \
+    | awk '/^asty_cluster_stabilized / {print $2}'
+}
+
+degrade_yank_node() {
+  # Hard unplug. Skip the dashboard CmdShutdown, skip SIGTERM grace —
+  # this MUST be indistinguishable from a power yank, so the cluster
+  # recovers from JSZ/RAFT signals alone (reapDeadPeers + stream-
+  # placement repair on the survivor side), not from anything the
+  # dying node cooperated with. Returns non-zero only on a sudo cache
+  # miss; missing host processes are no-ops.
+  local idx="$1"
+  local pidfile="${PID_FILE_TMPL}-$idx"
+  local nats_conf="$DATA_BASE/work/dev-node-$idx/nats.conf"
+  local addr="127.0.0.$idx"
+
+  if ! sudo -n true 2>/dev/null; then
+    warn "[$idx] sudo cache empty — yank cannot proceed"
+    return 1
+  fi
+
+  log "yanking node $idx (id=dev-node-$idx, ip=$addr) — hard kill, no graceful path"
+
+  if [[ -f "$pidfile" ]]; then
+    local server_pid agent_pid
+    server_pid=$(sed -n '1p' "$pidfile")
+    agent_pid=$(sed -n '2p' "$pidfile")
+    if [[ -n "$server_pid" ]]; then
+      if kill -9 "$server_pid" 2>/dev/null; then
+        info "✓ server PID $server_pid SIGKILL"
+      else
+        info "  server PID $server_pid already gone"
+      fi
+    fi
+    if [[ -n "$agent_pid" ]]; then
+      if sudo -n pkill -9 -P "$agent_pid" 2>/dev/null; then
+        info "✓ agent children of $agent_pid SIGKILL"
+      fi
+      sleep 0.2
+      if ! sudo -n kill -0 "$agent_pid" 2>/dev/null; then
+        info "✓ agent wrapper PID $agent_pid gone (via child SIGKILL)"
+      elif sudo -n kill -9 "$agent_pid" 2>/dev/null; then
+        info "✓ agent wrapper PID $agent_pid SIGKILL"
+      else
+        warn "agent wrapper PID $agent_pid: kill failed"
+      fi
+    fi
+  fi
+  if sudo -n pkill -9 -f "nats-server -c $nats_conf" 2>/dev/null; then
+    info "✓ nats-server (conf $nats_conf) SIGKILL"
+  fi
+
+  # Drop pidfile + per-node state. Pidfile removal drops the node
+  # from node_indices so degrade's main loop sees the new live count.
+  rm -f "$pidfile"
+  sudo rm -rf "$DATA_BASE/work/dev-node-$idx" "$DATA_BASE/jetstream/dev-node-$idx" "$DATA_BASE/node$idx"
+
+  # Rebuild /etc/hosts so the SPA round-robin set matches the survivors.
+  sync_hosts $(node_indices)
+
+  # Loopback alias on macOS — tear down so a future add reusing this
+  # index re-binds cleanly. Failure is non-fatal.
+  if [[ "$(uname)" == "Darwin" && "$idx" != "1" ]]; then
+    sudo -n ifconfig lo0 -alias "$addr" 2>/dev/null && info "✓ loopback alias $addr removed" || true
+  fi
+
+  info "node $idx yanked. Survivor-side recovery (reapDeadPeers + stream re-placement) runs on the cluster."
+}
+
+degrade_wait_converged() {
+  local prev_leader="$1" budget="$2"
+  local deadline=$((SECONDS + budget))
+  local seed snap leader stab
+  while (( SECONDS < deadline )); do
+    seed=$(degrade_seed) || { sleep 1; continue; }
+    snap=$(degrade_snapshot "$seed") || { sleep 1; continue; }
+    leader=$(printf '%s' "$snap" | grep -oE '"leader":"[^"]*"' | head -1 | cut -d'"' -f4)
+    stab=$(degrade_stab "$seed")
+    if [[ -n "$leader" && "$leader" != "$prev_leader" && "$stab" == "1" ]]; then
+      printf '%s|%s\n' "$seed" "$leader"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+degrade_cluster() {
+  # Disable pipefail+errexit locally: curl timeouts (rc=28) inside the
+  # many polling pipelines below otherwise propagate up and kill the
+  # script mid-iteration, even though the next retry would succeed.
+  # Each step has explicit return-1 paths for genuine failures.
+  set +eo pipefail
+  log "hard N→1 degradation: SIGKILL the current leader, wait full reconvergence, repeat"
+
+  # Mirror EVERYTHING the rest of this script prints to a log file —
+  # both stdout and stderr — so the operator doesn't need to copy-paste.
+  DEGRADE_LOG="/tmp/asty-dev-degrade.log"
+  : > "$DEGRADE_LOG"
+  log "degrade output (stdout + stderr) mirrored to $DEGRADE_LOG"
+  exec > >(tee -a "$DEGRADE_LOG") 2>&1
+
+  if ! sudo -v 2>/dev/null; then
+    sudo -v || die "degrade needs cached sudo to SIGKILL agents — run 'sudo -v' first"
+  fi
+
+  local step=0 seed snap leader idx live stab out wait_rc new_leader
+  while true; do
+    step=$((step + 1))
+    sudo -n -v 2>/dev/null || warn "[$step] sudo cache lapsed — kill_node will fail; run 'sudo -v' in the terminal that owns this degrade run"
+
+    live=$(node_indices | wc -l | tr -d ' ')
+    if (( live <= 1 )); then
+      log "[$step] one node remains under operator control — degradation complete"
+      break
+    fi
+
+    seed=$(degrade_seed) || { warn "[$step] no dashboard answering — aborting"; return 1; }
+    snap=$(degrade_snapshot "$seed")
+    leader=$(printf '%s' "$snap" | grep -oE '"leader":"[^"]*"' | head -1 | cut -d'"' -f4)
+    stab=$(degrade_stab "$seed")
+    if [[ -z "$leader" ]]; then
+      warn "[$step] no leader reported via $seed — aborting"
+      return 1
+    fi
+    log "[$step] live=$live via $seed leader=$leader stab=$stab"
+
+    # leader id format: dev-node-<i>
+    idx="${leader##*-}"
+    info "[$step] SIGKILL leader $leader (idx=$idx) — node off the wire"
+    ( degrade_yank_node "$idx" ) || warn "[$step] degrade_yank_node returned non-zero — pressing on"
+
+    info "[$step] waiting on SSE for reconvergence (new leader + stabilized=true), budget ${degradeConvergeBudget}s"
+    out=$(degrade_wait_converged "$leader" "$degradeConvergeBudget") || true
+    wait_rc=$?
+    if [[ -n "$out" ]]; then
+      info "  [$step] wait_converged returned rc=$wait_rc out='$out'"
+      new_leader="${out##*|}"
+      info "[$step] converged via ${out%%|*} — new leader=$new_leader"
+    else
+      info "  [$step] wait_converged returned rc=$wait_rc out=''"
+      warn "[$step] cluster did NOT reconverge within ${degradeConvergeBudget}s — survivor-side recovery is stuck"
+      warn "[$step] aborting run; inspect /tmp/asty-dev-server-*.log for replica/peer errors"
+      return 1
+    fi
+  done
+
+  seed=$(degrade_seed 2>/dev/null) || { warn "no node alive at end of run"; return 0; }
+  # Wait for the survivor's KV view to reflect alone-state (nodes_total=1).
+  # Without this the final snapshot can show stale ghosts from before the
+  # natssolo collapse, falsely suggesting degrade didn't finish.
+  local final_deadline=$((SECONDS + 60)) snap_total
+  while (( SECONDS < final_deadline )); do
+    snap_total=$(degrade_snapshot "$seed" | grep -oE '"nodes_total":[0-9]+' | head -1 | cut -d: -f2)
+    [[ "$snap_total" == "1" ]] && break
+    sleep 2
+  done
+  info "final state via $seed:"
+  degrade_snapshot "$seed" | head -1 || true
+  log "✓ degradation complete (survivor remains)"
 }
 
 # =============================================================================
@@ -747,8 +1016,18 @@ if [[ "$CMD" == "kill" ]]; then
   exit 0
 fi
 
+if [[ "$CMD" == "degrade" ]]; then
+  check_deps
+  sweep_orphan_nodes
+  if ! compgen -G "${PID_FILE_TMPL}-*" > /dev/null; then
+    die "no running cluster found (no ${PID_FILE_TMPL}-*). Start one with: $0 [N]"
+  fi
+  degrade_cluster
+  exit 0
+fi
+
 if ! [[ "$CMD" =~ ^[0-9]+$ ]] || [[ "$CMD" -lt 1 ]]; then
-  die "usage: $0 [NODES|stop|add|kill [N]]  (NODES ≥ 1, default 1)"
+  die "usage: $0 [NODES|stop|add|kill [N]|degrade]  (NODES ≥ 1, default 1)"
 fi
 
 NODES="$CMD"

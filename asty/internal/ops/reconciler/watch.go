@@ -4,9 +4,8 @@ import (
 	"context"
 	"time"
 
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
-
-	"github.com/rs/zerolog/log"
 )
 
 // watchRetryDelay — how long to wait before re-establishing a KV watch
@@ -19,11 +18,13 @@ const watchRetryDelay = 2 * time.Second
 // owning service for re-reconciliation. We track the last seen status
 // per allocation to suppress no-op updates, and the
 // AllocStarting→AllocPending transition that the controller itself
-// causes during dispatchOne rollbacks.
+// causes during dispatchOne rollbacks. The watch is re-established on a
+// clean churn-close too — exiting would silently stop reacting until the
+// periodic resync.
 func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
-	for ctx.Err() == nil {
+	netutil.RetryWatchForever(ctx, "reconciler-allocs", watchRetryDelay, func(ctx context.Context) error {
 		seen := make(map[string]types.AllocationStatus)
-		err := c.state.WatchAllocations(ctx, func(a *types.ServiceAllocation) {
+		return c.state.WatchAllocations(ctx, func(a *types.ServiceAllocation) {
 			id := a.ServiceName + "/" + a.NodeID
 			if a.Status == types.AllocDeleted {
 				delete(seen, id)
@@ -39,28 +40,17 @@ func (c *ServiceController) watchAllocsToQueue(ctx context.Context) {
 				c.queue.Add(a.ServiceName)
 			}
 		})
-		if ctx.Err() != nil {
-			return
-		}
-		// Re-establish on a clean close too (see watchNodesToQueue) — exiting
-		// would silently stop reacting to allocation changes until the resync.
-		if err != nil {
-			log.Error().Err(err).Msg("alloc watcher errored, re-establishing")
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(watchRetryDelay):
-			}
-		}
-	}
+	})
 }
 
 // watchNodesToQueue enqueues every service when any node's status
-// changes — node membership affects placement for all services.
+// changes — node membership affects placement for all services. Like
+// watchAllocsToQueue, re-establishes on both errors and clean closes so
+// placement doesn't lag a join/leave that lands during NATS churn.
 func (c *ServiceController) watchNodesToQueue(ctx context.Context) {
-	for ctx.Err() == nil {
+	netutil.RetryWatchForever(ctx, "reconciler-nodes", watchRetryDelay, func(ctx context.Context) error {
 		seen := make(map[string]types.NodeStatus)
-		err := c.state.WatchNodes(ctx, func(n *types.NodeInfo) {
+		return c.state.WatchNodes(ctx, func(n *types.NodeInfo) {
 			if n.Status == types.NodeDeleted {
 				delete(seen, n.ID)
 				c.enqueueAllServices()
@@ -72,24 +62,7 @@ func (c *ServiceController) watchNodesToQueue(ctx context.Context) {
 				c.enqueueAllServices()
 			}
 		})
-		if ctx.Err() != nil {
-			return
-		}
-		// WatchNodes returned while the ctx is alive — an error, or a clean
-		// close (the KV watcher's channel closes when its consumer is
-		// disrupted during churn). RE-ESTABLISH rather than exit: a dead watch
-		// would silently stop re-enqueuing services on membership changes
-		// until the periodic resync, so placement would lag every join and
-		// leave. The fresh watch replays node.* so nothing is missed.
-		if err != nil {
-			log.Error().Err(err).Msg("node watcher errored, re-establishing")
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(watchRetryDelay):
-			}
-		}
-	}
+	})
 }
 
 // periodicResync is the safety net: even if every watcher works, we

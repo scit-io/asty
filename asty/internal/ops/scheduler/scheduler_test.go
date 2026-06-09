@@ -174,22 +174,23 @@ func TestLiveAllocations(t *testing.T) {
 func TestSchedulerFilterHealthyNodes(t *testing.T) {
 	scheduler := &Scheduler{cfg: &config.Config{}}
 
+	// Heartbeat freshness is enforced by per-key TTL on the KV record
+	// (infra/kv/nodes.go::nodeKVTTL). Any NodeInfo this function ever
+	// sees is, by construction, fresh — so the filter just rejects
+	// non-Ready statuses and keeps everything else.
 	nodes := []*types.NodeInfo{
-		{ID: "n1", Status: types.NodeReady, LastSeen: time.Now()},
-		{ID: "n2", Status: types.NodeDraining, LastSeen: time.Now()},
-		{ID: "n3", Status: types.NodeReady, LastSeen: time.Now().Add(-20 * time.Minute)},
-		{ID: "n4", Status: types.NodeReady, LastSeen: time.Now()},
+		{ID: "n1", Status: types.NodeReady},
+		{ID: "n2", Status: types.NodeDraining},
+		{ID: "n3", Status: types.NodeReady},
+		{ID: "n4", Status: types.NodeReady},
 	}
 	healthy := scheduler.FilterHealthyNodes(nodes)
-	if len(healthy) != 2 {
-		t.Errorf("expected 2 healthy nodes, got %d", len(healthy))
+	if len(healthy) != 3 {
+		t.Errorf("expected 3 healthy nodes, got %d", len(healthy))
 	}
 	for _, n := range healthy {
 		if n.Status != types.NodeReady {
 			t.Errorf("non-ready node leaked through: %s (%s)", n.ID, n.Status)
-		}
-		if time.Since(n.LastSeen) > nodeStaleAfter {
-			t.Errorf("stale node leaked through: %s", n.ID)
 		}
 	}
 }

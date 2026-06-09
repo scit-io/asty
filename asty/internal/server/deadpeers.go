@@ -75,6 +75,21 @@ func (s *Server) reapDeadPeers() bool {
 // meta leader's view is authoritative — in RAFT only the leader pings
 // every peer, so a follower cannot reliably tell which peers are
 // offline.
+//
+// Field timing in nats-server (verified live + source — raft.go in 2.14.2):
+//   hbInterval           = 1 s  (RAFT heartbeat from each peer)
+//   lostQuorumInterval   = 10 s (current=false once silent that long)
+//   peerRemoveTimeout    = 5 min (offline=true; the official flag)
+//
+// We reap on either:
+//   - active >= reapPeerInactivityThreshold (peer silent that long; this
+//     is the fast path — ~15 s after a SIGKILL), OR
+//   - Offline (5-min belt-and-braces backup the server itself sets).
+//
+// Current alone is NOT enough — a live peer can transiently show
+// current=false while it's catching up after a route flap or GC pause
+// (we burned a cluster sending SERVER.REMOVE on live peers when we
+// reaped purely on !Current).
 type jszResponse struct {
 	Server struct {
 		Name string `json:"name"`
@@ -85,11 +100,21 @@ type jszResponse struct {
 			Size     int    `json:"cluster_size"`
 			Replicas []struct {
 				Name    string `json:"name"`
+				Current bool   `json:"current"`
 				Offline bool   `json:"offline"`
+				Active  int64  `json:"active"` // nanoseconds since last heartbeat from this peer
 			} `json:"replicas"`
 		} `json:"meta_cluster"`
 	} `json:"data"`
 }
+
+// reapPeerInactivityThreshold is how long a meta peer can be silent
+// (no RAFT heartbeat) before we treat it as gone. nats-server hb is
+// 1 s; healthy peers report active ~hundreds of milliseconds. 15 s
+// is well past any transient route flap or GC pause but well below
+// the 5-minute peerRemoveTimeout default, which is what makes unplug
+// recovery seconds-fast instead of minutes-fast.
+const reapPeerInactivityThreshold = 15 * time.Second
 
 // offlineMetaPeers returns the node IDs (== NATS server_names) the
 // JetStream meta leader currently considers offline. It broadcasts
@@ -127,7 +152,8 @@ func (s *Server) offlineMetaPeers() ([]string, error) {
 		}
 		out := make([]string, 0)
 		for _, r := range resp.Data.Meta.Replicas {
-			if r.Offline {
+			silent := time.Duration(r.Active) >= reapPeerInactivityThreshold
+			if r.Offline || silent {
 				out = append(out, r.Name)
 			}
 		}

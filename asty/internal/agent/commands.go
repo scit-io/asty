@@ -164,6 +164,10 @@ func (a *Agent) applyPeerAnnounce(ip string) bool {
 		log.Debug().Str("ip", ip).Msg("add-peer: already known, no-op")
 		return false
 	}
+	// An incoming-peer signal is the only event that legitimately exits
+	// solo recovery — KV-watch upserts on their own can be stale
+	// post-natssolo and must NOT clear the flag (see watchNATSPeers).
+	a.inSolo.Store(false)
 	a.signalNATSRestart()
 	log.Info().Str("ip", ip).Msg("add-peer: registered, signalled nats-server restart")
 	return true

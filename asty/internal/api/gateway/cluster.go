@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
-	"time"
 
 	"asty/asty/internal/core/types"
 )
@@ -54,14 +53,13 @@ func (gw *Gateway) collectClusterHosts() []string {
 		gw.log.Warn().Err(err).Msg("cluster-hosts: ListNodes failed; serving empty list")
 		return []string{}
 	}
-	now := time.Now()
 	seen := make(map[string]struct{}, len(nodes))
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		if n == nil || n.Host == "" {
 			continue
 		}
-		if !nodeIsServingTraffic(n, now) {
+		if !nodeIsServingTraffic(n) {
 			continue
 		}
 		if _, dup := seen[n.Host]; dup {
@@ -75,17 +73,10 @@ func (gw *Gateway) collectClusterHosts() []string {
 }
 
 // nodeIsServingTraffic is the gateway's own definition of "OK to send
-// users here". Mirrors types.NodeInfo.IsHealthy (live heartbeat) and
-// adds the status filter: drained / paused / down nodes shouldn't
-// appear in a balancer's pool.
-func nodeIsServingTraffic(n *types.NodeInfo, now time.Time) bool {
-	if !n.IsHealthy(now) {
-		return false
-	}
-	switch n.EffectiveStatus(now) {
-	case types.NodeReady:
-		return true
-	default:
-		return false
-	}
+// users here". Mirrors types.NodeInfo.IsHealthy and excludes drained /
+// paused nodes from a balancer's pool. Heartbeat freshness is enforced
+// by NATS per-key TTL on the KV record, so any node still readable
+// here is fresh by construction.
+func nodeIsServingTraffic(n *types.NodeInfo) bool {
+	return n.IsHealthy()
 }

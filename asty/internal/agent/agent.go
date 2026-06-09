@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/netutil"
@@ -115,6 +116,19 @@ type Agent struct {
 	// (the operator explicitly cleared the drain or the node is just
 	// coming up).
 	lastOperatorStatus types.NodeStatus
+
+	// inSolo is set after performSoloTransition runs and stays true
+	// until an explicit incoming-peer signal (CmdAddPeer or
+	// peer-announce) arrives. While set, watchNATSPeers drops late
+	// upsert events for dead peers that would otherwise reintroduce
+	// them into byNode and trigger a spurious cold-restart back into
+	// clustered mode (observed live 2026-06-09: KV-watch delivered a
+	// stale upsert for dev-node-9 one second after natssolo finished,
+	// causing the survivor to cold-restart with cluster.routes pointing
+	// at a dead peer and stall in "Waiting for routing"). Per NATS
+	// source there is no runtime clustered→standalone transition —
+	// this flag is our application-level equivalent.
+	inSolo atomic.Bool
 }
 
 // New creates a new Asty agent. The work directory is created on disk

@@ -53,7 +53,7 @@ func (h *streamHub) buildSnapshot() *types.ClusterSnapshot {
 		node.AllocationsRunning = running
 		node.AllocationsPlanned = planned
 
-		if node.IsHealthy(now) {
+		if node.IsHealthy() {
 			healthy++
 		}
 	}

@@ -1,8 +1,6 @@
 package drainer
 
 import (
-	"time"
-
 	"asty/asty/internal/core/types"
 )
 
@@ -16,19 +14,19 @@ type allocOnNode struct {
 }
 
 // hasOtherReadyNode reports whether any node OTHER than nodeID is
-// effectively Ready. Used as the drain guard so we don't promise
-// migration when there's nothing to migrate to.
+// Ready. Used as the drain guard so we don't promise migration when
+// there's nothing to migrate to. Stale records get TTL'd out by NATS
+// before they ever land here, so reading Status directly is sound.
 func (dm *DrainManager) hasOtherReadyNode(nodeID string) bool {
 	nodes, err := dm.deps.ClusterState().ListNodes()
 	if err != nil {
 		return false
 	}
-	now := time.Now()
 	for _, n := range nodes {
 		if n.ID == nodeID {
 			continue
 		}
-		if n.EffectiveStatus(now) == types.NodeReady {
+		if n.Status == types.NodeReady {
 			return true
 		}
 	}

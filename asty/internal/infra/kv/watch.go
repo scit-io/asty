@@ -30,8 +30,9 @@ func watchKV(
 	onUpsert func(entry jetstream.KeyValueEntry),
 	onDeleted func(key string),
 	onReady func(),
+	opts ...jetstream.WatchOpt,
 ) error {
-	watcher, err := bucket.Watch(ctx, pattern)
+	watcher, err := bucket.Watch(ctx, pattern, opts...)
 	if err != nil {
 		return fmt.Errorf("create watcher %s: %w", pattern, err)
 	}
@@ -107,6 +108,17 @@ func (cs *ClusterState) allocWatchHandlers(onChange func(*types.ServiceAllocatio
 func (cs *ClusterState) WatchNodes(ctx context.Context, onChange func(*types.NodeInfo)) error {
 	upsert, deleted := cs.nodeWatchHandlers(onChange)
 	return watchKV(ctx, cs.bucket, "node.*", upsert, deleted, nil)
+}
+
+// WatchNodesUpdatesOnly is WatchNodes without history replay — only events
+// that happen AFTER the watcher subscribes are delivered. Used by the
+// server's self-removal watcher: under per-key-TTL ghost cleanup, the bucket
+// may still carry stale delete-markers (up to LimitMarkerTTL) from a previous
+// unplug, and a normal Watch's replay would mis-fire watchSelfRemoval the
+// instant a fresh server starts.
+func (cs *ClusterState) WatchNodesUpdatesOnly(ctx context.Context, onChange func(*types.NodeInfo)) error {
+	upsert, deleted := cs.nodeWatchHandlers(onChange)
+	return watchKV(ctx, cs.bucket, "node.*", upsert, deleted, nil, jetstream.UpdatesOnly())
 }
 
 // WatchNodesInit is like WatchNodes but also calls onReady once after the

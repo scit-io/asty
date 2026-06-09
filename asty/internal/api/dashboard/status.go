@@ -3,7 +3,6 @@ package dashboard
 import (
 	"asty/asty/internal/api/stream"
 	"net/http"
-	"time"
 )
 
 // handleCluster serves GET /. Returns the cluster overview — either
@@ -28,9 +27,8 @@ func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
 	healthyNodes := 0
 	var leaderNodeID, leaderDC, leaderHost string
 	leaderHost = leaderInfo.Host
-	now := time.Now()
 	for _, node := range nodes {
-		if node.IsHealthy(now) {
+		if node.IsHealthy() {
 			healthyNodes++
 		}
 		if node.IP == leaderInfo.IP {

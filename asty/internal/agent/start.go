@@ -141,6 +141,19 @@ func (a *Agent) Start(ctx context.Context) error {
 			log.Warn().Err(err).Msg("shutdown: failed to deregister node from cluster state")
 		}
 	}
+	// Explicitly tell the local server process to stop. This is an event
+	// the server treats as the ONLY legitimate self-shutdown signal —
+	// it must not exit on KV-delete events, because the per-key TTL
+	// reaping the node.<id> record under a degraded KV would otherwise
+	// cascade every surviving node into shutdown when it most needs to
+	// keep running. See server/shutdownsignal.go.
+	if a.nc != nil {
+		subj := fmt.Sprintf("asty.v1.server.%s.shutdown", a.nodeID)
+		if err := a.nc.Publish(subj, nil); err != nil {
+			log.Warn().Err(err).Str("subj", subj).Msg("shutdown: publish server-shutdown signal failed")
+		}
+		_ = a.nc.Flush()
+	}
 	// Stop spawned services first (while the local broker is still up so
 	// they can clean up), then tear NATS down — stopNATSSupervisor blocks
 	// until the nats-server child has actually exited, so the process never

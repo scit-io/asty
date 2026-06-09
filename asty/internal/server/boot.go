@@ -26,7 +26,8 @@ import (
 // Tunables (metricsRetention, logBufferLines, …) live in tunables.go.
 
 // Start brings up the server. Returns when ctx is cancelled (parent
-// signal, or watchSelfRemoval firing on our own KV-entry delete).
+// signal, or watchShutdownSignal firing on an explicit
+// asty.v1.server.<id>.shutdown event from the local agent).
 func (s *Server) Start(parent context.Context) error {
 	log.Info().Str("node_id", s.nodeID).Msg("server starting")
 
@@ -38,8 +39,8 @@ func (s *Server) Start(parent context.Context) error {
 		defer s.ncSys.Close()
 	}
 
-	// Child ctx so watchSelfRemoval can end Start on its own — see
-	// selfremoval.go.
+	// Child ctx so watchShutdownSignal can end Start on its own — see
+	// shutdownsignal.go.
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	s.lifeCtx = ctx
@@ -54,7 +55,7 @@ func (s *Server) Start(parent context.Context) error {
 		return err
 	}
 
-	go s.watchSelfRemoval(ctx, cancel)
+	go s.watchShutdownSignal(ctx, cancel)
 	s.seedDevMockNodes()
 
 	// Start leader-scoped work once if we're already the leader; the

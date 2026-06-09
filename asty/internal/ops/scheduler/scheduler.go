@@ -3,7 +3,6 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"asty/asty/internal/core/config"
 	"asty/asty/internal/core/types"
@@ -12,12 +11,6 @@ import (
 
 	"github.com/rs/zerolog/log"
 )
-
-// nodeStaleAfter — heartbeat-age threshold beyond which a node is
-// excluded from scheduling. Distinct from NodeInfo.IsHealthy (2 min) by
-// design: scheduling tolerates a longer lag because moving allocations
-// is more expensive than skipping a stats refresh.
-const nodeStaleAfter = 10 * time.Minute
 
 // Placement is a scheduling decision: place ServiceName on NodeID.
 type Placement struct {
@@ -118,25 +111,16 @@ func (s *Scheduler) reapGhostAllocations(allocs []*types.ServiceAllocation, node
 	return onKnown
 }
 
-// FilterHealthyNodes keeps only ready nodes with recent heartbeats.
-// Joining/Stale/Draining/etc. are excluded explicitly via EffectiveStatus
-// so a brief network blip or a still-initialising node doesn't get a
-// new copy placed on it.
+// FilterHealthyNodes keeps only Ready nodes. Joining/Draining/Drained/
+// Paused are excluded by status; ghost/unreachable nodes never reach
+// here because NATS per-key TTL on node.<id> removes their KV record
+// before the watcher can replay it.
 func (s *Scheduler) FilterHealthyNodes(nodes []*types.NodeInfo) []*types.NodeInfo {
 	healthy := make([]*types.NodeInfo, 0, len(nodes))
-	now := time.Now()
 	for _, node := range nodes {
-		if node.EffectiveStatus(now) != types.NodeReady {
-			continue
+		if node.Status == types.NodeReady {
+			healthy = append(healthy, node)
 		}
-		if time.Since(node.LastSeen) > nodeStaleAfter {
-			log.Warn().
-				Str("node_id", node.ID).
-				Time("last_seen", node.LastSeen).
-				Msg("node stale, excluding from scheduling")
-			continue
-		}
-		healthy = append(healthy, node)
 	}
 	return healthy
 }

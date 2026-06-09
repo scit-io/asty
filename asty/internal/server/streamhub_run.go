@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"asty/asty/internal/core/netutil"
 	"asty/asty/internal/core/types"
 
 	"github.com/nats-io/nats.go"
@@ -100,8 +101,8 @@ func (h *streamHub) startWatchers(ctx context.Context, triggerRefresh func()) (n
 }
 
 func (h *streamHub) watchNodes(ctx context.Context, ready chan<- struct{}, triggerRefresh func()) {
-	for ctx.Err() == nil {
-		err := h.server.clusterState.WatchNodesInit(ctx,
+	netutil.RetryWatchForever(ctx, "streamHub-nodes", watcherRetryDelay, func(ctx context.Context) error {
+		return h.server.clusterState.WatchNodesInit(ctx,
 			func(n *types.NodeInfo) {
 				isNew := !h.idx.hasNode(n.ID)
 				isDel := n.Status == types.NodeDeleted
@@ -121,19 +122,12 @@ func (h *streamHub) watchNodes(ctx context.Context, ready chan<- struct{}, trigg
 				}
 			},
 		)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			log.Warn().Err(err).Msg("streamHub: node watcher error, retrying")
-			time.Sleep(watcherRetryDelay)
-		}
-	}
+	})
 }
 
 func (h *streamHub) watchAllocs(ctx context.Context, ready chan<- struct{}) {
-	for ctx.Err() == nil {
-		err := h.server.clusterState.WatchAllocationsInit(ctx,
+	netutil.RetryWatchForever(ctx, "streamHub-allocs", watcherRetryDelay, func(ctx context.Context) error {
+		return h.server.clusterState.WatchAllocationsInit(ctx,
 			func(a *types.ServiceAllocation) { h.idx.onAlloc(a) },
 			func() {
 				select {
@@ -142,14 +136,7 @@ func (h *streamHub) watchAllocs(ctx context.Context, ready chan<- struct{}) {
 				}
 			},
 		)
-		if ctx.Err() != nil {
-			return
-		}
-		if err != nil {
-			log.Warn().Err(err).Msg("streamHub: alloc watcher error, retrying")
-			time.Sleep(watcherRetryDelay)
-		}
-	}
+	})
 }
 
 // waitFor blocks until ch fires or ctx is cancelled. Returns true if
