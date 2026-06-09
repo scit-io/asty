@@ -3,7 +3,7 @@
 # Pinned to match the github.com/nats-io/nats-server/v2 line in go.mod.
 # Bump both together so the JSON shapes the agent decodes from
 # $SYS.SERVER.<id>.STATSZ keep matching the running server.
-NATS_SERVER_VERSION = 2.14.0
+NATS_SERVER_VERSION = 2.14.2
 
 # Build orchestrator binary
 build:
