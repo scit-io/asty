@@ -121,12 +121,14 @@ func (s *Server) reconcileStreamReplicas(ctx context.Context, size int) {
 			s.setStreamReplicas(ctx, js, info, target)
 			continue
 		}
-		// Count already matches the cluster size; make sure the PLACEMENT is
-		// healthy too — evict any dead replica so JetStream re-places it on a
-		// live node (streamplacement.go). Without this, a node death that
-		// doesn't change the replica count leaves the stream at online<R
-		// forever, so clusterHealed never reports healed.
-		s.repairStreamPlacement(info)
+		// Count already matches the cluster size; the meta-wide reaper
+		// (reapDeadPeers / SERVER.REMOVE) is the single eviction path for
+		// dead peers. A successful SERVER.REMOVE makes JetStream
+		// auto-reassign the evicted peer's stream replicas to live nodes,
+		// so a per-stream STREAM.PEER.REMOVE pass on top of it was pure
+		// overhead — and ran BEFORE the meta-level eviction in the same
+		// pass, racing with it on the same dead peer in the meta vs. the
+		// stream RAFT group. Removed for that reason.
 	}
 	if err := infos.Err(); err != nil {
 		log.Warn().Err(err).Msg("stream-replicas: listing streams failed")
