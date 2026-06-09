@@ -366,14 +366,45 @@ wait_node_registered() {
 # wait got stuck at stabilized=0). Queries the live seed (caller passes it;
 # falls back to any live node) — node 1 may be gone after a degradation run.
 wait_cluster_stable() {
-  local seed_addr="${1:-$(live_seed_ip)}"
-  local url="http://${seed_addr}:7060/metrics"
+  local explicit="${1:-}"
   local deadline=$((SECONDS + 90))
+  local seed_addr remaining
   while (( SECONDS < deadline )); do
-    if curl -fsS --max-time 2 "$url" 2>/dev/null | grep -qE '^asty_cluster_stabilized 1$'; then
-      info "  ✓ cluster normalized (stabilized=1)"
-      return 0
+    # Re-resolve each iteration: at the moment add_node calls this for
+    # i=1 the local asty server may not yet be listening on :7060, so a
+    # one-shot live_seed_ip expansion would lock in an empty seed_addr
+    # and the URL would stay malformed for the whole budget. Re-resolving
+    # picks the seed up as soon as the listener answers /health.
+    # `|| true` on the substitution: without it, set -e propagates
+    # live_seed_ip's "no seed yet" return 1 through the assignment and
+    # aborts the script on the very first iteration (assignment's exit
+    # status IS the rightmost command-sub's status when there's no
+    # `local` keyword on the line).
+    seed_addr="${explicit:-$(live_seed_ip || true)}"
+    if [[ -n "$seed_addr" ]]; then
+      remaining=$((deadline - SECONDS))
+      # Event-driven wait: subscribe to the dashboard SSE stream
+      # (GET /dashboard/v1/ with Accept: text/event-stream — the server
+      # PUSHES one snapshot event per streamHub tick) and exit on the
+      # first '"stabilized":true'. No client-side polling of /metrics:
+      # the server tells us, we don't ask. curl --max-time caps the
+      # SSE read at the remaining budget so a server that never
+      # stabilizes can't block past the wall-clock deadline; on connect
+      # failure (listener still binding) curl returns immediately and
+      # the outer loop reconnects on the next iteration.
+      # Process-substitution form (NOT `curl | grep -m1 -q`): with
+      # `set -o pipefail` the early-exit grep would SIGPIPE curl and
+      # pipefail propagates curl's non-zero exit, swallowing the match.
+      if grep -m1 -q '"stabilized":true' < <(curl -fsSN --max-time "$remaining" \
+           -H "Accept: text/event-stream" \
+           "http://${seed_addr}:7060/dashboard/v1/" 2>/dev/null); then
+        info "  ✓ cluster normalized (stabilized=1)"
+        return 0
+      fi
     fi
+    # Short retry while the listener is still binding (event-source for
+    # "server is up" is a successful connection — there is no out-of-
+    # band signal to subscribe to before then).
     sleep 1
   done
   warn "cluster did not reach stabilized=1 within 90s — continuing anyway"

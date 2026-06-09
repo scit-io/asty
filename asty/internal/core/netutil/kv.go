@@ -25,20 +25,35 @@ const kvMaxBackoff = 3 * time.Second
 // backoff lets the typical case finish far sooner.
 const kvTotalBudget = 30 * time.Second
 
-// EnsureBucket creates the KV bucket (or opens it if it already exists)
-// using the nats.go `jetstream` package, retrying with exponential
-// backoff capped at kvMaxBackoff under a kvTotalBudget total ceiling.
+// EnsureBucket opens the KV bucket if it already exists, otherwise
+// creates it from cfg. Retries with exponential backoff capped at
+// kvMaxBackoff under a kvTotalBudget total ceiling.
 //
 // At boot the local nats-server may still be finishing JetStream init;
-// CreateOrUpdateKeyValue fails until it is ready, so the retry hides that
+// the underlying calls fail until it is ready, so the retry hides that
 // startup race. A success means the bucket exists and is accessible, so
 // no separate readiness probe is needed. Callers (cluster state, leader
 // election) share this one helper instead of duplicating the retry loop.
+//
+// Open-then-create (NOT CreateOrUpdateKeyValue): cfg here carries only
+// the BOOTSTRAP shape (Replicas defaults to 1 because the bucket may
+// be created on a lone first node). On every subsequent startup the
+// bucket already exists at whatever replica count the leader's
+// watchStreamReplicas raised it to as the cluster grew; using
+// CreateOrUpdate would OVERWRITE the actual stream Replicas back to
+// cfg.Replicas (= 0/1) on every server restart, which then re-triggers
+// the leader's raise — a reset→raise loop that keeps clusterHealed
+// false during multi-node startup and prevents convergence. Open
+// returns the existing bucket as-is, leaving the stream's current
+// Replicas (managed by streamreplicas.go) untouched.
 func EnsureBucket(js jetstream.JetStream, cfg jetstream.KeyValueConfig) (jetstream.KeyValue, error) {
 	bucket, err := retryWithBackoff(func() (jetstream.KeyValue, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), kvMaxBackoff)
 		defer cancel()
-		return js.CreateOrUpdateKeyValue(ctx, cfg)
+		if kv, err := js.KeyValue(ctx, cfg.Bucket); err == nil {
+			return kv, nil
+		}
+		return js.CreateKeyValue(ctx, cfg)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("ensure bucket %s: %w", cfg.Bucket, err)

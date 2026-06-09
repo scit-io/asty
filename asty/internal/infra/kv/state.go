@@ -28,6 +28,11 @@ const kvOpTimeout = 10 * time.Second
 // so the streamHub index does not go stale. See nats.go #1094/#1097.
 type ClusterState struct {
 	bucket jetstream.KeyValue
+	// js is kept so node-heartbeat renews can publish directly to the
+	// KV stream subject with a Nats-TTL header. The KV API's Update
+	// path strips that header silently (reproduced live on 2.14.2), so
+	// renew goes through raw JetStream publish — see UpdateNode.
+	js jetstream.JetStream
 }
 
 // New creates a new cluster state manager.
@@ -40,7 +45,19 @@ func New(nc *nats.Conn) (*ClusterState, error) {
 	bucket, err := netutil.EnsureBucket(js, jetstream.KeyValueConfig{
 		Bucket:      "asty-cluster",
 		Description: "Asty cluster state",
-		History:     10,
+		// History=1 (not >1). Per-key TTL — the only signal survivors
+		// have that an unplugged node is gone — silently doesn't fire
+		// on buckets with History>1 on nats-server 2.14.x (reproduced
+		// live: replicas=5+history=1 expires keys, replicas=5+history=10
+		// does not). Past KV revisions are not read anywhere in this
+		// codebase, so History=1 costs nothing.
+		History: 1,
+		// Enables per-key TTL on this bucket. UpdateNode publishes each
+		// `node.<id>` write with a Nats-TTL header so a missed heartbeat
+		// removes the record automatically — survivors see the deletion
+		// via the regular WatchNodes delete-marker, no leader-side
+		// reaper, no cooperation from the dying node.
+		LimitMarkerTTL: time.Minute,
 	})
 	if err != nil {
 		return nil, err
@@ -48,7 +65,7 @@ func New(nc *nats.Conn) (*ClusterState, error) {
 
 	log.Info().Msg("cluster state initialized")
 
-	return &ClusterState{bucket: bucket}, nil
+	return &ClusterState{bucket: bucket, js: js}, nil
 }
 
 // kvCtx returns a bounded context for a single KV operation.
