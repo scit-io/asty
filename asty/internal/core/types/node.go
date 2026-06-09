@@ -2,15 +2,22 @@ package types
 
 import "time"
 
+// nodeHeartbeatFreshAfter — heartbeat must be within this window to
+// count as "fresh". Beyond it the node is Stale: still in KV, still
+// hosting allocations, but not eligible for new placement until a new
+// heartbeat lands. Picked at ~6× the agent's 5s tick so a single
+// missed beat doesn't flip status.
+const NodeHeartbeatFreshAfter = 30 * time.Second
+
+// nodeHeartbeatStaleAfter is the heartbeat-age threshold beyond which a
+// node is considered unhealthy even if it last reported "ready". The agent
+// publishes a heartbeat every 5 s, so 2 min is a wide safety margin that
+// tolerates GC pauses and brief NATS reconnects without removing the node.
+const nodeHeartbeatStaleAfter = 2 * time.Minute
+
 // NodeStatus is the operator-visible state of a cluster node. Like
 // AllocationStatus, defined as a typed string so the compiler catches
 // stray literals.
-//
-// There is no "stale" / "down" status: ghost detection is delegated to
-// NATS per-key TTL on `node.<id>` (see infra/kv/nodes.go::nodeKVTTL).
-// If a node stops sending heartbeats, NATS removes its KV record by
-// itself, watchers see a NodeDeleted event, and that is the only signal
-// downstream code needs.
 type NodeStatus string
 
 const (
@@ -25,6 +32,13 @@ const (
 	// NodeReady — accepting new allocations.
 	NodeReady NodeStatus = "ready"
 
+	// NodeStale — heartbeat overdue but not yet over the down
+	// threshold. Treated as "do not place new copies here" while
+	// existing allocations are left alone, so a brief network blip
+	// doesn't trigger a migration storm. Returns to NodeReady on the
+	// next heartbeat.
+	NodeStale NodeStatus = "stale"
+
 	// NodeDraining — actively being emptied by drain; existing
 	// allocations migrate to peers.
 	NodeDraining NodeStatus = "draining"
@@ -36,6 +50,10 @@ const (
 	// but the scheduler will not place new ones here. Unpause by
 	// setting status back to NodeReady via the API.
 	NodePaused NodeStatus = "paused"
+
+	// NodeDown — heartbeat went stale long enough to be considered
+	// gone. Will not host new allocations.
+	NodeDown NodeStatus = "down"
 
 	// NodeDeleted — synthetic marker emitted by the state-watcher
 	// for KV delete/purge events. Never persisted.
@@ -115,9 +133,32 @@ type NodeInfo struct {
 }
 
 // IsHealthy reports whether the node is currently usable for placement
-// and load reporting: status==NodeReady. Heartbeat freshness is enforced
-// by NATS per-key TTL on the KV record (any node still readable here is,
-// by construction, fresh — stale ones are deleted by NATS itself).
-func (n *NodeInfo) IsHealthy() bool {
-	return n.Status == NodeReady
+// and load reporting: status==NodeReady AND its last heartbeat is recent.
+// Pass time.Now() at the call site so callers driving large loops (e.g.
+// snapshot builds) can reuse a single timestamp.
+func (n *NodeInfo) IsHealthy(at time.Time) bool {
+	return n.Status == NodeReady && at.Sub(n.LastSeen) < nodeHeartbeatStaleAfter
+}
+
+// EffectiveStatus folds heartbeat age into the persisted status. A
+// node persisted as Ready but with an overdue heartbeat is reported
+// as Stale; further-overdue becomes Down. Operator-set states
+// (Draining/Drained/Paused/Joining) bypass the freshness check
+// because they're intentional. Returning a value rather than mutating
+// keeps EffectiveStatus pure — callers decide whether to persist the
+// derived state back to KV.
+func (n *NodeInfo) EffectiveStatus(at time.Time) NodeStatus {
+	switch n.Status {
+	case NodeJoining, NodeDraining, NodeDrained, NodePaused, NodeDeleted:
+		return n.Status
+	}
+	age := at.Sub(n.LastSeen)
+	switch {
+	case age >= nodeHeartbeatStaleAfter:
+		return NodeDown
+	case age >= NodeHeartbeatFreshAfter:
+		return NodeStale
+	default:
+		return NodeReady
+	}
 }
