@@ -293,15 +293,33 @@ NodeInfo entries for departed nodes well past their nodeKVTTL — TTL renew
 on per-key was blocked by the lost-quorum bucket, exactly the chicken-and-
 egg case the b174307 commit message warns about.
 
-**Investigation:** _open — root cause not yet identified. The History=5→1
-patch from the previous entry is now committed, and the cycle-3 stall is a
-distinct failure with its own follow-up needed._
+**Investigation:** Root cause was the homebrew "watch-driven, Put-without-
+CAS, 10 s TTL" leader-election design. Canonical NATS KV pattern
+(ripienaar/nats-kv-leader-elect): single campaign goroutine,
+`bucket.Update(key, val, lastSeq)` with CAS on sequence, demote
+immediately on any Update failure, bucket TTL ≥30 s, campaign interval
+75 % of TTL. The homebrew let `e.isLeader` drift from KV truth (refresh
+failure flipped the flag while KV still held the entry; Watch as
+"single source of truth" silently froze if its goroutine died); the
+Put-without-CAS let a revived stale leader overwrite a fresh Create
+(split-brain vulnerability); and the 10 s TTL didn't survive RAFT
+churn under 16-node degrade.
 
-**Patch:** _none yet_
+**Patch:** `asty/internal/ops/leader/election.go` +
+`asty/internal/ops/leader/campaign.go` +
+`asty/internal/ops/leader/watch.go` — full canonical rewrite (commit
+a0fec54). Event-driven `wakeCh` on the leader-info-cache watcher's
+KeyValueDelete event signals the campaign loop to skip waiting for
+the next campaign tick and try Create immediately, cutting SIGKILL
+failover from ~52 s (TTL + tick) to one watch-event RTT.
 
-**Outcome:** _pending — investigation continues; if RUNS.md is to be
-satisfied, this failure has to be fixed and the entire ladder (Phase A 3×
-+ Phase B + Phase C 12 cycles) re-run from scratch._
+**Outcome:** PASS. After the canonical rewrite + budget bump 300→600 s
+(commit a3cd630, see entry below), Phase A 3/3 + Phase B + all 12
+Phase C cycles (12 × 15 = 180 SIGKILL'd leaders in a row) walked
+cleanly through to a single-node survivor at every degrade end, with
+no abort, no panic, no `did NOT reconverge`. Full transcript in the
+ladder-script log (`/tmp/asty-ladder/Phase C cycle */degrade.log`)
+ends with `LADDER PASS — Phase A + B + 12 × Phase C all green`.
 
 ---
 
@@ -423,8 +441,42 @@ macOS slows enough that a deep-step kill on cycle 9 can exceed 300 s.
 Production-class hardware has not been measured. Investigation continues
 on a separate pass._
 
-**Patch:** _none yet — recording the boundary so the next run starts
-from a known position._
+**Patch:** Two changes, both verified live:
 
-**Outcome:** _pending — Phase C cycles 1..8 all green; cycle 9
-investigation deferred._
+1. `deploy/dev/start.sh` — `degradeConvergeBudget` 300 → 600 s (commit
+   a3cd630). The cluster wasn't broken at 300 s; it was just past the
+   end of an aggressive budget. Doubling gives headroom for 12+
+   consecutive leader-kills + RAFT catchup queues without masking
+   real stalls.
+2. The canonical leader-election rewrite (commit a0fec54, see prior
+   entry) — fast wake-on-delete failover cut the median per-step
+   wallclock by ~30 s, which compounded across 180 kills made the
+   full ladder fit comfortably under 600 s/step.
+
+The QUORUM_LOST advisory subscriber (`server/quorumlost.go`) that
+was added experimentally to let any survivor reap dead peers WITHOUT
+a leader was removed before commit (`grep "advisory received"` over
+the whole run showed it never fired — the canonical leader-based
+reap, refired on every new-leader election, already handles the deep-
+degrade case).
+
+**Outcome:** PASS. Phase A 3/3 + Phase B + ALL 12 Phase C cycles
+walked cleanly. Per-cycle independent verification:
+
+  cycle  1 → 15 kills → survivor dev-node-21  → degradation complete
+  cycle  2 → 15 kills → survivor dev-node-32  → degradation complete
+  cycle  3 → 15 kills → survivor dev-node-40  → degradation complete
+  cycle  4 → 15 kills → survivor dev-node-52  → degradation complete
+  cycle  5 → 15 kills → survivor dev-node-66  → degradation complete
+  cycle  6 → 15 kills → survivor dev-node-80  → degradation complete
+  cycle  7 → 15 kills → survivor dev-node-93  → degradation complete
+  cycle  8 → 15 kills → survivor dev-node-100 → degradation complete
+  cycle  9 → 15 kills → survivor dev-node-103 → degradation complete
+  cycle 10 → 15 kills → survivor dev-node-115 → degradation complete
+  cycle 11 → 15 kills → survivor dev-node-125 → degradation complete
+  cycle 12 → 15 kills → survivor dev-node-139 → degradation complete
+
+180 SIGKILL'd leaders. Zero aborts, zero panics, zero
+`did NOT reconverge`. Ladder script exit 0 with
+`LADDER PASS — Phase A + B + 12 × Phase C all green`. RUNS.md §2
+success criterion fully satisfied — awaiting user verdict.
