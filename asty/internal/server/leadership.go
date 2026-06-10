@@ -9,10 +9,17 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
-// watchLeadership re-arms the leader loop on flips. It blocks until ctx
-// is cancelled, so callers run it as its own goroutine.
-func (s *Server) watchLeadership(ctx context.Context) {
-	err := s.leaderElection.WatchLeadership(ctx,
+// wireLeadershipCallbacks installs the become/lose-leadership hooks on
+// the election state machine BEFORE CampaignForLeader starts. The
+// canonical NATS KV-election pattern fires these callbacks directly from
+// its single campaign goroutine on every Create / Update return-value
+// transition — there is NO separate watcher that drives leadership state.
+//
+// startLeaderWork / stopLeaderWork take s.mu; election.try() drops e.mu
+// around the callback so the lock order is e.mu → s.mu (and never the
+// reverse), making this race-free without a global ordering doc.
+func (s *Server) wireLeadershipCallbacks(ctx context.Context) {
+	s.leaderElection.SetCallbacks(
 		func() {
 			log.Info().Msg("became leader")
 			s.startLeaderWork(ctx)
@@ -22,9 +29,6 @@ func (s *Server) watchLeadership(ctx context.Context) {
 			s.stopLeaderWork()
 		},
 	)
-	if err != nil {
-		log.Error().Err(err).Msg("leadership watcher failed")
-	}
 }
 
 // startLeaderWork spawns the controller under a sub-context derived

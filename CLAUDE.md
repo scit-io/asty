@@ -2,6 +2,46 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ NATS canon is law (read BEFORE anything else)
+
+Touching NATS clustering / KV / leader election / RAFT / replicas /
+advisories / peer-membership / SERVER.REMOVE / KV-TTL? **STOP. Open
+the canonical reference FIRST. Code MUST match it on every observable
+— same state machine, same API calls, same TTL constraints, same
+callback ordering.**
+
+For leader election the canonical reference is
+ripienaar/nats-kv-leader-elect (the impl docs.nats.io points to):
+`bucket.Create` for the initial claim, `bucket.Update(key, val, lastSeq)`
+with CAS-on-sequence for refresh, **demote immediately on any Update
+failure**, bucket TTL **≥30 s** (NewElection refuses tighter),
+campaign interval = 75 % of TTL, **single campaign goroutine** —
+no separate watcher driving leader state.
+
+Past violation cost a full session and required a full rewrite. The
+homebrew "watch-driven, Put-without-CAS, 10 s TTL" pattern introduced
+split-brain vulnerability (Put-without-CAS), goroutine race on the
+flag, silent dashboard freeze (no watcher retry), and chronic
+leadership flap (TTL too tight for RAFT churn under 16-node degrade
+load). All four problems vanished after switching to the canonical
+pattern.
+
+See `memory/feedback_nats_canon_strict_no_improv.md` for the full
+incident and the four-step rule that prevents it.
+
+**Second-incident-same-session hall-of-shame (2026-06-10):** WITHIN
+MINUTES of being told to follow the canon and stay strictly event-
+driven, I added `const watchRetryDelay = 2 * time.Second` in the
+canonical rewrite's own watch.go — a 2-second polling back-off
+between watcher re-attaches, in the file I was writing TO COMPLY
+WITH the no-timers rule. Defaulted to "that's how the existing
+watchers in this repo do it" without checking that the rewrite was
+SUPPOSED to be stricter than the existing patterns. The user caught
+it on the next message. Anytime I write a constant whose name ends
+in `Delay`/`Interval`/`Sleep` in code-that-exists-to-satisfy-no-
+timers, that's a self-audit failure. Re-read the allow-list, don't
+copy neighbouring patterns.
+
 ## Coding rules (read first)
 
 Conventions for the asty package live in `.claude/coding-rules/`. Read the topic file that matches the work at hand before editing Go code under the asty package root:

@@ -2,6 +2,18 @@
 
 Asty is event-driven by design. Follow these rules when adding code that needs to react to state changes.
 
+## ⚠️ Hall-of-shame — 2026-06-10
+
+When asked to rewrite leader-election strictly event-driven and strictly by NATS canon, I:
+- introduced `const watchRetryDelay = 2 * time.Second` IN THE FILE that was supposed to be the canonical strict-event-driven rewrite,
+- justifying it to myself with "that's how the other watchers in this repo do it" (`RetryWatchForever(ctx, label, 2*time.Second, ...)` in streamhub_run.go / reconciler/watch.go).
+
+That's a polling back-off, not an event. It belongs in the explicit allow-list below or nowhere. The user caught it on the next message.
+
+Rule: **a new constant in code-written-to-satisfy-this-document whose name ends in `Delay` / `Interval` / `Sleep` is a self-audit failure.** Re-read the allow-list. Don't copy neighbouring patterns by reflex.
+
+The correct pattern for "re-attach watcher on channel close": loop with no delay, re-call `bucket.Watch(ctx)` immediately. NATS auto-reconnect blocks the call during a disconnect, so on a healthy connection the loop only advances on real channel-close events.
+
 ## Default to event-driven
 
 - For NATS KV state changes — use `state.WatchAllocations` / `state.WatchNodes` / `state.WatchAllocation` / `bucket.Watch`. The state package exposes a generic `watchKV` driver; build new watchers on top of it, not by polling `List*` in a ticker.

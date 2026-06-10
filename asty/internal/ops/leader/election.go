@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -18,15 +19,41 @@ import (
 // identity. There is exactly one such entry per cluster.
 const leaderKey = "current-leader"
 
-// leaderTTL — how long an entry survives without a refresh. Coordinator
-// nodes refresh on a tighter cadence (see refreshInterval); when the
-// leader dies and stops refreshing, the entry expires after this TTL and
-// the next campaigner can claim it.
-const leaderTTL = 10 * time.Second
+// leaderTTL — bucket-wide TTL on the leader entry. The canonical
+// NATS-recommended KV-election pattern (ripienaar/nats-kv-leader-elect,
+// which the NATS docs point to) REQUIRES this to be ≥30 s — its
+// NewElection returns an error for shorter TTLs because the underlying
+// RAFT can't guarantee tight refresh under load. A leader that misses
+// one refresh has the rest of the TTL window to recover before another
+// candidate claims the slot, which makes transient nats-stream hiccups
+// during a degrade cascade survivable instead of constantly triggering
+// leadership flap.
+const leaderTTL = 30 * time.Second
 
-// kvOpTimeout caps one KV Get/Create/Put/Delete round-trip on the
+// campaignInterval — how often the campaign loop ticks. Canonical
+// pattern uses 75 % of TTL: a leader that's still alive will refresh
+// well before the entry expires, and a candidate has a meaningful gap
+// between probes instead of hammering Create on every node simultaneously.
+const campaignInterval = (leaderTTL * 3) / 4
+
+// kvOpTimeout caps one KV Get/Create/Update/Delete round-trip on the
 // context-based jetstream API.
 const kvOpTimeout = 10 * time.Second
+
+// noLeaseSeq marks "no current lease held by us" (sentinel value the
+// canonical impl uses to force the next maintainLeadership path through
+// CAS-Create rather than CAS-Update).
+const noLeaseSeq = math.MaxUint64
+
+// State enumerates leader-election states. Matches the canonical
+// implementation's State type for readability.
+type State uint
+
+const (
+	StateUnknown State = iota
+	StateCandidate
+	StateLeader
+)
 
 // Info holds leader identification data stored in KV.
 type Info struct {
@@ -35,29 +62,56 @@ type Info struct {
 	Host string `json:"host,omitempty"` // operator-provided public DNS name, when set
 }
 
-// Election handles leader election via NATS JetStream KV. It uses the
-// nats.go `jetstream` package (NOT the deprecated JetStreamContext): the
-// WatchLeadership ordered consumer auto-recreates after a nats-server
-// restart (the natssolo 2→1 collapse), so leadership-flip detection
-// survives the broker bounce. See nats.go #1094/#1097.
+// Election handles leader election via NATS JetStream KV.
+//
+// Follows the canonical pattern documented by
+// ripienaar/nats-kv-leader-elect:
+//   - Single campaign goroutine, single mutex, no separate watcher
+//     driving state. The state machine reads its truth from Create /
+//     Update return values directly — those are the only authoritative
+//     answers.
+//   - `bucket.Create` for the initial claim (CAS: succeeds only when
+//     the slot is empty).
+//   - `bucket.Update(key, val, lastSeq)` for the refresh — CAS-checked
+//     against the sequence of our last write, so a stale leader can't
+//     overwrite a fresh claim by another node.
+//   - On ANY Update failure we IMMEDIATELY demote to Candidate and fire
+//     the lost-leadership callback. Watch-driven flag-keeping (the path
+//     this codebase used to have) lets `isLeader` lag the KV by minutes
+//     if the watcher silently dies, and races the campaign loop on the
+//     same field.
+//   - Bucket TTL is ≥30 s — anything tighter doesn't survive the RAFT
+//     churn we trigger during a degrade run.
 type Election struct {
 	bucket   jetstream.KeyValue
 	nodeID   string
 	nodeIP   string
 	nodeHost string
-	isLeader bool
 
-	// Leader-info cache, kept in sync by WatchLeadership on every KV
-	// update or delete event. GetLeader reads from here instead of issuing
-	// a per-call KV.Get — the asty-leader stream's RAFT group can briefly
-	// stall during a leader-kill cascade, and a snapshot read or write-API
-	// auth check that hits KV.Get during that window can time out (or worse,
-	// return ErrKeyNotFound on an entry that logically exists), giving the
-	// dashboard a transient "no leader" snapshot even though the cluster
-	// holds one a second later. The watcher is event-driven, so the cache
-	// stays as fresh as KV does, with one exception: on KV delete it goes
-	// genuinely empty until the next claim. That's the right answer too —
-	// there really is no leader in that window.
+	mu      sync.Mutex
+	state   State
+	lastSeq uint64
+
+	onBecomeLeader func()
+	onLoseLeader   func()
+
+	// wakeCh kicks the campaign goroutine into running its next try()
+	// immediately, instead of waiting for the next campaignInterval tick.
+	// The leader-info watcher sends to it on KeyValueDelete / Purge events
+	// — i.e. the moment a previous leader's lease either expired (TTL
+	// sweep) or was explicitly released (stepDown). Buffered 1 with
+	// drop-on-full: a burst of delete events between ticks coalesces into
+	// a single wake, and a wake that arrives while try() is already
+	// running is ignored (the in-progress try() will observe the new KV
+	// state on its Create call). State writes still happen ONLY in the
+	// campaign goroutine — wakeCh is just an event-driven scheduler hint.
+	wakeCh chan struct{}
+
+	// Leader-info read cache, fed by a separate KV watch on the leader
+	// key. Independent of the election state machine: this exists so the
+	// dashboard's hot read path (`GetLeader`) doesn't have to do a KV.Get
+	// on every snapshot rebuild. The watch never writes `state` /
+	// `lastSeq` — those are the campaign loop's alone.
 	cacheMu    sync.RWMutex
 	cached     Info
 	cacheValid bool
@@ -70,18 +124,11 @@ func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, err
 		return nil, fmt.Errorf("jetstream init: %w", err)
 	}
 
-	// History=1 (was 5). nats-server 2.14.2 commit 92cf2e3 ("Filestore only
-	// stores last block when MaxMsgsPerSubject 1") fixes a filestore
-	// block-tracking bug where the head pointer could reference an
-	// obsolete block on read AFTER an entry expired or was overwritten —
-	// observable here as a transient ErrKeyNotFound on GetLeader during
-	// the 5-second window between a KV-stream RAFT leader stepdown and
-	// catch-up on the freshly-claimed leader entry. The fix is GATED on
-	// MaxMsgsPerSubject=1; a KV bucket created with History=N maps to
-	// MaxMsgsPerSubject=N, so History=5 here disqualifies the bucket from
-	// the fix and reproduces the race in Phase C 16-node degrade cycles.
-	// Asty never reads past revisions of this key — History>1 was pure
-	// overhead.
+	// History=1 (was 5): nats-server 2.14.2 commit 92cf2e3 ("Filestore
+	// only stores last block when MaxMsgsPerSubject 1") fixes a filestore
+	// block-tracking bug that causes transient ErrKeyNotFound on read.
+	// The fix is gated on MaxMsgsPerSubject=1, which maps to KV
+	// History=1. Asty never reads past leader revisions.
 	bucket, err := netutil.EnsureBucket(js, jetstream.KeyValueConfig{
 		Bucket:      "asty-leader",
 		Description: "Asty leader election",
@@ -97,7 +144,31 @@ func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, err
 		nodeID:   nodeID,
 		nodeIP:   nodeIP,
 		nodeHost: nodeHost,
+		state:    StateCandidate,
+		lastSeq:  noLeaseSeq,
+		wakeCh:   make(chan struct{}, 1),
 	}, nil
+}
+
+// notifyWake is the watch-side event nudge: send if the buffer is empty,
+// drop otherwise. Safe to call concurrently with the campaign loop —
+// no state write here, just a scheduler signal.
+func (e *Election) notifyWake() {
+	select {
+	case e.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+// SetCallbacks installs the become/lose-leadership hooks BEFORE
+// CampaignForLeader starts. Replaces the old watch-driven callback
+// pattern: the campaign state machine fires these directly on every
+// transition observed via Create / Update return values.
+func (e *Election) SetCallbacks(onBecomeLeader, onLoseLeader func()) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.onBecomeLeader = onBecomeLeader
+	e.onLoseLeader = onLoseLeader
 }
 
 // kvCtx returns a bounded context for a single KV operation.
@@ -107,15 +178,15 @@ func kvCtx() (context.Context, context.CancelFunc) {
 
 // IsLeader returns whether this node is currently the leader.
 func (e *Election) IsLeader() bool {
-	return e.isLeader
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.state == StateLeader
 }
 
-// GetLeader returns the current leader info from the WatchLeadership-fed
-// cache, falling back to a one-shot KV read only while the watcher has
-// not yet replayed the initial state (boot window). The cache is the
-// single source of truth for who holds the leader slot — it tracks every
-// KV update + delete event on the leader key and never touches the bucket
-// on the hot path.
+// GetLeader returns the current leader info from the watch-fed cache,
+// falling back to a one-shot KV read only while the watcher has not yet
+// replayed the initial state. The cache is event-driven and stays as
+// fresh as KV — no per-call KV.Get on the dashboard hot path.
 func (e *Election) GetLeader() (Info, error) {
 	e.cacheMu.RLock()
 	valid, info := e.cacheValid, e.cached
@@ -146,10 +217,9 @@ func (e *Election) getLeaderFromKV() (Info, error) {
 	return info, nil
 }
 
-// setCachedLeader records the latest KV-observed leader state in memory.
-// Called by WatchLeadership on every update/delete it sees. Empty Info
-// records "no leader" (KV delete or no entry); cacheValid being true
-// after this call signals GetLeader that the watcher has caught up.
+// setCachedLeader is called by the leader-info watcher on every KV event.
+// The election state machine doesn't touch the cache, and the cache never
+// drives state — they are independent surfaces.
 func (e *Election) setCachedLeader(info Info) {
 	e.cacheMu.Lock()
 	e.cached = info
@@ -157,12 +227,10 @@ func (e *Election) setCachedLeader(info Info) {
 	e.cacheMu.Unlock()
 }
 
-// primeCacheIfEmpty is called by WatchLeadership when it sees the
-// end-of-history-replay marker. If the cache is already populated (we
-// saw a real entry during replay), this is a no-op so we don't clobber
-// it. Otherwise it marks the cache as "known empty" so GetLeader stops
-// falling through to a KV.Get for an entry the watcher just confirmed
-// doesn't exist.
+// primeCacheIfEmpty is invoked at end-of-history-replay so a watcher that
+// confirmed the slot is genuinely empty stops GetLeader falling through
+// to a KV.Get for the rest of its lifetime. Does NOT clobber a real
+// entry that was already cached during the replay.
 func (e *Election) primeCacheIfEmpty() {
 	e.cacheMu.Lock()
 	defer e.cacheMu.Unlock()
@@ -173,11 +241,9 @@ func (e *Election) primeCacheIfEmpty() {
 	e.cacheValid = true
 }
 
-// parseLeaderID returns the leader ID embedded in a KV entry, or an
-// empty string when the entry cannot be parsed. Empty string ensures
-// "this isn't me" callers (campaign, watch) take the not-leader
-// branch rather than risking a false-positive identity match against
-// raw bytes.
+// parseLeaderID returns the leader ID embedded in a KV entry, or an empty
+// string when the entry cannot be parsed. Kept for the cache watcher's
+// use.
 func parseLeaderID(data []byte) string {
 	var info Info
 	if err := codec.State.Unmarshal(data, &info); err != nil {

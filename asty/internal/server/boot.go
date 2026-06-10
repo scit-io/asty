@@ -51,19 +51,24 @@ func (s *Server) Start(parent context.Context) error {
 		return err
 	}
 
+	// Wire the leadership callbacks BEFORE the campaign goroutine starts.
+	// runLeaderElection spawns the campaign goroutine which on its very
+	// first tick can win the Create CAS and become leader — the
+	// onBecomeLeader callback has to be installed by then or
+	// startLeaderWork never fires and no allocations get dispatched.
+	// (Found live: first node booted, became leader, refreshed lease
+	// every 22.5 s forever, never started the reconciler.) The
+	// leader-info read cache runs as its own goroutine — it never drives
+	// state.
+	s.wireLeadershipCallbacks(ctx)
+	go s.leaderElection.RunLeaderInfoCache(ctx)
+
 	if err := s.runLeaderElection(ctx); err != nil {
 		return err
 	}
 
 	go s.watchShutdownSignal(ctx, cancel)
 	s.seedDevMockNodes()
-
-	// Start leader-scoped work once if we're already the leader; the
-	// watcher re-arms it on later flips.
-	if s.leaderElection.IsLeader() {
-		s.startLeaderWork(ctx)
-	}
-	go s.watchLeadership(ctx)
 
 	log.Info().Msg("server ready")
 

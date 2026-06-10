@@ -2,123 +2,148 @@ package leader
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"time"
 
 	"asty/asty/internal/core/codec"
 
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/zerolog/log"
 )
 
-// refreshInterval — how often the leader rewrites its KV entry to push
-// out the TTL. Picked at 5 s = leaderTTL/2 so a single missed refresh
-// (e.g. a GC pause) doesn't already trigger failover.
-const refreshInterval = 5 * time.Second
-
-// CampaignForLeader runs the leader-election loop until ctx is cancelled.
-// It claims leadership when the slot is free and refreshes the lease
-// while held.
+// CampaignForLeader runs the canonical NATS KV-election state machine:
+// a single goroutine tickling the bucket on a fixed interval, deriving
+// its leader/candidate state from the return values of Create and Update.
+// There is no separate watcher that writes state — the watch surface
+// elsewhere in this package only feeds the read cache and the
+// event-driven wake channel.
+//
+// Three triggers advance the loop:
+//   - ticker.C  — canonical ≥75% TTL refresh / claim cadence.
+//   - wakeCh    — leader-info watcher saw a delete/purge event
+//                 (previous leader's lease expired or was released).
+//                 Candidates Create immediately instead of waiting
+//                 for the next tick, cutting SIGKILL failover from
+//                 ~(TTL + campaignInterval) to ~one Watch-event RTT.
+//   - ctx.Done  — graceful shutdown.
+//
+// State writes still happen ONLY inside try() under e.mu. wakeCh is
+// purely a scheduler hint.
 func (e *Election) CampaignForLeader(ctx context.Context) error {
-	if err := e.tryBecomeLeader(); err != nil {
-		log.Debug().Err(err).Msg("initial leader claim failed")
-	}
+	e.try(ctx)
 
-	ticker := time.NewTicker(refreshInterval)
+	ticker := time.NewTicker(campaignInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			if e.isLeader {
-				e.stepDown()
-			}
+			e.stepDown()
 			return nil
-
 		case <-ticker.C:
-			if err := e.tryBecomeLeader(); err != nil {
-				log.Debug().Err(err).Msg("failed to become leader")
-			}
+			e.try(ctx)
+		case <-e.wakeCh:
+			e.try(ctx)
 		}
 	}
 }
 
-// tryBecomeLeader is the per-tick state machine: claim the slot if free,
-// refresh if we hold it, mark ourselves as a follower if someone else
-// holds it.
-func (e *Election) tryBecomeLeader() error {
-	ctx, cancel := kvCtx()
-	entry, err := e.bucket.Get(ctx, leaderKey)
-	cancel()
-	if err != nil && !errors.Is(err, jetstream.ErrKeyNotFound) {
-		return fmt.Errorf("failed to get leader key: %w", err)
+// try is the state-machine step. Holds e.mu for the whole step so the
+// IsLeader / lastSeq view is always self-consistent. Mirrors the
+// canonical `try()` in ripienaar/nats-kv-leader-elect.
+func (e *Election) try(ctx context.Context) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	switch e.state {
+	case StateLeader:
+		e.maintainLeadership(ctx)
+	default:
+		e.campaignForLeadership(ctx)
 	}
-
-	if errors.Is(err, jetstream.ErrKeyNotFound) || entry == nil {
-		return e.claimLeadership()
-	}
-
-	current := parseLeaderID(entry.Value())
-	if current == e.nodeID {
-		return e.refreshLeadership()
-	}
-
-	if !e.isLeader {
-		return nil
-	}
-
-	log.Warn().
-		Str("old_leader", e.nodeID).
-		Str("new_leader", current).
-		Msg("lost leadership")
-	e.isLeader = false
-	return nil
 }
 
-func (e *Election) claimLeadership() error {
-	data, _ := codec.State.Marshal(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
-	ctx, cancel := kvCtx()
+// campaignForLeadership tries to claim the slot via Create. A successful
+// Create returns the sequence number we then have to pass to Update on
+// every refresh. Failure (key exists) leaves us as a candidate — another
+// node holds the slot.
+//
+// Mutex held by caller (try).
+func (e *Election) campaignForLeadership(ctx context.Context) {
+	data := encodeInfo(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
+	opCtx, cancel := context.WithTimeout(ctx, kvOpTimeout)
 	defer cancel()
-	if _, err := e.bucket.Create(ctx, leaderKey, data); err != nil {
-		return fmt.Errorf("failed to claim leadership: %w", err)
-	}
-	e.isLeader = true
-	log.Info().Str("node_id", e.nodeID).Msg("became cluster leader")
-	return nil
-}
-
-func (e *Election) refreshLeadership() error {
-	data, _ := codec.State.Marshal(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
-	ctx, cancel := kvCtx()
-	defer cancel()
-	if _, err := e.bucket.Put(ctx, leaderKey, data); err != nil {
-		e.isLeader = false
-		return fmt.Errorf("failed to refresh leadership: %w", err)
-	}
-	log.Debug().Str("node_id", e.nodeID).Msg("refreshed leadership lease")
-	return nil
-}
-
-func (e *Election) stepDown() error {
-	if !e.isLeader {
-		return nil
-	}
-
-	ctx, cancel := kvCtx()
-	defer cancel()
-	entry, err := e.bucket.Get(ctx, leaderKey)
+	seq, err := e.bucket.Create(opCtx, leaderKey, data)
 	if err != nil {
-		return fmt.Errorf("failed to get leader key: %w", err)
+		log.Debug().Err(err).Msg("failed to claim leadership")
+		return
 	}
-	if parseLeaderID(entry.Value()) != e.nodeID {
-		e.isLeader = false
-		return nil
+	e.state = StateLeader
+	e.lastSeq = seq
+	cb := e.onBecomeLeader
+	log.Info().Str("node_id", e.nodeID).Uint64("seq", seq).Msg("became cluster leader")
+	if cb != nil {
+		// Drop the lock around the user callback; startLeaderWork takes
+		// other locks (server.mu) and could otherwise deadlock with code
+		// that calls IsLeader() while holding server.mu.
+		e.mu.Unlock()
+		cb()
+		e.mu.Lock()
 	}
-	if err := e.bucket.Delete(ctx, leaderKey); err != nil {
-		return fmt.Errorf("failed to delete leader key: %w", err)
+}
+
+// maintainLeadership refreshes the lease via Update with CAS on lastSeq.
+// A successful Update bumps lastSeq and resets the bucket-wide TTL. ANY
+// failure means we no longer own the slot — be it a transient stream
+// hiccup, a sequence mismatch from a concurrent write (impossible if the
+// CAS contract holds, but treat defensively), or the entry expiring under
+// us — so we demote IMMEDIATELY and let the next campaign tick try Create.
+//
+// Mutex held by caller (try).
+func (e *Election) maintainLeadership(ctx context.Context) {
+	data := encodeInfo(Info{ID: e.nodeID, IP: e.nodeIP, Host: e.nodeHost})
+	opCtx, cancel := context.WithTimeout(ctx, kvOpTimeout)
+	defer cancel()
+	seq, err := e.bucket.Update(opCtx, leaderKey, data, e.lastSeq)
+	if err != nil {
+		log.Warn().Err(err).Uint64("seq", e.lastSeq).Msg("refresh failed, stepping down")
+		e.state = StateCandidate
+		e.lastSeq = noLeaseSeq
+		cb := e.onLoseLeader
+		if cb != nil {
+			e.mu.Unlock()
+			cb()
+			e.mu.Lock()
+		}
+		return
 	}
-	e.isLeader = false
+	e.lastSeq = seq
+	log.Debug().Str("node_id", e.nodeID).Uint64("seq", seq).Msg("refreshed leadership lease")
+}
+
+// stepDown is the graceful-shutdown path called when CampaignForLeader's
+// ctx is cancelled. Best-effort Delete of our entry; if it fails the
+// bucket TTL will sweep it within leaderTTL.
+func (e *Election) stepDown() {
+	e.mu.Lock()
+	wasLeader := e.state == StateLeader
+	e.state = StateCandidate
+	e.lastSeq = noLeaseSeq
+	cb := e.onLoseLeader
+	e.mu.Unlock()
+
+	if !wasLeader {
+		return
+	}
+	opCtx, cancel := context.WithTimeout(context.Background(), kvOpTimeout)
+	defer cancel()
+	if err := e.bucket.Delete(opCtx, leaderKey); err != nil {
+		log.Debug().Err(err).Msg("step down delete failed, lease will expire via TTL")
+	}
 	log.Info().Str("node_id", e.nodeID).Msg("stepped down from leadership")
-	return nil
+	if cb != nil {
+		cb()
+	}
+}
+
+func encodeInfo(info Info) []byte {
+	data, _ := codec.State.Marshal(info)
+	return data
 }

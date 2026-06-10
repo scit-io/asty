@@ -4,6 +4,32 @@ This is the **only** protocol for running multi-cycle N→1 / 1→N
 resilience tests against the asty/NATS cluster. Follow it verbatim.
 Do not improvise, do not skip steps, do not re-derive from memory.
 
+## ⚠️ Hall-of-shame: 2026-06-10 NATS-canon violation
+
+Before reading the protocol — KNOW that this exact protocol has
+been broken by improvisation on NATS-related code in the past, and
+the cost was catastrophic.
+
+What happened: I rewrote `ops/leader/Election` with a homebrew
+"watch-driven, Put-without-CAS, 10 s TTL" state machine instead of
+matching the canonical pattern (ripienaar/nats-kv-leader-elect,
+Create+Update-CAS, demote-on-fail, ≥30 s TTL, single goroutine —
+the impl docs.nats.io points to). I then spent hours chasing the
+symptoms of my own deviations (transient empty leader at C-3-[8],
+no reconvergence at C-9-[14], leadership flap under 16-node degrade
+load) and reverting correct fixes because they didn't make the
+test green. The user had to interrupt and explicitly point me at
+the canonical reference before I would read it. Then, in the
+canonical rewrite itself, I introduced `watchRetryDelay = 2*time.
+Second` — a polling back-off in the file written to be strictly
+event-driven. The user caught that on the very next message too.
+
+If you are reading this and considering an "optimization" on any
+NATS-touching code path: STOP. Open the canonical reference.
+Match it byte-for-byte on observable behavior. See
+`memory/feedback_nats_canon_strict_no_improv.md` and the §-1.1
+no-timers rule below. Both were known. Both were violated.
+
 ## -1. Hard constraints (read first, every iteration)
 
 These two constraints supersede every other section. Violating
