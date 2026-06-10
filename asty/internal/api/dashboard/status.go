@@ -3,7 +3,6 @@ package dashboard
 import (
 	"asty/asty/internal/api/stream"
 	"net/http"
-	"time"
 )
 
 // handleCluster serves GET /. Returns the cluster overview — either
@@ -17,47 +16,34 @@ func (api *API) handleCluster(w http.ResponseWriter, r *http.Request) {
 	api.fetchClusterJSON(w, r)
 }
 
-// fetchClusterJSON returns the cluster's high-level state in JSON.
-// Mirrors what the SSE stream emits on every snapshot tick, just
-// flattened into a single payload.
+// fetchClusterJSON returns the cluster's high-level state in JSON. Reads
+// from the streamHub's in-memory snapshot — a sub-millisecond map lookup
+// — instead of going to KV.ListNodes / KV.GetLeader on every request.
+//
+// The previous direct-KV path took >3 s during a leader-kill cascade in
+// Phase B and Phase C runs (the asty-cluster ListNodes is a stream-watch
+// drain that blocks while the bucket's RAFT group is mid-election), which
+// raced the test script's 3 s curl timeout and surfaced as "no leader
+// reported — aborting" even when the cluster held a healthy leader a
+// second later. The streamHub snapshot is event-driven (WatchNodes +
+// WatchAllocations + WatchLeadership via the GetLeader cache), so it
+// stays as fresh as the KV does without hitting a slow read path.
 func (api *API) fetchClusterJSON(w http.ResponseWriter, _ *http.Request) {
-	nodes, _ := api.ctx.ClusterState().ListNodes()
-	leaderInfo, _ := api.ctx.LeaderElection().GetLeader()
-	isLeader := api.ctx.LeaderElection().IsLeader()
-
-	healthyNodes := 0
-	var leaderNodeID, leaderDC, leaderHost string
-	leaderHost = leaderInfo.Host
-	now := time.Now()
-	for _, node := range nodes {
-		if node.IsHealthy(now) {
-			healthyNodes++
-		}
-		if node.IP == leaderInfo.IP {
-			leaderNodeID = node.ID
-			leaderDC = node.Datacenter
-			// Freshest Host comes from the leader's current heartbeat
-			// (NodeInfo.Host), not the KV-stored leader.Host snapshot.
-			if node.Host != "" {
-				leaderHost = node.Host
-			}
-		}
+	snap := api.ctx.StreamHub().Snapshot()
+	cluster := map[string]any{
+		"served_by": api.ctx.Config().NodeID,
 	}
-	if leaderNodeID == "" {
-		leaderNodeID = leaderInfo.ID
+	if snap != nil {
+		cluster["leader"] = snap.Cluster.Leader
+		cluster["leader_ip"] = snap.Cluster.LeaderIP
+		cluster["leader_dc"] = snap.Cluster.LeaderDC
+		cluster["leader_host"] = snap.Cluster.LeaderHost
+		cluster["is_leader"] = snap.Cluster.IsLeader
+		cluster["nodes_total"] = snap.Cluster.NodesTotal
+		cluster["nodes_healthy"] = snap.Cluster.NodesHealthy
 	}
-
 	api.writeJSON(w, http.StatusOK, map[string]any{
-		"cluster": map[string]any{
-			"leader":        leaderNodeID,
-			"leader_ip":     leaderInfo.IP,
-			"leader_dc":     leaderDC,
-			"leader_host":   leaderHost,
-			"is_leader":     isLeader,
-			"nodes_total":   len(nodes),
-			"nodes_healthy": healthyNodes,
-			"served_by":     api.ctx.Config().NodeID,
-		},
+		"cluster": cluster,
 		"services": map[string]any{
 			"loaded": len(api.ctx.Services()),
 		},

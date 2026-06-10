@@ -302,3 +302,129 @@ distinct failure with its own follow-up needed._
 **Outcome:** _pending — investigation continues; if RUNS.md is to be
 satisfied, this failure has to be fixed and the entire ladder (Phase A 3×
 + Phase B + Phase C 12 cycles) re-run from scratch._
+
+---
+
+## 2026-06-10 07:00 — Phase B + Phase C cycle 2..3, transient `"leader":""` in dashboard JSON
+
+**Symptom:** Phase A 3/3 passed but Phase B sporadically aborted with
+`[N] no leader reported via <seed> — aborting` mid-degrade, even though
+the previous step's wait_converged had just confirmed the new leader. A
+direct curl to the same dashboard a few seconds later showed a healthy
+leader. The dashboard handler is `/dashboard/v1/` (status.go).
+
+**Cluster state at failure:** the asty-cluster bucket's RAFT group was
+mid-election while the dashboard request was in flight. status.go's
+`fetchClusterJSON` called `ClusterState().ListNodes()` directly, which is
+a `snapshotKVByPattern("node.*")` watch-and-drain on the live bucket —
+i.e. it blocks until the bucket returns the full key history. Under
+quorum churn this drains slowly enough to exceed the test script's 3 s
+curl timeout; curl gives up with empty body, the script greps the empty
+body and finds `"leader":""`, aborts.
+
+**Investigation:** `streamHub.Snapshot()` already publishes the same
+`Cluster.Leader` / `Cluster.NodesTotal` / `Cluster.NodesHealthy` payload,
+served from an in-memory map (sub-millisecond), fed by WatchNodes +
+WatchAllocations + a new WatchLeadership-fed leader cache. The direct-KV
+path in `fetchClusterJSON` was redundant overhead — and the racy one.
+
+**Patch:**
+- `asty/internal/ops/leader/election.go` — Election now caches the
+  leader info from KV-watch events; GetLeader returns the cache without
+  touching KV on the hot path.
+- `asty/internal/ops/leader/watch.go` — WatchLeadership feeds the
+  cache on every update + delete, with an end-of-replay primer that
+  doesn't clobber a real entry seen during replay.
+- `asty/internal/api/dashboard/status.go` — `fetchClusterJSON` now
+  reads `StreamHub().Snapshot().Cluster` and drops the per-call
+  `ListNodes()` + `GetLeader()` round-trip.
+
+Phase A 3/3, Phase B, and Phase C cycle 1 all pass. Phase C cycle 2 hit
+a SEPARATE failure (server-side concurrent-map crash, recorded below);
+the dashboard-snapshot fix stands.
+
+**Outcome:** PARTIAL PASS — dashboard transient gone. Cycle 2 failure
+moves to the next entry.
+
+---
+
+## 2026-06-10 07:24 — Phase C cycle 2 grow iter 1, server `fatal: concurrent map iteration and map write`
+
+**Symptom:** Phase C cycle 1 walked 1→16→1 cleanly. Cycle 2's first
+`start.sh add` aborted with `no live cluster node to seed from`. Probing
+the surviving node (dev-node-14) showed only the agent process up — the
+SERVER process had crashed. Log tail:
+
+  fatal error: concurrent map iteration and map write
+  ...
+  asty/internal/core/types.MarshalStartCommand(...)
+  asty/internal/server.(*Server).sendStartCommand(...)
+
+The reconciler dispatched a CmdStart for some service; CBOR-encoding
+the ServiceDefinition's `Env` map ran concurrently with another goroutine
+writing to that same map.
+
+**Cluster state at failure:** server-14 was holding leadership after the
+1-node survival, multiple in-flight dispatches were queued for the
+services the reconciler was re-placing on the lone survivor.
+
+**Investigation:** `server/commands.go::sendStartCommand` /
+`sendRestartCommand` both call `kvEnvForAllocation(svc, kvEnv)` BEFORE
+the resolved-copy step. The "resolved copy" is just `resolved := *svc`
+— a shallow copy that shares the underlying map references. So every
+caller that holds the same `*ServiceDefinition` (the reconciler workers,
+the dashboard restart handler, the deployer) mutates the SAME
+`svc.Env` map while another goroutine's MarshalStartCommand iterates
+it. The comment on `kvEnvForAllocation` claimed "ServiceDefinition is
+freshly loaded for each deploy and not shared" — false in practice,
+the loader caches the same pointer and the controller workers share it.
+
+**Patch:** `asty/internal/server/commands.go` —
+- `resolvedSvcForDispatch` now deep-copies the `Env` map alongside the
+  shallow struct copy.
+- `sendStartCommand` and `sendRestartCommand` reorder so the
+  per-dispatch `resolved` copy is made FIRST, then `kvEnvForAllocation`
+  writes into `resolved.Env` (private to this dispatch) instead of
+  `svc.Env` (shared with every other in-flight worker).
+
+`go test -race ./asty/internal/server/...` passes.
+
+**Outcome:** PASS. After the Env-map fix, Phase A 3/3 + Phase B + Phase C
+cycles 1..8 all walked 1→16→1 cleanly with stab=1 at every step and a
+single-node survivor serving `nodes_total=1`. Cycle 9 hit a DIFFERENT
+failure mode (recovery exceeded the script's 300 s per-step budget — the
+cluster did keep recovering on its own afterwards; a healthy
+`leader=dev-node-72, nodes_healthy=12` was visible on the dashboard
+shortly after the abort). Tracked separately as the next entry.
+
+---
+
+## 2026-06-10 10:33 — Phase C cycle 9, step [4], recovery exceeds 300 s budget (not a crash)
+
+**Symptom:** Phase C cycles 1..8 all walked 1→16→1 cleanly. Cycle 9 step
+[4] killed dev-node-82 from a 13-node cluster and `wait_converged`
+timed out with empty output after 300 s. Unlike earlier failures the
+cluster was NOT crashed — minutes after the script aborted, the
+dashboard on a survivor returned a healthy snapshot: `leader=dev-node-72,
+nodes_total=12, nodes_healthy=12, stab=1`. No server panic anywhere
+across `/tmp/asty-dev-server-*.log`.
+
+**Cluster state at failure:** 12 nodes alive of an expected 12 after the
+step-[4] kill; meta cluster recovery (SERVER.REMOVE of dev-node-82,
+leader re-election, stream UpdateStream from R=5 to whatever the new
+clusterSize warrants) took longer than the test budget but completed.
+The asty server's own clusterHealed/stab=1 returned eventually.
+
+**Investigation:** _open — root cause not yet identified. Hypothesis:
+after several thousand heartbeat writes, KV-watch updates, and dead-peer
+SERVER.REMOVE round-trips accumulated across cycles 1..8, the meta
+cluster's recovery walltime on a single-process-per-node dev cluster on
+macOS slows enough that a deep-step kill on cycle 9 can exceed 300 s.
+Production-class hardware has not been measured. Investigation continues
+on a separate pass._
+
+**Patch:** _none yet — recording the boundary so the next run starts
+from a known position._
+
+**Outcome:** _pending — Phase C cycles 1..8 all green; cycle 9
+investigation deferred._

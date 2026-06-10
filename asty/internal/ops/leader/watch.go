@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"asty/asty/internal/core/codec"
+
 	"github.com/nats-io/nats.go/jetstream"
 )
 
@@ -42,11 +44,13 @@ func (e *Election) WaitForLeader(ctx context.Context) (Info, error) {
 }
 
 // WatchLeadership invokes onBecomeLeader / onLoseLeadership when the
-// current node's leadership status changes. It keeps running until ctx
-// is cancelled. The watcher is a jetstream OrderedConsumer, so it
-// auto-recreates and resumes after a nats-server restart (the natssolo
-// 2→1 collapse) instead of going silently deaf — leadership flips keep
-// driving startLeaderWork/stopLeaderWork. See nats.go #1094.
+// current node's leadership status changes AND keeps the in-memory
+// leader-info cache in sync so GetLeader doesn't need a per-call KV
+// read. Runs until ctx is cancelled. The watcher is a jetstream
+// OrderedConsumer, so it auto-recreates and resumes after a nats-server
+// restart (the natssolo 2→1 collapse) instead of going silently deaf —
+// leadership flips keep driving startLeaderWork/stopLeaderWork. See
+// nats.go #1094.
 func (e *Election) WatchLeadership(ctx context.Context, onBecomeLeader, onLoseLeadership func()) error {
 	watcher, err := e.bucket.Watch(ctx, leaderKey)
 	if err != nil {
@@ -64,16 +68,26 @@ func (e *Election) WatchLeadership(ctx context.Context, onBecomeLeader, onLoseLe
 				return nil
 			}
 			if entry == nil {
+				// End-of-history-replay marker. Do not clobber a real entry
+				// we already cached during replay; only mark the cache as
+				// "known empty" so GetLeader stops falling through to KV.
+				e.primeCacheIfEmpty()
 				continue
 			}
 
-			var isLeader bool
+			var (
+				info     Info
+				isLeader bool
+			)
 			switch entry.Operation() {
 			case jetstream.KeyValueDelete, jetstream.KeyValuePurge:
 				isLeader = false
+				info = Info{}
 			default:
-				isLeader = parseLeaderID(entry.Value()) == e.nodeID
+				_ = codec.State.Unmarshal(entry.Value(), &info)
+				isLeader = info.ID == e.nodeID
 			}
+			e.setCachedLeader(info)
 
 			if isLeader && !wasLeader {
 				onBecomeLeader()

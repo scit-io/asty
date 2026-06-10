@@ -50,9 +50,9 @@ func (s *Server) sendStartCommand(nodeID string, svc *types.ServiceDefinition) e
 	if err != nil {
 		return fmt.Errorf("provision KV: %w", err)
 	}
-	kvEnvForAllocation(svc, kvEnv)
 
 	resolved := s.resolvedSvcForDispatch(nodeID, svc, "")
+	kvEnvForAllocation(resolved, kvEnv)
 
 	cmd, err := types.MarshalStartCommand(resolved)
 	if err != nil {
@@ -85,9 +85,9 @@ func (s *Server) sendRestartCommand(nodeID string, svc *types.ServiceDefinition,
 	if err != nil {
 		return fmt.Errorf("provision KV: %w", err)
 	}
-	kvEnvForAllocation(svc, kvEnv)
 
 	resolved := s.resolvedSvcForDispatch(nodeID, svc, version)
+	kvEnvForAllocation(resolved, kvEnv)
 
 	cmd, err := types.MarshalStartCommand(resolved)
 	if err != nil {
@@ -117,10 +117,16 @@ func (s *Server) RestartServiceOnNode(nodeID, serviceName string) error {
 	return s.sendRestartCommand(nodeID, svc, "")
 }
 
-// resolvedSvcForDispatch returns a shallow copy of svc with the artifact
-// URL placeholders expanded against the version associated with this
-// dispatch. Caller-supplied version wins; falls back to alloc.Version
-// from KV ("latest" if alloc is missing or unversioned).
+// resolvedSvcForDispatch returns a per-dispatch copy of svc with the
+// artifact URL placeholders expanded against this dispatch's version and
+// the Env / KV / Resources maps deep-copied so the caller can mutate them
+// (kvEnvForAllocation injects per-bucket env vars) without racing the
+// shared ServiceDefinition the loader hands out — the same definition is
+// reused across reconciler workers, the dashboard restart path, and the
+// deployer, all of which can dispatch concurrently. Without this copy a
+// concurrent CBOR Marshal of svc.Env (during MarshalStartCommand) and an
+// in-place kvEnvForAllocation write to the same map crashes the server
+// with "fatal: concurrent map iteration and map write".
 func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinition, version string) *types.ServiceDefinition {
 	if version == "" {
 		if alloc, err := s.clusterState.GetAllocation(svc.Name, nodeID); err == nil && alloc.Version != "" {
@@ -132,6 +138,12 @@ func (s *Server) resolvedSvcForDispatch(nodeID string, svc *types.ServiceDefinit
 	}
 	resolved := *svc
 	resolved.Artifact.URL = s.resolveArtifactURL(svc.Artifact.URL, version)
+	if svc.Env != nil {
+		resolved.Env = make(map[string]string, len(svc.Env))
+		for k, v := range svc.Env {
+			resolved.Env[k] = v
+		}
+	}
 	return &resolved
 }
 
