@@ -54,11 +54,23 @@ func NewElection(nc *nats.Conn, nodeID, nodeIP, nodeHost string) (*Election, err
 		return nil, fmt.Errorf("jetstream init: %w", err)
 	}
 
+	// History=1 (was 5). nats-server 2.14.2 commit 92cf2e3 ("Filestore only
+	// stores last block when MaxMsgsPerSubject 1") fixes a filestore
+	// block-tracking bug where the head pointer could reference an
+	// obsolete block on read AFTER an entry expired or was overwritten —
+	// observable here as a transient ErrKeyNotFound on GetLeader during
+	// the 5-second window between a KV-stream RAFT leader stepdown and
+	// catch-up on the freshly-claimed leader entry. The fix is GATED on
+	// MaxMsgsPerSubject=1; a KV bucket created with History=N maps to
+	// MaxMsgsPerSubject=N, so History=5 here disqualifies the bucket from
+	// the fix and reproduces the race in Phase C 16-node degrade cycles.
+	// Asty never reads past revisions of this key — History>1 was pure
+	// overhead.
 	bucket, err := netutil.EnsureBucket(js, jetstream.KeyValueConfig{
 		Bucket:      "asty-leader",
 		Description: "Asty leader election",
 		TTL:         leaderTTL,
-		History:     5,
+		History:     1,
 	})
 	if err != nil {
 		return nil, err
