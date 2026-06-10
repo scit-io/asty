@@ -794,9 +794,16 @@ print_status() {
 # This script only kicks; it does not nurse the cluster between kicks.
 
 # degradeConvergeBudget — hard wall-clock cap on the SSE wait after one
-# SIGKILL. 5 min covers the worst case where the JS meta leader was the
-# killed node and the next election rolls into peerRemoveTimeout.
-degradeConvergeBudget=300
+# SIGKILL. 10 min covers the worst case where the JS meta leader was the
+# killed node, the asty-leader bucket's stream RAFT also lost quorum,
+# AND the canonical 30 s leader TTL has to expire before a new candidate
+# can claim. Each leader-kill carries: ≤30 s TTL expiry + ≤22.5 s
+# candidate-tick (cut to one event-RTT by the wake-on-delete watcher,
+# but still bounded by RAFT propagation) + stream reap + replica
+# rebalance. Under deep degrade (12+ consecutive leader kills) NATS's
+# own catchup work can stretch a single step well past 5 min; 600 s
+# leaves headroom for that without masking real stalls.
+degradeConvergeBudget=600
 
 degrade_seed() {
   local i addr
